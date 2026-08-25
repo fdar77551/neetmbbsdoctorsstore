@@ -1,0 +1,6 @@
+{
+  "name": "NEET MBBS Doctors Store",
+  "description": "Premium store for NEET aspirants offering curated medical books, PDF study notes, chapterwise solutions with secure Razorpay payments, Cloudflare R2 storage, and admin dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

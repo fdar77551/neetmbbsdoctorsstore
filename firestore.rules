@@ -1,0 +1,53 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function for admin identification
+    function isAdmin() {
+      return request.auth != null && 
+        (request.auth.token.email.lower() == 'fdar77551@gmail.com' || 
+         request.auth.token.email.lower() == 'shahzaibhusain6@gmail.com');
+    }
+
+    // Products: anyone can read, only admins can modify
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Banners: anyone can read, only admins can modify
+    match /banners/{bannerId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Orders: anyone can place/create order, admins can read and manage all, users can read their own
+    match /orders/{orderId} {
+      allow create: if true;
+      allow read: if isAdmin() || (request.auth != null && request.auth.token.email == resource.data.userEmail);
+      allow update, delete: if isAdmin();
+    }
+
+    // Support Inquiries: anyone can submit support messages, admins can read & reply to all
+    match /support/{messageId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin() || (request.auth != null && request.auth.token.email == resource.data.email);
+    }
+    
+    match /support_messages/{messageId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin() || (request.auth != null && request.auth.token.email == resource.data.email);
+    }
+
+    // Users: users can read/write their own profile, admins can read/write all
+    match /users/{userId} {
+      allow read, write: if isAdmin() || (request.auth != null && (request.auth.uid == userId || request.auth.token.email == resource.data.email));
+    }
+
+    // Configuration (R2 domain, Telegram, store settings): public read, admin write
+    match /config/{configId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

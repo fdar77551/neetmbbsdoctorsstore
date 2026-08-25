@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@layer base {
+  html, body {
+    -webkit-overflow-scrolling: touch;
+    background-color: #f1f5f9;
+    scroll-behavior: smooth;
+    overscroll-behavior-y: auto;
+  }
+
+  /* Prevent tap delay and unwanted highlight */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Smooth scrollbars */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 116, 139, 0.6);
+  }
+}
+

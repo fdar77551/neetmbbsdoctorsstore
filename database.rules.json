@@ -1,0 +1,28 @@
+{
+  "rules": {
+    "products": {
+      ".read": true,
+      ".write": "auth != null && (auth.token.email == 'fdar77551@gmail.com' || auth.token.email == 'shahzaibhusain6@gmail.com')"
+    },
+    "banners": {
+      ".read": true,
+      ".write": "auth != null && (auth.token.email == 'fdar77551@gmail.com' || auth.token.email == 'shahzaibhusain6@gmail.com')"
+    },
+    "orders": {
+      ".read": "auth != null",
+      ".write": true
+    },
+    "support": {
+      ".read": true,
+      ".write": true
+    },
+    "users": {
+      ".read": true,
+      ".write": true
+    },
+    "config": {
+      ".read": true,
+      ".write": "auth != null && (auth.token.email == 'fdar77551@gmail.com' || auth.token.email == 'shahzaibhusain6@gmail.com')"
+    }
+  }
+}
