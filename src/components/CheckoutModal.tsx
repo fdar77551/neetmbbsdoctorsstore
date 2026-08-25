@@ -70,11 +70,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
 
     return new Promise((resolve) => {
+      // Check existing script tag
       let existingScript = document.querySelector('script[src*="checkout.razorpay.com"]') as HTMLScriptElement;
       if (!existingScript) {
         existingScript = document.createElement('script');
         existingScript.src = 'https://checkout.razorpay.com/v1/checkout.js';
         existingScript.async = true;
+        existingScript.crossOrigin = 'anonymous';
         document.head.appendChild(existingScript);
       }
 
@@ -85,19 +87,25 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           clearInterval(timer);
           setRazorpayLoaded(true);
           resolve(true);
-        } else if (attempts >= 25) { // 5 seconds timeout
+        } else if (attempts >= 35) { // 7 seconds total timeout
           clearInterval(timer);
-          resolve(typeof (window as any).Razorpay !== 'undefined');
+          const isAvailable = typeof (window as any).Razorpay !== 'undefined';
+          setRazorpayLoaded(isAvailable);
+          resolve(isAvailable);
         }
       }, 200);
 
       existingScript.onload = () => {
-        clearInterval(timer);
-        setRazorpayLoaded(true);
-        resolve(true);
+        setTimeout(() => {
+          if (typeof (window as any).Razorpay !== 'undefined') {
+            clearInterval(timer);
+            setRazorpayLoaded(true);
+            resolve(true);
+          }
+        }, 100);
       };
       existingScript.onerror = () => {
-        console.warn('Razorpay script load error on network');
+        console.warn('Razorpay script load error on current network connection');
       };
     });
   };
@@ -211,9 +219,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       const itemsStr = order.items.map(i => `${i.title} (x${i.quantity})`).join(', ');
       const totalQty = order.items.reduce((s, i) => s + (Number(i.quantity) || 1), 0);
       const isCod = String(order.paymentStatus || '').toLowerCase().includes('cod');
-      const payStatus = isCod
+      const payStatusHtml = isCod
         ? `💵 <b>Cash on Delivery (COD)</b> (₹${order.totalAmount} to collect)`
         : `✅ <b>PAID Online</b> (${order.paymentId || 'Verified Online'})`;
+
+      const payStatusPlain = isCod
+        ? `Cash on Delivery (COD) - Collect ₹${order.totalAmount}`
+        : `PAID Online (${order.paymentId || 'Verified Online'})`;
 
       const cleanOrderId = order.id.replace(/^#/, '');
 
@@ -222,7 +234,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       };
 
-      const messageText = 
+      const htmlMessageText = 
 `🛒 <b>NEW ORDER</b>
 👤 <b>Name:</b> ${escapeTg(customerName)}
 📞 <b>Phone:</b> ${escapeTg(customerPhone)}
@@ -230,167 +242,21 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 📦 <b>Product:</b> ${escapeTg(itemsStr)}
 🔢 <b>Quantity:</b> ${totalQty}
 💰 <b>Price:</b> ₹${order.totalAmount}
-💳 <b>Payment:</b> ${payStatus}
-🆔 <b>Order ID:</b> #${cleanOrderId}
-🧾 <b>Tax Invoice Document:</b> Attached below (Download & Print directly)`;
+💳 <b>Payment:</b> ${payStatusHtml}
+🆔 <b>Order ID:</b> #${escapeTg(cleanOrderId)}
+📄 <b>Official Tax Invoice (PDF):</b> Attached below (Download & Print directly)`;
 
-      // Standalone HTML Tax Invoice Content
-      const invoiceDateStr = new Date(order.orderDate || Date.now()).toLocaleDateString('en-IN', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric'
-      });
-      const itemsRowsHtml = order.items.map(it => `
-        <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-weight: bold;">
-            ${it.title}
-            <div style="font-size: 10px; color: #64748b; font-weight: normal;">By ${it.author || 'NEET Faculty'}</div>
-          </td>
-          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: center; font-size: 11px;">
-            ${it.type === 'pdf' ? 'Digital PDF' : 'Physical Book'}
-          </td>
-          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: center; font-weight: bold;">${it.quantity || 1}</td>
-          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: right;">₹${it.price}</td>
-          <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: bold;">₹${(it.price || 0) * (it.quantity || 1)}</td>
-        </tr>
-      `).join('');
-
-      const paymentBadgeHtml = isCod ? `
-        <div style="background: #fffbeb; border: 1.5px solid #f59e0b; padding: 12px 16px; border-radius: 8px; display: inline-block;">
-          <div style="font-size: 11px; font-weight: 800; color: #b45309; text-transform: uppercase;">
-            💵 CASH ON DELIVERY (COD) • PENDING COLLECTION
-          </div>
-          <div style="font-size: 11px; color: #78350f; margin-top: 4px; font-weight: 700;">
-            Collect from Customer: ₹${order.totalAmount}
-          </div>
-          <div style="font-size: 10px; color: #92400e; font-family: monospace; margin-top: 3px;">
-            Payment Method: Cash on Delivery (COD)
-          </div>
-          <div style="font-size: 9px; color: #64748b; font-family: monospace; margin-top: 2px;">
-            Ref ID: COD_${cleanOrderId.replace(/^ORD-/, '')} | #${cleanOrderId}
-          </div>
-        </div>
-      ` : `
-        <div style="background: #ecfdf5; border: 1.5px solid #10b981; padding: 12px 16px; border-radius: 8px; display: inline-block;">
-          <div style="font-size: 11px; font-weight: 800; color: #065f46; text-transform: uppercase;">
-            ✓ PAID via Razorpay • Verified Online
-          </div>
-          <div style="font-size: 10px; color: #047857; font-family: monospace; margin-top: 4px; font-weight: 600;">
-            Payment ID: ${order.paymentId || 'Online'}
-          </div>
-          <div style="font-size: 9px; color: #64748b; font-family: monospace; margin-top: 2px;">
-            Order ID: ${order.razorpayOrderId || cleanOrderId}
-          </div>
-        </div>
-      `;
-
-      const invoiceHtml = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Invoice - ${order.invoiceNumber || cleanOrderId}</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #f1f5f9; color: #0f172a; margin: 0; padding: 20px; }
-    .invoice-card { max-width: 680px; margin: 0 auto; background: #ffffff; border-radius: 12px; border: 1px solid #cbd5e1; padding: 28px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
-    .print-bar { max-width: 680px; margin: 0 auto 12px auto; display: flex; justify-content: space-between; align-items: center; }
-    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; background: #0f172a; color: #fff; font-size: 12px; font-weight: bold; border-radius: 6px; text-decoration: none; cursor: pointer; border: none; }
-    .btn-gold { background: #f59e0b; color: #000; }
-    @media print {
-      body { background: #fff; padding: 0; }
-      .print-bar { display: none; }
-      .invoice-card { border: none; box-shadow: none; padding: 0; max-width: 100%; }
-    }
-  </style>
-</head>
-<body>
-  <div class="print-bar">
-    <div style="font-size: 12px; font-weight: bold; color: #475569;">NEET MBBS Doctors Store • Tax Invoice</div>
-    <div style="display: flex; gap: 8px;">
-      <button class="btn btn-gold" onclick="window.print()">🖨️ Print / Save PDF</button>
-    </div>
-  </div>
-
-  <div class="invoice-card">
-    <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #0f172a; padding-bottom: 14px;">
-      <div>
-        <h1 style="margin: 0; font-size: 17px; text-transform: uppercase; letter-spacing: -0.5px; font-weight: 900;">NEET MBBS DOCTORS STORE</h1>
-        <p style="margin: 3px 0 0 0; font-size: 11px; color: #64748b; font-weight: 600;">NCERTify Master Tests & Med Books PVT LTD</p>
-        <p style="margin: 2px 0 0 0; font-size: 10px; color: #64748b;">Support: fdar77551@gmail.com | shahzaibhusain6@gmail.com</p>
-        <p style="margin: 2px 0 0 0; font-size: 10px; color: #64748b;">GSTIN: 07AABCN8891P1ZX</p>
-      </div>
-      <div style="text-align: right;">
-        <span style="font-size: 11px; font-weight: 800; background: #fef3c7; color: #b45309; padding: 3px 8px; border-radius: 4px; border: 1px solid #fde68a;">TAX INVOICE</span>
-        ${isCod ? '<div style="margin-top: 4px;"><span style="font-size: 10px; font-weight: 800; background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; border: 1px solid #fcd34d;">💵 COD ORDER</span></div>' : ''}
-        <div style="margin-top: 6px; font-weight: 800; font-family: monospace; font-size: 12px;">${order.invoiceNumber || cleanOrderId}</div>
-        <div style="font-size: 11px; color: #64748b;">Date: ${invoiceDateStr}</div>
-      </div>
-    </div>
-
-    <div style="display: flex; gap: 14px; background: #f8fafc; padding: 12px; border-radius: 8px; margin: 16px 0; border: 1px solid #e2e8f0; font-size: 11px;">
-      <div style="flex: 1;">
-        <strong style="color: #64748b; text-transform: uppercase; font-size: 9px; display: block; margin-bottom: 3px;">Customer Details:</strong>
-        <div style="font-weight: 800; font-size: 12px; color: #0f172a;">${customerName}</div>
-        <div style="color: #475569;">${order.userEmail}</div>
-        ${order.shippingAddress?.phoneNumber ? `<div style="color: #475569;">Mobile: +91 ${order.shippingAddress.phoneNumber}</div>` : ''}
-      </div>
-      <div style="flex: 1;">
-        <strong style="color: #64748b; text-transform: uppercase; font-size: 9px; display: block; margin-bottom: 3px;">Delivery Destination:</strong>
-        ${order.shippingAddress ? `
-          <div style="color: #334155; line-height: 1.4;">
-            ${order.shippingAddress.addressLine1}, ${order.shippingAddress.addressLine2 || ''}<br/>
-            <strong>${order.shippingAddress.district}, ${order.shippingAddress.state} - ${order.shippingAddress.pincode}</strong>
-          </div>
-        ` : '<div style="color: #047857; font-weight: bold;">Instant Digital Delivery (Read / Download in App)</div>'}
-      </div>
-    </div>
-
-    <table style="width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 14px;">
-      <thead>
-        <tr style="border-bottom: 2px solid #cbd5e1; color: #475569; text-align: left;">
-          <th style="padding: 8px;">Item Description</th>
-          <th style="padding: 8px; text-align: center;">Type</th>
-          <th style="padding: 8px; text-align: center;">Qty</th>
-          <th style="padding: 8px; text-align: right;">Price</th>
-          <th style="padding: 8px; text-align: right;">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${itemsRowsHtml}
-      </tbody>
-    </table>
-
-    <div style="display: flex; justify-content: flex-end; border-top: 1px solid #e2e8f0; padding-top: 10px;">
-      <div style="width: 230px; font-size: 11px;">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 4px; color: #475569;">
-          <span>Subtotal:</span>
-          <span style="font-weight: bold;">₹${order.totalAmount}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; margin-bottom: 4px; color: #475569;">
-          <span>Shipping:</span>
-          <span style="color: #047857; font-weight: bold;">FREE (₹0.00)</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; margin-bottom: 6px; color: #475569;">
-          <span>GST (0% Books):</span>
-          <span>₹0.00</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; border-top: 2px solid #0f172a; padding-top: 6px; font-size: 13px; font-weight: 900;">
-          <span>${isCod ? 'Collect on Delivery:' : 'Grand Total Paid:'}</span>
-          <span style="color: ${isCod ? '#b45309' : '#047857'};">₹${order.totalAmount}</span>
-        </div>
-      </div>
-    </div>
-
-    <div style="margin-top: 20px; border-top: 1px dashed #cbd5e1; padding-top: 14px; display: flex; justify-content: space-between; align-items: center;">
-      ${paymentBadgeHtml}
-      <div style="text-align: right; font-family: monospace; font-size: 9px; color: #64748b;">
-        <div style="background: #f1f5f9; padding: 4px 8px; border-radius: 4px; letter-spacing: 2px; font-weight: bold;">||| | |||| || ||| |||| | ||</div>
-        <div style="margin-top: 2px;">#${cleanOrderId}</div>
-      </div>
-    </div>
-  </div>
-</body>
-</html>`;
+      const plainTextMessage = 
+`🛒 NEW ORDER
+👤 Name: ${customerName}
+📞 Phone: ${customerPhone}
+📍 Address: ${customerAddress}
+📦 Product: ${itemsStr}
+🔢 Quantity: ${totalQty}
+💰 Price: ₹${order.totalAmount}
+💳 Payment: ${payStatusPlain}
+🆔 Order ID: #${cleanOrderId}
+📄 Official Tax Invoice (PDF): Attached below`;
 
       // Generate Authentic PDF Document Blob
       let pdfBlob: Blob | null = null;
@@ -402,29 +268,49 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
       adminChatIds.forEach(async (chatId) => {
         try {
-          // 1. Text Details
-          await fetch(`https://api.telegram.org/bot${tokenToUse}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: messageText,
-              parse_mode: 'HTML'
-            })
-          });
+          // 1. Text Details with HTML formatting
+          let textSent = false;
+          try {
+            const resp = await fetch(`https://api.telegram.org/bot${tokenToUse}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: htmlMessageText,
+                parse_mode: 'HTML'
+              })
+            });
+            const data = await resp.json();
+            if (data.ok) {
+              textSent = true;
+            }
+          } catch (e) {}
+
+          // Fallback to plain text if HTML was rejected
+          if (!textSent) {
+            try {
+              await fetch(`https://api.telegram.org/bot${tokenToUse}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: chatId,
+                  text: plainTextMessage
+                })
+              });
+            } catch (e) {}
+          }
 
           // 2. Direct PDF Invoice Document (sendDocument attachment)
           if (pdfBlob) {
             const formData = new FormData();
             formData.append('chat_id', chatId);
             formData.append('document', pdfBlob, `Tax_Invoice_${cleanOrderId}.pdf`);
-            formData.append('caption', `📄 <b>Official Tax Invoice (PDF)</b> #${cleanOrderId} (${isCod ? 'COD - Collect ₹' + order.totalAmount : 'PAID Online'})`);
-            formData.append('parse_mode', 'HTML');
+            formData.append('caption', `📄 Official Tax Invoice (PDF) #${cleanOrderId} (${isCod ? 'COD - Collect ₹' + order.totalAmount : 'PAID Online'})`);
 
             await fetch(`https://api.telegram.org/bot${tokenToUse}/sendDocument`, {
               method: 'POST',
               body: formData
-            });
+            }).catch(() => {});
           }
         } catch (err) {
           console.warn(`Direct Telegram alert error for ${chatId}:`, err);

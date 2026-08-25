@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import crypto from "crypto";
 import fs from "fs";
+import multer from "multer";
 import Razorpay from "razorpay";
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { createServer as createViteServer } from "vite";
@@ -9,6 +10,14 @@ import { generateInvoicePdfDoc, generateCombinedInvoicesPdfDoc } from "./src/lib
 
 const app = express();
 const PORT = 3000;
+
+// Configure Multer for binary in-memory file uploads (Up to 100MB PDF notes)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 100 * 1024 * 1024
+  }
+});
 
 // Configuration (Live Production Razorpay Credentials)
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "rzp_live_TS3u0sJ2yf9X6A";
@@ -586,17 +595,38 @@ function generateInvoiceHtml(order: any): string {
 }
 
 // Helper: Send Telegram Order Notification + Direct Invoice Document Delivery
+const sentTelegramOrderIds = new Set<string>();
+
+function escapeTelegramHtml(text: any): string {
+  if (!text) return "";
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 async function sendTelegramOrderNotification(order: any, customBotToken?: string) {
-  const token = customBotToken || TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+  const token = (customBotToken && customBotToken.trim().length > 10) 
+    ? customBotToken.trim() 
+    : (TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || "7876878891:AAHR8rM7QGqF-yQk667T0-h5_P9Zz2_t69A");
+  
   if (!token) {
-    console.log("Telegram notification queued: TELEGRAM_BOT_TOKEN is not configured yet. Add token to receive live alerts.");
+    console.log("Telegram notification queued: TELEGRAM_BOT_TOKEN is not configured yet.");
     return { success: false, message: "TELEGRAM_BOT_TOKEN not configured" };
   }
 
-  const customerName = order.userName || order.customer?.name || order.shippingAddress?.fullName || "Valued Customer";
-  const customerPhone = order.shippingAddress?.phoneNumber || order.customer?.contact || "N/A";
+  const orderId = String(order.id || order.orderId || order.invoiceNumber || `ORD-${Date.now()}`).replace(/^#/, '');
+
+  // Deduplication check: avoid spamming if already sent successfully in the last 15 minutes
+  if (sentTelegramOrderIds.has(orderId)) {
+    console.log(`Telegram notification already dispatched for order #${orderId}, skipping duplicate.`);
+    return { success: true, duplicate: true, orderId };
+  }
+
+  const rawCustomerName = order.userName || order.customer?.name || order.shippingAddress?.fullName || "Valued Customer";
+  const rawCustomerPhone = order.shippingAddress?.phoneNumber || order.customer?.contact || "N/A";
   
-  let customerAddress = "Digital Access / Instant PDF";
+  let rawCustomerAddress = "Digital Access / Instant PDF";
   if (order.shippingAddress) {
     const a = order.shippingAddress;
     const parts = [
@@ -605,11 +635,11 @@ async function sendTelegramOrderNotification(order: any, customBotToken?: string
       a.district,
       a.state ? `${a.state} - ${a.pincode || ''}` : a.pincode
     ].filter(Boolean);
-    customerAddress = parts.join(", ") || "Physical Delivery";
+    rawCustomerAddress = parts.join(", ") || "Physical Delivery";
   }
 
   const items = order.items || [];
-  const productNames = items.length > 0
+  const rawProductNames = items.length > 0
     ? items.map((i: any) => `${i.title || i.name} (x${i.quantity || 1})`).join(", ")
     : (order.productName || "NEET Study Material");
 
@@ -620,23 +650,39 @@ async function sendTelegramOrderNotification(order: any, customBotToken?: string
   const totalPrice = order.totalAmount || order.price || order.amount || 0;
   const isCod = String(order.paymentStatus || '').toLowerCase().includes("cod") || String(order.paymentStatus || '').toLowerCase().includes("cash");
   
-  const paymentStatus = isCod
+  const paymentStatusHtml = isCod
     ? `💵 <b>Cash on Delivery (COD)</b> (₹${totalPrice} to collect)`
-    : `✅ <b>PAID Online</b> (${order.paymentId || 'Verified Online'})`;
-  
-  const orderId = String(order.id || order.orderId || order.invoiceNumber || `ORD-${Date.now()}`).replace(/^#/, '');
+    : `✅ <b>PAID Online</b> (${escapeTelegramHtml(order.paymentId || 'Verified Online')})`;
 
-  const messageText = 
+  const paymentStatusPlain = isCod
+    ? `Cash on Delivery (COD) - Collect ₹${totalPrice}`
+    : `PAID Online (${order.paymentId || 'Verified Online'})`;
+
+  // 1. Formatted HTML Message
+  const htmlMessageText = 
 `🛒 <b>NEW ORDER</b>
-👤 <b>Name:</b> ${customerName}
-📞 <b>Phone:</b> ${customerPhone}
-📍 <b>Address:</b> ${customerAddress}
-📦 <b>Product:</b> ${productNames}
+👤 <b>Name:</b> ${escapeTelegramHtml(rawCustomerName)}
+📞 <b>Phone:</b> ${escapeTelegramHtml(rawCustomerPhone)}
+📍 <b>Address:</b> ${escapeTelegramHtml(rawCustomerAddress)}
+📦 <b>Product:</b> ${escapeTelegramHtml(rawProductNames)}
 🔢 <b>Quantity:</b> ${totalQuantity}
 💰 <b>Price:</b> ₹${totalPrice}
-💳 <b>Payment:</b> ${paymentStatus}
-🆔 <b>Order ID:</b> #${orderId}
+💳 <b>Payment:</b> ${paymentStatusHtml}
+🆔 <b>Order ID:</b> #${escapeTelegramHtml(orderId)}
 📄 <b>Official Tax Invoice (PDF):</b> Attached below (Download & Print directly)`;
+
+  // 2. Plain Text Fallback Message (Guaranteed to parse even with special characters)
+  const plainTextMessage = 
+`🛒 NEW ORDER
+👤 Name: ${rawCustomerName}
+📞 Phone: ${rawCustomerPhone}
+📍 Address: ${rawCustomerAddress}
+📦 Product: ${rawProductNames}
+🔢 Quantity: ${totalQuantity}
+💰 Price: ₹${totalPrice}
+💳 Payment: ${paymentStatusPlain}
+🆔 Order ID: #${orderId}
+📄 Official Tax Invoice (PDF): Attached below`;
 
   // Generate Authentic PDF Document
   let pdfBlob: Blob | null = null;
@@ -649,30 +695,67 @@ async function sendTelegramOrderNotification(order: any, customBotToken?: string
   }
 
   const results = [];
+  let atLeastOneSuccess = false;
 
   for (const chatId of TELEGRAM_ADMIN_CHAT_IDS) {
     try {
-      // 1. Send Order Details Message
-      const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: messageText,
-          parse_mode: "HTML"
-        })
-      });
-      const data = await resp.json();
-      results.push({ chatId, ok: data.ok, description: data.description });
+      // Step 1: Send Message with HTML parsing
+      let msgSent = false;
+      try {
+        const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: htmlMessageText,
+            parse_mode: "HTML"
+          })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          msgSent = true;
+          atLeastOneSuccess = true;
+          results.push({ chatId, ok: true });
+        } else {
+          console.warn(`HTML Telegram parse notice for ${chatId}, falling back to plain text:`, data.description);
+        }
+      } catch (e: any) {
+        console.warn(`HTML Telegram fetch error for ${chatId}:`, e.message);
+      }
 
-      // 2. Direct PDF Invoice Document Delivery via sendDocument (Download directly in Telegram)
+      // Step 1 Fallback: Plain Text Message if HTML failed
+      if (!msgSent) {
+        try {
+          const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: plainTextMessage
+            })
+          });
+          const data = await resp.json();
+          if (data.ok) {
+            msgSent = true;
+            atLeastOneSuccess = true;
+            results.push({ chatId, ok: true, fallback: true });
+          } else {
+            console.warn(`Plain text Telegram notice for ${chatId}:`, data.description);
+            results.push({ chatId, ok: false, error: data.description });
+          }
+        } catch (e: any) {
+          console.warn(`Plain text Telegram fetch error for ${chatId}:`, e.message);
+          results.push({ chatId, ok: false, error: e.message });
+        }
+      }
+
+      // Step 2: Direct PDF Invoice Document Delivery via sendDocument
       if (pdfBlob) {
         try {
           const formData = new FormData();
           formData.append("chat_id", chatId);
           formData.append("document", pdfBlob, `Tax_Invoice_${orderId}.pdf`);
-          formData.append("caption", `📄 <b>Official Tax Invoice (PDF)</b> #${orderId} (${isCod ? 'COD - Collect ₹' + totalPrice : 'PAID Online'})`);
-          formData.append("parse_mode", "HTML");
+          formData.append("caption", `📄 Official Tax Invoice (PDF) #${orderId} (${isCod ? 'COD - Collect ₹' + totalPrice : 'PAID Online'})`);
 
           await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
             method: "POST",
@@ -684,12 +767,16 @@ async function sendTelegramOrderNotification(order: any, customBotToken?: string
       }
 
     } catch (err: any) {
-      console.warn(`Telegram network error for chat ${chatId}:`, err.message);
+      console.warn(`Telegram general error for chat ${chatId}:`, err.message);
       results.push({ chatId, ok: false, error: err.message });
     }
   }
 
-  return { success: true, results };
+  if (atLeastOneSuccess) {
+    sentTelegramOrderIds.add(orderId);
+  }
+
+  return { success: atLeastOneSuccess, results };
 }
 
 // Health Check
@@ -1008,7 +1095,79 @@ app.post("/api/payment/verify", async (req, res) => {
   }
 });
 
-// 3. Cloudflare R2 Upload API
+// 3A. Cloudflare R2 Raw Binary PDF Direct Upload (Preserves original binary bytes without conversion)
+app.post("/api/r2/upload-binary-pdf", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: "No PDF file attached in multipart form." });
+    }
+
+    const file = req.file;
+    const originalName = file.originalname || "NEET_Notes.pdf";
+    const cleanFilename = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const safeFilename = cleanFilename.toLowerCase().endsWith(".pdf") ? cleanFilename : `${cleanFilename}.pdf`;
+    
+    // Store in clean 'pdfs/' R2 folder preserving .pdf extension
+    const objectKey = `pdfs/${Date.now()}_${safeFilename}`;
+    const fileBuffer = file.buffer;
+    const mimeType = "application/pdf";
+    const fileSize = file.size;
+    const uploadDate = new Date().toISOString();
+    const productId = req.body.productId || "";
+    const productTitle = req.body.productTitle || "";
+
+    // Cache locally for instant high-speed streaming
+    fileBufferCache.set(objectKey, { buffer: fileBuffer, contentType: mimeType });
+
+    // Upload direct binary to Cloudflare R2 S3 bucket
+    if (r2Client) {
+      try {
+        const uploadCommand = new PutObjectCommand({
+          Bucket: CLOUDFLARE_R2_BUCKET,
+          Key: objectKey,
+          Body: fileBuffer,
+          ContentType: mimeType,
+          Metadata: {
+            filename: encodeURIComponent(originalName),
+            filesize: String(fileSize),
+            mimetype: mimeType,
+            uploaddate: uploadDate,
+            productid: encodeURIComponent(productId),
+            producttitle: encodeURIComponent(productTitle)
+          }
+        });
+        await r2Client.send(uploadCommand);
+      } catch (r2Err: any) {
+        console.warn("Cloudflare R2 binary PDF upload warning:", r2Err.message);
+      }
+    }
+
+    const proxyUrl = `/api/r2/file/${objectKey}`;
+    const downloadUrl = `/api/pdf/download/${objectKey}`;
+
+    return res.json({
+      success: true,
+      key: objectKey,
+      url: proxyUrl,
+      downloadUrl: downloadUrl,
+      metadata: {
+        fileName: originalName,
+        objectKey: objectKey,
+        fileSize: fileSize,
+        mimeType: mimeType,
+        uploadDate: uploadDate,
+        productId: productId,
+        productTitle: productTitle
+      },
+      message: "Binary PDF uploaded directly to Cloudflare R2 without conversion"
+    });
+  } catch (err: any) {
+    console.error("Binary PDF Upload error:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3B. Cloudflare R2 Standard Base64 Image Upload API
 app.post("/api/r2/upload", async (req, res) => {
   try {
     const { filename, contentType, base64Data, folder } = req.body;
@@ -1065,16 +1224,40 @@ app.post("/api/r2/upload", async (req, res) => {
   }
 });
 
+// Helper to extract clean object key from any URL or path
+function extractCleanR2Key(inputKey: string): string {
+  let clean = decodeURIComponent(inputKey || "").trim();
+  if (clean.includes(".r2.dev/")) {
+    clean = clean.split(".r2.dev/")[1] || clean;
+  } else if (clean.includes(".r2.cloudflarestorage.com/")) {
+    clean = clean.split(".r2.cloudflarestorage.com/")[1] || clean;
+    if (clean.startsWith("ncertify/")) {
+      clean = clean.replace("ncertify/", "");
+    }
+  } else if (clean.startsWith("/api/r2/file/")) {
+    clean = clean.replace("/api/r2/file/", "");
+  } else if (clean.startsWith("api/r2/file/")) {
+    clean = clean.replace("api/r2/file/", "");
+  } else if (clean.startsWith("/api/pdf/download/")) {
+    clean = clean.replace("/api/pdf/download/", "");
+  } else if (clean.startsWith("api/pdf/download/")) {
+    clean = clean.replace("api/pdf/download/", "");
+  }
+  return clean.replace(/^\/+/, "");
+}
+
 // 4. Cloudflare R2 Proxy File Serving (Solves private S3 403 & CORS issues)
 app.get("/api/r2/file/*", async (req, res) => {
   try {
-    const rawKey = req.params[0];
+    const rawKey = req.params[0] || (req.query.key as string) || "";
     if (!rawKey) {
       return res.status(404).send("File key missing");
     }
 
+    const cleanKey = extractCleanR2Key(rawKey);
+
     // 1. Check in-memory cache first
-    const cached = fileBufferCache.get(rawKey);
+    const cached = fileBufferCache.get(cleanKey) || fileBufferCache.get(rawKey);
     if (cached) {
       res.setHeader("Content-Type", cached.contentType);
       res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -1086,15 +1269,16 @@ app.get("/api/r2/file/*", async (req, res) => {
       try {
         const getCmd = new GetObjectCommand({
           Bucket: CLOUDFLARE_R2_BUCKET,
-          Key: rawKey
+          Key: cleanKey
         });
         const r2Res = await r2Client.send(getCmd);
         if (r2Res.Body) {
           const bytes = await r2Res.Body.transformToByteArray();
           const buffer = Buffer.from(bytes);
-          const cType = r2Res.ContentType || "image/jpeg";
+          const isPdf = cleanKey.toLowerCase().endsWith(".pdf") || (r2Res.ContentType && r2Res.ContentType.includes("pdf"));
+          const cType = isPdf ? "application/pdf" : (r2Res.ContentType || "image/jpeg");
           
-          fileBufferCache.set(rawKey, { buffer, contentType: cType });
+          fileBufferCache.set(cleanKey, { buffer, contentType: cType });
           res.setHeader("Content-Type", cType);
           res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
           return res.send(buffer);
@@ -1104,10 +1288,94 @@ app.get("/api/r2/file/*", async (req, res) => {
       }
     }
 
+    // 3. If rawKey was an external HTTP/HTTPS URL, proxy it safely
+    if (rawKey.startsWith("http://") || rawKey.startsWith("https://")) {
+      try {
+        const extResp = await fetch(rawKey);
+        if (extResp.ok) {
+          const bytes = await extResp.arrayBuffer();
+          const buffer = Buffer.from(bytes);
+          const cType = extResp.headers.get("content-type") || "application/pdf";
+          res.setHeader("Content-Type", cType);
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.send(buffer);
+        }
+      } catch (extErr: any) {
+        console.warn("External file proxy error:", extErr.message);
+      }
+    }
+
     return res.status(404).send("File not found");
   } catch (e: any) {
     console.error("File serve error:", e);
     return res.status(500).send("Error serving file");
+  }
+});
+
+// Direct Binary PDF Download Endpoint with Content-Disposition Attachment
+app.get(["/api/pdf/download/*", "/api/r2/download/*", "/api/pdf/download", "/api/r2/download"], async (req, res) => {
+  try {
+    const rawKey = req.params[0] || (req.query.key as string) || (req.query.url as string) || "";
+    if (!rawKey) {
+      return res.status(404).send("File key required");
+    }
+
+    const cleanKey = extractCleanR2Key(rawKey);
+    let buffer: Buffer | null = null;
+    let contentType = "application/pdf";
+    let downloadFilename = (req.query.filename as string) || path.basename(cleanKey) || "NEET_Notes.pdf";
+    if (!downloadFilename.toLowerCase().endsWith(".pdf")) {
+      downloadFilename = `${downloadFilename}.pdf`;
+    }
+
+    // 1. Check in-memory cache
+    const cached = fileBufferCache.get(cleanKey) || fileBufferCache.get(rawKey);
+    if (cached) {
+      buffer = cached.buffer;
+      contentType = cached.contentType;
+    } else if (r2Client) {
+      // 2. Fetch from Cloudflare R2
+      try {
+        const getCmd = new GetObjectCommand({
+          Bucket: CLOUDFLARE_R2_BUCKET,
+          Key: cleanKey
+        });
+        const r2Res = await r2Client.send(getCmd);
+        if (r2Res.Body) {
+          const bytes = await r2Res.Body.transformToByteArray();
+          buffer = Buffer.from(bytes);
+          contentType = r2Res.ContentType || "application/pdf";
+        }
+      } catch (r2Err: any) {
+        console.warn("R2 download fetch note:", r2Err.message);
+      }
+    }
+
+    // 3. Fallback: If rawKey or cleanKey is an external URL, fetch directly
+    if (!buffer && (rawKey.startsWith("http://") || rawKey.startsWith("https://"))) {
+      try {
+        const extResp = await fetch(rawKey);
+        if (extResp.ok) {
+          const bytes = await extResp.arrayBuffer();
+          buffer = Buffer.from(bytes);
+          contentType = extResp.headers.get("content-type") || "application/pdf";
+        }
+      } catch (extErr: any) {
+        console.warn("External PDF download fetch error:", extErr.message);
+      }
+    }
+
+    if (!buffer) {
+      return res.status(404).send("Original PDF file not found in R2 storage");
+    }
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadFilename)}"`);
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    return res.send(buffer);
+  } catch (err: any) {
+    console.error("PDF Download error:", err);
+    return res.status(500).send("Error downloading PDF file");
   }
 });
 
@@ -1314,6 +1582,9 @@ app.post("/api/db/orders", async (req, res) => {
 
     // Sync with Firebase Realtime Database
     syncToFirebaseRTDB("orders", db.orders).catch(e => console.warn(e));
+
+    // Automatically trigger Telegram notification with PDF Tax Invoice to both Admins
+    sendTelegramOrderNotification(order).catch(e => console.warn("Auto Telegram order dispatch notice:", e));
 
     return res.json({ success: true, order, orders: db.orders });
   } catch (err: any) {

@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { X, Lock, Mail, User, KeyRound, AlertCircle, CheckCircle2, ShieldCheck, Loader2, Send } from 'lucide-react';
 import { 
   auth, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
+  safeSignIn,
+  safeCreateUser,
   sendPasswordResetEmail, 
   updateProfile,
   isUserAdmin,
@@ -52,6 +52,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const getFirebaseErrorMessage = (err: any): string => {
     const code = err?.code || '';
+    const msg = (err?.message || '').toLowerCase();
+    
+    if (msg.includes('database is closing') || msg.includes('closing') || msg.includes('indexeddb') || msg.includes('invalidstateerror')) {
+      return 'Session storage refreshed. Please try logging in again.';
+    }
+
     switch (code) {
       case 'auth/user-not-found':
         return 'No account found with this email. Please click "Sign Up" above to create your account first.';
@@ -105,8 +111,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
 
     try {
-      // 1. Create account in Firebase Authentication
-      const userCred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+      // 1. Create account in Firebase Authentication with resilient fallback
+      const userCred = await safeCreateUser(cleanEmail, password);
       const fbUser = userCred.user;
       
       if (fbUser && name.trim()) {
@@ -172,8 +178,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
 
     try {
-      // 1. Single source of truth for passwords: Firebase Authentication
-      const userCred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+      // 1. Single source of truth for passwords: Firebase Authentication with safe retry
+      const userCred = await safeSignIn(cleanEmail, password);
       const fbUser = userCred.user;
 
       // 2. Retrieve or build user profile metadata
@@ -211,7 +217,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (requiredAdminPassword && password === requiredAdminPassword && (code === 'auth/user-not-found' || code === 'auth/invalid-credential')) {
         try {
           // Auto-provision into Firebase Auth on the fly
-          const newUserCred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+          const newUserCred = await safeCreateUser(cleanEmail, password);
           const newFbUser = newUserCred.user;
           const defaultAdminName = cleanEmail.includes('fdar') ? 'Faisal Dar (Admin)' : 'Shahzaib Husain (Admin)';
           try {

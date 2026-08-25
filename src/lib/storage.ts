@@ -173,14 +173,14 @@ export function saveR2PublicDomain(domain: string): void {
   }
 }
 
-// Universal Image URL resolver for Cloudflare R2, Base64, and Web CDNs
+// Universal Image and Asset URL resolver for Cloudflare R2, Base64, and Web CDNs
 export function resolveImageUrl(url?: string): string {
   if (!url) return '';
   const trimmed = url.trim();
   if (!trimmed) return '';
 
   // 1. Data URLs (base64) & Blobs are self-contained
-  if (trimmed.startsWith('data:image/') || trimmed.startsWith('blob:')) {
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
     return trimmed;
   }
 
@@ -216,20 +216,50 @@ export function resolveImageUrl(url?: string): string {
     return `${publicDomain}/${key}`;
   }
 
-  // 5. If it's an object key without leading slash (e.g. products/xxx.jpg or book-covers/xxx.png)
-  if (
-    trimmed.startsWith('products/') ||
-    trimmed.startsWith('book-covers/') ||
-    trimmed.startsWith('pdf-covers/') ||
-    trimmed.startsWith('sample-pages/') ||
-    trimmed.startsWith('banners/') ||
-    trimmed.startsWith('pdfs/')
-  ) {
-    return `${publicDomain}/${trimmed}`;
+  // 5. If it's an absolute HTTP/HTTPS URL
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
   }
 
-  // 6. Already an absolute HTTP/HTTPS URL (e.g. Unsplash, external CDN)
-  return trimmed;
+  // 6. Object key or filename without protocol (e.g. products/xxx.jpg or NCERTify_Mock_Test.pdf)
+  const cleanKey = trimmed.replace(/^\/+/, '');
+  return `${publicDomain}/${cleanKey}`;
+}
+
+// Dedicated PDF Direct Download URL resolver for Cloudflare R2
+export function resolvePdfUrl(url?: string): string {
+  if (!url) return '';
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return trimmed;
+
+  const publicDomain = getR2PublicDomain() || DEFAULT_R2_PUBLIC_DOMAIN;
+
+  if (trimmed.includes('.r2.dev/')) {
+    const key = trimmed.split('.r2.dev/')[1];
+    return `${publicDomain}/${key}`;
+  }
+
+  if (trimmed.includes('.r2.cloudflarestorage.com/')) {
+    const afterHost = trimmed.split('.r2.cloudflarestorage.com/')[1] || '';
+    const parts = afterHost.split('/');
+    const key = (parts.length > 1 && (parts[0] === 'ncertify' || parts[0] === 'bucket')) 
+      ? parts.slice(1).join('/') 
+      : afterHost;
+    return `${publicDomain}/${key}`;
+  }
+
+  if (trimmed.startsWith('/api/r2/file/')) {
+    const key = trimmed.replace('/api/r2/file/', '');
+    return `${publicDomain}/${key}`;
+  }
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+
+  const cleanKey = trimmed.replace(/^\/+/, '');
+  return `${publicDomain}/${cleanKey}`;
 }
 
 // Normalize any R2 asset URL directly to the current public R2 CDN link

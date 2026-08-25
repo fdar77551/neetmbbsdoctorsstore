@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { resolveImageUrl } from './storage';
+import { resolvePdfUrl, resolveImageUrl, getStoredProducts } from './storage';
 
 export interface NotePdfDetails {
   id: string;
@@ -30,7 +30,7 @@ function base64ToBlob(dataUrl: string, defaultMime = 'application/pdf'): Blob {
 }
 
 /**
- * Triggers a real browser file download using a Blob or URL
+ * Triggers a browser file download using a Blob or URL
  */
 function triggerFileDownload(blobOrUrl: Blob | string, filename: string): void {
   const isBlob = blobOrUrl instanceof Blob;
@@ -46,63 +46,93 @@ function triggerFileDownload(blobOrUrl: Blob | string, filename: string): void {
   a.click();
 
   setTimeout(() => {
-    document.body.removeChild(a);
+    try {
+      document.body.removeChild(a);
+    } catch (e) {}
     if (isBlob) {
       URL.revokeObjectURL(url);
     }
-  }, 1500);
+  }, 2000);
 }
 
 /**
- * Universal safe downloader: Ensures the output is the REAL PDF uploaded by the admin,
- * or generates the official verification PDF if no remote file is attached.
+ * Universal PDF downloader:
+ * Directly opens and navigates to the Cloudflare R2 PDF link so the browser's native
+ * download manager handles the download (automatically downloading first time and prompting
+ * "Download file again?" on subsequent downloads).
  */
 export async function downloadNotesPdf(details: NotePdfDetails): Promise<void> {
-  const cleanTitle = (details.title || 'NEET_MBBS_Notes').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-  const filename = `${cleanTitle}_Notes.pdf`;
+  let cleanTitle = (details.title || 'NEET_MBBS_Notes').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+  cleanTitle = cleanTitle.replace(/\.pdf$/i, '').replace(/\.html?$/i, '');
+  const filename = `${cleanTitle}.pdf`;
 
-  const rawUrl = details.pdfUrl ? details.pdfUrl.trim() : '';
+  // 1. Check if details.pdfUrl is provided or look it up in stored products
+  let rawUrl = (details.pdfUrl || '').trim();
+  if (!rawUrl) {
+    try {
+      const allProducts = getStoredProducts();
+      const matched = allProducts.find(p => 
+        (details.id && p.id === details.id) || 
+        (details.title && p.title.toLowerCase() === details.title.toLowerCase())
+      );
+      if (matched && matched.pdfUrl) {
+        rawUrl = matched.pdfUrl.trim();
+      }
+    } catch (e) {}
+  }
 
-  // 1. Direct Base64 Data URL (Uploaded directly by Admin)
+  // 2. Direct Base64 Data URL (Uploaded directly by Admin in session)
   if (rawUrl.startsWith('data:application/pdf') || (rawUrl.startsWith('data:') && rawUrl.includes('base64'))) {
     try {
       const pdfBlob = base64ToBlob(rawUrl, 'application/pdf');
       triggerFileDownload(pdfBlob, filename);
       return;
     } catch (err) {
-      console.warn('Error converting base64 PDF, attempting fallback:', err);
+      console.warn('Error converting base64 PDF:', err);
     }
   }
 
-  // 2. Blob URL
+  // 3. Blob URL
   if (rawUrl.startsWith('blob:')) {
     triggerFileDownload(rawUrl, filename);
     return;
   }
 
-  // 3. Remote URL or API R2 endpoint (/api/r2/file/..., https://...)
-  const resolved = resolveImageUrl(rawUrl);
-  if (resolved && (resolved.startsWith('http://') || resolved.startsWith('https://') || resolved.startsWith('/api/r2/file') || resolved.startsWith('/uploads'))) {
-    try {
-      const resp = await fetch(resolved);
-      if (resp.ok) {
-        const blob = await resp.blob();
-        // Check if returned content is an actual PDF or binary file
-        const contentType = resp.headers.get('content-type') || blob.type || '';
-        if (!contentType.includes('text/html')) {
-          const pdfBlob = new Blob([blob], { type: 'application/pdf' });
-          triggerFileDownload(pdfBlob, filename);
-          return;
-        }
+  // 4. Cloudflare R2 / Remote PDF URL -> Directly open/navigate to the Cloudflare download link
+  if (rawUrl) {
+    const cloudflarePdfUrl = resolvePdfUrl(rawUrl);
+
+    if (cloudflarePdfUrl.startsWith('http://') || cloudflarePdfUrl.startsWith('https://')) {
+      try {
+        // Trigger direct browser download navigation
+        const a = document.createElement('a');
+        a.href = cloudflarePdfUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          try {
+            document.body.removeChild(a);
+          } catch (e) {}
+        }, 500);
+        return;
+      } catch (clickErr) {
+        console.warn('Anchor trigger fallback:', clickErr);
+        window.open(cloudflarePdfUrl, '_blank');
+        return;
       }
-    } catch (e) {
-      console.warn('Could not fetch remote PDF blob, falling back to verified local doc:', e);
     }
   }
 
-  // 4. Fallback: Generate the authentic verified PDF locally
-  const doc = generateHighYieldNotesPdfDoc(details);
-  doc.save(filename);
+  // 5. Fallback: Generate the authentic verified PDF locally with jsPDF if no file attached
+  try {
+    const doc = generateHighYieldNotesPdfDoc(details);
+    doc.save(filename);
+  } catch (pdfGenErr) {
+    console.error('Local PDF generation error:', pdfGenErr);
+  }
 }
 
 /**

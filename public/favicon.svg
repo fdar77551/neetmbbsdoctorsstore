@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%">
+  <defs>
+    <linearGradient id="gold-wing-left" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FDE68A" />
+      <stop offset="50%" stop-color="#F59E0B" />
+      <stop offset="100%" stop-color="#D97706" />
+    </linearGradient>
+    <linearGradient id="gold-wing-right" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FDE68A" />
+      <stop offset="50%" stop-color="#F59E0B" />
+      <stop offset="100%" stop-color="#D97706" />
+    </linearGradient>
+    <linearGradient id="ecg-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#EA580C" />
+      <stop offset="50%" stop-color="#F59E0B" />
+      <stop offset="100%" stop-color="#16A34A" />
+    </linearGradient>
+  </defs>
+
+  <!-- Deep Navy Border & Pure White Circle -->
+  <circle cx="100" cy="100" r="98" fill="#FFFFFF" stroke="#0B1A30" stroke-width="4" />
+
+  <!-- Golden Winged Caduceus Symbol at Top -->
+  <g id="caduceus-symbol" transform="translate(100, 36)">
+    <!-- Central Staff -->
+    <line x1="0" y1="-22" x2="0" y2="16" stroke="#D97706" stroke-width="2.5" stroke-linecap="round" />
+    <circle cx="0" cy="-22" r="3.5" fill="#F59E0B" stroke="#B45309" stroke-width="1" />
+
+    <!-- Golden Wings -->
+    <path d="M-2 -15 C -14 -28, -30 -22, -38 -10 C -28 -8, -18 -10, -4 -8 Z" fill="url(#gold-wing-left)" />
+    <path d="M2 -15 C 14 -28, 30 -22, 38 -10 C 28 -8, 18 -10, 4 -8 Z" fill="url(#gold-wing-right)" />
+
+    <!-- Entwined Golden Serpents -->
+    <path d="M -7 -8 C -13 -3, -11 4, 0 7 C 12 10, 14 15, 0 19 C -10 15, -12 10, 0 7" fill="none" stroke="#F59E0B" stroke-width="2.2" stroke-linecap="round" />
+    <path d="M 7 -8 C 13 -3, 11 4, 0 7 C -12 10, -14 15, 0 19 C 10 15, 12 10, 0 7" fill="none" stroke="#D97706" stroke-width="2.2" stroke-linecap="round" />
+  </g>
+
+  <!-- NEET Text (Bold Orange) -->
+  <text x="100" y="79" text-anchor="middle" fill="#EA580C" font-size="30" font-weight="900" font-family="system-ui, -apple-system, sans-serif" letter-spacing="1.5">NEET</text>
+
+  <!-- Divider Top Line -->
+  <line x1="26" y1="87" x2="174" y2="87" stroke="#EA580C" stroke-width="1.2" stroke-opacity="0.8" />
+
+  <!-- MBBS Text (Massive Deep Navy Blue) -->
+  <text x="100" y="124" text-anchor="middle" fill="#0B2545" font-size="37" font-weight="950" font-family="system-ui, -apple-system, sans-serif" letter-spacing="0.8">MBBS</text>
+
+  <!-- ECG Heartbeat Divider Line -->
+  <path d="M 24 132 L 82 132 L 87 127 L 92 136 L 96 125 L 101 139 L 105 131 L 110 134 L 114 132 L 176 132" fill="none" stroke="url(#ecg-grad)" stroke-width="1.8" stroke-linejoin="round" />
+
+  <!-- DOCTORS Text (Medical Emerald Green) -->
+  <text x="100" y="154" text-anchor="middle" fill="#16A34A" font-size="22" font-weight="900" font-family="system-ui, -apple-system, sans-serif" letter-spacing="2.2">DOCTORS</text>
+
+  <!-- — STORE — Subtext -->
+  <g transform="translate(100, 172)">
+    <line x1="-58" y1="-4" x2="-38" y2="-4" stroke="#EA580C" stroke-width="2.2" stroke-linecap="round" />
+    <text x="0" y="0" text-anchor="middle" fill="#0B2545" font-size="18" font-weight="900" font-family="system-ui, -apple-system, sans-serif" letter-spacing="3.5">STORE</text>
+    <line x1="38" y1="-4" x2="58" y2="-4" stroke="#EA580C" stroke-width="2.2" stroke-linecap="round" />
+  </g>
+</svg>

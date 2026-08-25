@@ -478,7 +478,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Cloudflare R2 Upload Handler for PDF File
+  // Cloudflare R2 Direct Binary Upload Handler for PDF File (No Base64 conversion)
   const handlePdfFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -487,25 +487,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setPdfUploadSuccess('');
 
     try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64Data = reader.result as string;
-        const r2Url = await uploadToR2Safe(file.name, file.type || 'application/pdf', base64Data, 'pdfs');
-        if (r2Url) {
-          setPdfUrl(r2Url);
-          setPdfUploadSuccess(`PDF uploaded directly to Cloudflare R2 (${file.name})!`);
-        } else {
-          setPdfUrl(base64Data);
-          setPdfUploadSuccess(`PDF file loaded (${file.name}) - ready for student access!`);
+      // 1. Send original binary file directly to backend S3 R2 endpoint via FormData
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+      formData.append('productId', editingProductId || `${type}-${Date.now()}`);
+      formData.append('productTitle', title || 'NEET Study Notes');
+
+      const response = await fetch('/api/r2/upload-binary-pdf', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && (data.url || data.key)) {
+          const finalPdfUrl = data.url || `/api/r2/file/${data.key}`;
+          setPdfUrl(finalPdfUrl);
+          const sizeKb = Math.round(file.size / 1024);
+          const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+          const displaySize = file.size > 1024 * 1024 ? `${sizeMb} MB` : `${sizeKb} KB`;
+          setPdfUploadSuccess(`Binary PDF uploaded directly to Cloudflare R2! (${file.name}, ${displaySize})`);
+          setUploadingPdf(false);
+          return;
         }
-        setUploadingPdf(false);
-      };
-      reader.onerror = () => {
-        setUploadingPdf(false);
-      };
-      reader.readAsDataURL(file);
+      }
+
+      // Fallback: If server is unavailable, use standard object URL
+      const objectUrl = URL.createObjectURL(file);
+      setPdfUrl(objectUrl);
+      setPdfUploadSuccess(`PDF attached (${file.name}) - original format preserved!`);
+      setUploadingPdf(false);
     } catch (err: any) {
       console.error('PDF file upload error:', err);
+      // Fallback to object URL
+      const objectUrl = URL.createObjectURL(file);
+      setPdfUrl(objectUrl);
+      setPdfUploadSuccess(`PDF attached (${file.name})`);
       setUploadingPdf(false);
     }
   };
