@@ -42,6 +42,30 @@ import { InvoiceModal } from './components/InvoiceModal';
 import { PdfReaderModal } from './components/PdfReaderModal';
 import { SupportModal } from './components/SupportModal';
 import { WishlistModal } from './components/WishlistModal';
+import { SoftCopyPdfPortal } from './components/SoftCopyPdfPortal';
+import { HomeHeroSection } from './components/HomeHeroSection';
+import { HomeCategoryCards } from './components/HomeCategoryCards';
+import { 
+  PopularPhysicalBooksSection, 
+  DigitalStudyMaterialSection, 
+  FeaturedMockTestsSection, 
+  ConnectWithUsSection 
+} from './components/HomeImage1Sections';
+import { TrustBadges } from './components/TrustBadges';
+import { MockTestsListingView } from './components/MockTestsListingView';
+import { CbtTestInterface } from './components/CbtTestInterface';
+import { MockTestResultView } from './components/MockTestResultView';
+import { MockTestLeaderboardModal } from './components/MockTestLeaderboardModal';
+import { MockTest, MockTestAttempt, NeetFullCourseConfig } from './types';
+import { saveStoredMockPurchase, getStoredMockTests } from './lib/mockTestData';
+import { HomeFullCourseCard } from './components/HomeFullCourseCard';
+import { FullCourseDetailView } from './components/FullCourseDetailView';
+import { 
+  getFullCourseConfig, 
+  syncFullCourseConfigFromBackend, 
+  convertCourseToCartProduct, 
+  COURSE_ID 
+} from './lib/fullCourseData';
 import { CheckCircle2, Package } from 'lucide-react';
 
 export default function App() {
@@ -50,6 +74,15 @@ export default function App() {
   const [selectedFormat, setSelectedFormat] = useState<ProductType>('book');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Mock Test System States
+  const [activeMockTest, setActiveMockTest] = useState<MockTest | null>(null);
+  const [activeMockTestAttempt, setActiveMockTestAttempt] = useState<MockTestAttempt | null>(null);
+  const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+  const [leaderboardMockTest, setLeaderboardMockTest] = useState<MockTest | null>(null);
+
+  // NEET Full Course State
+  const [fullCourseConfig, setFullCourseConfig] = useState<NeetFullCourseConfig>(() => getFullCourseConfig());
 
   // Data States
   const [products, setProducts] = useState<Product[]>([]);
@@ -128,8 +161,9 @@ export default function App() {
       const allUsers = getRegisteredUsers();
       setUsers(allUsers);
       const current = getCurrentUser();
-      if (current) {
-        const matched = allUsers.find(u => u.email.toLowerCase() === current.email.toLowerCase());
+      if (current && current.email) {
+        const currentEmail = current.email.toLowerCase().trim();
+        const matched = allUsers.find(u => (u?.email || '').toLowerCase().trim() === currentEmail);
         if (matched) {
           setUserProfile(matched);
           saveCurrentUser(matched);
@@ -144,6 +178,10 @@ export default function App() {
     const handleStoreConfigUpdate = () => {
       setStoreConfig(getStoredStoreConfig());
     };
+    const handleCourseConfigUpdate = (e: any) => {
+      if (e?.detail) setFullCourseConfig(e.detail);
+      else setFullCourseConfig(getFullCourseConfig());
+    };
 
     window.addEventListener('neetmbbs_products_updated', handleProductsUpdate);
     window.addEventListener('neetmbbs_orders_updated', handleOrdersUpdate);
@@ -152,11 +190,26 @@ export default function App() {
     window.addEventListener('neetmbbs_wishlist_updated', handleWishlistUpdate);
     window.addEventListener('neetmbbs_current_user_updated', handleCurrentUserUpdate);
     window.addEventListener('neetmbbs_store_config_updated', handleStoreConfigUpdate);
+    window.addEventListener('neetmbbs_course_config_updated', handleCourseConfigUpdate);
+
+    // Initial background sync with backend course endpoint
+    syncFullCourseConfigFromBackend(isUserAdmin(userProfile?.email)).then(cfg => {
+      if (cfg) setFullCourseConfig(cfg);
+    }).catch(() => {});
+
+    // Check deep linking for full course
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('course') === 'neet-full-course' || window.location.hash === '#full-course' || window.location.hash === '#neet-full-course') {
+        setCurrentScreen('neet-full-course');
+      }
+    } catch (e) {}
 
     const unsubscribe = onAuthStateChanged(auth, (fbUser) => {
       if (fbUser && fbUser.email) {
+        const cleanFbEmail = fbUser.email.toLowerCase().trim();
         const registered = getRegisteredUsers().find(
-          u => u.email.toLowerCase() === fbUser.email!.toLowerCase()
+          u => (u?.email || '').toLowerCase().trim() === cleanFbEmail
         );
         const isAdmin = isUserAdmin(fbUser.email);
         const resolvedProfile: UserProfile = registered || {
@@ -179,6 +232,7 @@ export default function App() {
       window.removeEventListener('neetmbbs_wishlist_updated', handleWishlistUpdate);
       window.removeEventListener('neetmbbs_current_user_updated', handleCurrentUserUpdate);
       window.removeEventListener('neetmbbs_store_config_updated', handleStoreConfigUpdate);
+      window.removeEventListener('neetmbbs_course_config_updated', handleCourseConfigUpdate);
       unsubscribe();
     };
   }, []);
@@ -192,14 +246,26 @@ export default function App() {
 
   // Cart Handlers
   const handleAddToCart = (product: Product) => {
-    const existingIndex = cart.findIndex(item => item.product.id === product.id);
     let updatedCart: CartItem[];
 
-    if (existingIndex > -1) {
-      updatedCart = [...cart];
-      updatedCart[existingIndex].quantity += 1;
+    if (product.id.startsWith('pass-')) {
+      const parts = product.id.split('-');
+      const subjectKey = parts[1];
+      // Filter out any conflicting plan for the same subject
+      const withoutSubjectPass = cart.filter(item => {
+        if (!item.product.id.startsWith('pass-')) return true;
+        const itemSubject = item.product.id.split('-')[1];
+        return itemSubject !== subjectKey;
+      });
+      updatedCart = [{ product, quantity: 1 }, ...withoutSubjectPass];
     } else {
-      updatedCart = [...cart, { product, quantity: 1 }];
+      const existingIndex = cart.findIndex(item => item.product.id === product.id);
+      if (existingIndex > -1) {
+        updatedCart = [...cart];
+        updatedCart[existingIndex].quantity += 1;
+      } else {
+        updatedCart = [...cart, { product, quantity: 1 }];
+      }
     }
 
     setCart(updatedCart);
@@ -253,6 +319,18 @@ export default function App() {
     setIsCheckoutOpen(true);
   };
 
+  // NEET (11th & 12th) Full Course Enrollment
+  const handleEnrollFullCourse = () => {
+    if (!userProfile) {
+      setAuthInitialMode('signup');
+      setIsAuthOpen(true);
+      showToast('Please sign in or create an account to enroll in the Full Course');
+      return;
+    }
+    const courseProduct = convertCourseToCartProduct(fullCourseConfig);
+    handleQuickBuy(courseProduct);
+  };
+
   // Sign Out
   const handleSignOut = async () => {
     try {
@@ -287,9 +365,163 @@ export default function App() {
 
   const cartTotalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
 
+  // Sync route with browser history & URL paths
+  useEffect(() => {
+    const syncRouteFromLocation = () => {
+      const path = window.location.pathname.replace(/^\/+|\/+$/g, '');
+      if (path === 'mock-tests' || path === 'mock-test') {
+        setCurrentScreen('mock-tests');
+      } else if (path === 'neet-pass' || path === 'pass') {
+        setSelectedFormat('pdf');
+        setCurrentScreen('neet-pass');
+      } else if (path === 'orders' || path === 'my-orders') {
+        setCurrentScreen('orders');
+      } else if (path === 'my-pdfs' || path === 'pdfs') {
+        setCurrentScreen('pdfs');
+      } else if (path === 'account' || path === 'profile') {
+        setCurrentScreen('account');
+      } else if (path === 'admin') {
+        setCurrentScreen('admin');
+      } else if (path === 'books') {
+        setSelectedFormat('book');
+        setCurrentScreen('format-listing');
+      } else if (path === 'softcopy-pdf' || path === 'notes') {
+        setSelectedFormat('pdf');
+        setCurrentScreen('format-listing');
+      } else if (!path) {
+        setCurrentScreen('home');
+      }
+    };
+
+    syncRouteFromLocation();
+
+    const handlePopState = (e: PopStateEvent) => {
+      // Close modals if open first
+      if (selectedProduct) {
+        setSelectedProduct(null);
+        return;
+      }
+      if (isCartOpen) {
+        setIsCartOpen(false);
+        return;
+      }
+      if (isCheckoutOpen) {
+        setIsCheckoutOpen(false);
+        return;
+      }
+      if (isAuthOpen) {
+        setIsAuthOpen(false);
+        return;
+      }
+      if (isLeaderboardOpen) {
+        setIsLeaderboardOpen(false);
+        return;
+      }
+      if (pdfReaderData) {
+        setPdfReaderData(null);
+        return;
+      }
+
+      if (e.state && e.state.screen) {
+        setCurrentScreen(e.state.screen);
+      } else {
+        syncRouteFromLocation();
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [selectedProduct, isCartOpen, isCheckoutOpen, isAuthOpen, isLeaderboardOpen, pdfReaderData]);
+
   const handleNavigateScreen = (screen: ActiveNavScreen) => {
     setCurrentScreen(screen);
+    const path = screen === 'home' ? '/' : `/${screen}`;
+    if (window.location.pathname !== path) {
+      window.history.pushState({ screen }, '', path);
+    }
     window.scrollTo({ top: 0, behavior: 'instant' });
+  };
+
+  // Mock Test System Handlers
+  const handleStartMockTest = (test: MockTest) => {
+    setActiveMockTest(test);
+    setCurrentScreen('mock-test-cbt');
+    if (window.location.pathname !== '/mock-tests/cbt') {
+      window.history.pushState({ screen: 'mock-test-cbt' }, '', '/mock-tests/cbt');
+    }
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  };
+
+  const handleBuyMockTest = (test: MockTest) => {
+    if (!userProfile) {
+      setAuthInitialMode('signup');
+      setIsAuthOpen(true);
+      showToast('Please login or create an account to enroll');
+      return;
+    }
+    const testProduct: Product = {
+      id: test.id,
+      title: test.title,
+      author: 'NEET MBBS Team',
+      type: 'pdf',
+      category: 'Mock Test' as any,
+      price: test.price,
+      originalPrice: test.originalPrice || test.price + 200,
+      rating: 4.9,
+      reviewsCount: 142,
+      coverImage: 'https://images.unsplash.com/photo-1606326608606-aa0b62935f2b?auto=format&fit=crop&q=80&w=800',
+      description: test.description,
+      features: [
+        `${test.totalQuestions} NTA NEET Mock Questions`,
+        `${test.durationMinutes} Minutes Real CBT Timer`,
+        `All India Rank Leaderboard`,
+        `Instant Answer Key & Explanations`
+      ],
+      tags: ['Mock Test', 'CBT', 'NEET UG', ...test.subjects],
+      pages: test.totalQuestions,
+      edition: '2025 Edition',
+      inStock: true,
+      isBestSeller: true,
+      createdAt: new Date().toISOString()
+    };
+    setCart([{ product: testProduct, quantity: 1 }]);
+    saveStoredCart([{ product: testProduct, quantity: 1 }]);
+    setIsCheckoutOpen(true);
+  };
+
+  const handleSubmitMockTest = (attempt: MockTestAttempt) => {
+    setActiveMockTestAttempt(attempt);
+    setCurrentScreen('mock-test-result');
+    if (window.location.pathname !== '/mock-tests/result') {
+      window.history.pushState({ screen: 'mock-test-result' }, '', '/mock-tests/result');
+    }
+    showToast('Mock Test Submitted! Viewing Scorecard 📊');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    // Send Telegram Admin Alert
+    fetch('/api/telegram/notify-event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventType: 'mock_test_completed',
+        title: activeMockTest?.title || 'NEET Mock Test',
+        studentName: userProfile?.displayName || userProfile?.name || 'Enrolled Aspirant',
+        studentEmail: userProfile?.email || 'N/A',
+        details: {
+          'Test Number': activeMockTest?.testNumber || 'NEET-MOCK',
+          'Score': `${attempt.score} / ${activeMockTest?.maxMarks || 720}`,
+          'Accuracy': `${attempt.accuracy || 0}%`,
+          'Correct': attempt.correctCount || 0,
+          'Incorrect': attempt.incorrectCount || 0,
+          'Time Taken': `${Math.floor((attempt.timeSpentSeconds || 0) / 60)} mins`
+        }
+      })
+    }).catch(() => {});
+  };
+
+  const handleOpenLeaderboard = (test: MockTest) => {
+    setLeaderboardMockTest(test);
+    setIsLeaderboardOpen(true);
   };
 
   // Purchased IDs for current user
@@ -297,9 +529,11 @@ export default function App() {
     if (!userProfile) return [];
     const ids = new Set<string>();
     orders.forEach(o => {
+      const uEmail = (userProfile?.email || '').toLowerCase().trim();
+      const oEmail = (o.customerEmail || (o as any).userEmail || '').toLowerCase().trim();
       if (
-        (o.userId && o.userId === userProfile.uid) ||
-        (o.customerEmail && o.customerEmail.toLowerCase() === userProfile.email.toLowerCase())
+        (o.userId && userProfile?.uid && o.userId === userProfile.uid) ||
+        (uEmail && oEmail && oEmail === uEmail)
       ) {
         if (o.status !== 'cancelled') {
           (o.items || []).forEach(it => {
@@ -311,72 +545,232 @@ export default function App() {
     return Array.from(ids);
   }, [userProfile, orders]);
 
+  const isCbtMode = currentScreen === 'mock-test-cbt';
+
   return (
     <div className="min-h-screen bg-slate-100 font-['Plus_Jakarta_Sans',sans-serif] flex justify-center selection:bg-blue-600 selection:text-white">
-      {/* Responsive Mobile Shell */}
-      <div className="w-full max-w-md bg-white min-h-screen flex flex-col relative shadow-sm border-x border-slate-100">
+      {/* Responsive Mobile / Tablet / Desktop Shell */}
+      <div className={`w-full ${isCbtMode ? 'max-w-full' : 'max-w-6xl xl:max-w-7xl'} bg-white min-h-screen flex flex-col relative shadow-sm border-x border-slate-100 transition-all duration-200`}>
         
-        {/* App Header (Sticky) */}
-        <Header
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          cartCount={cartTotalItems}
-          wishlistCount={wishlist.length}
-          onOpenCart={() => setIsCartOpen(true)}
-          onOpenWishlist={() => setIsWishlistOpen(true)}
-          onOpenAuth={() => {
-            setAuthInitialMode('login');
-            setIsAuthOpen(true);
-          }}
-          userEmail={userProfile?.email}
-          isAdmin={isAdmin}
-          onSelectCategory={handleSelectCategory}
-          onSelectFormat={handleSelectFormat}
-          isHomeView={currentScreen === 'home'}
-        />
+        {/* App Header (Sticky) - Hidden during full-screen CBT examination */}
+        {!isCbtMode && (
+          <Header
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            cartCount={cartTotalItems}
+            wishlistCount={wishlist.length}
+            onOpenCart={() => setIsCartOpen(true)}
+            onOpenWishlist={() => setIsWishlistOpen(true)}
+            onOpenAuth={() => {
+              setAuthInitialMode('login');
+              setIsAuthOpen(true);
+            }}
+            userEmail={userProfile?.email}
+            isAdmin={isAdmin}
+            onSelectCategory={handleSelectCategory}
+            onSelectFormat={handleSelectFormat}
+            isHomeView={currentScreen === 'home'}
+            currentScreen={currentScreen}
+            onNavigate={handleNavigateScreen}
+          />
+        )}
 
         {/* Dynamic Main Body */}
-        <main className="flex-1 pb-28 bg-slate-50">
-          {/* ================= 1. HOME SCREEN ================= */}
+        <main className={`flex-1 ${isCbtMode ? 'pb-0' : 'pb-20 sm:pb-28'} bg-slate-50`}>
+          {/* ================= 1. REDESIGNED HOME SCREEN ================= */}
           {currentScreen === 'home' && (
-            <div className="space-y-3 p-3 sm:p-4 pb-16">
-              {/* Dynamic Banner Carousel */}
-              <HeroBanner
+            <div className="max-w-7xl mx-auto space-y-3 sm:space-y-5 lg:space-y-6 p-2 sm:p-4 lg:p-6 pb-16 sm:pb-20">
+              {/* 1. Brand Hero Section: "Prepare Smarter. Practice Better. Achieve Your NEET Goal." (Banners hidden) */}
+              <HomeHeroSection
                 activeTab={selectedFormat}
-                onExplore={(type) => {
+                onExploreBooks={(type) => {
                   if (type) handleSelectFormat(type);
                   else handleSelectFormat('book');
                 }}
+                onExploreMockTests={() => handleNavigateScreen('mock-tests')}
               />
 
-              {/* Choose Your Format Section (Hardcopy Physical Books vs Softcopy PDF Books) */}
-              <FormatSelectionSection
+              {/* 2. "Everything You Need for NEET Preparation" line: Physical Books, Digital Study Material, Mock Tests in same horizontal */}
+              <HomeCategoryCards
                 onSelectFormat={handleSelectFormat}
-                storeConfig={storeConfig}
+                onNavigateMockTests={() => handleNavigateScreen('mock-tests')}
+                onNavigatePasses={() => {
+                  setSelectedFormat('pdf');
+                  handleNavigateScreen('neet-pass');
+                }}
+                onNavigateFreeResources={() => {
+                  setSelectedFormat('pdf');
+                  handleNavigateScreen('neet-pass');
+                }}
+                onSelectCategory={handleSelectCategory}
               />
 
-              {/* Stay Updated & Social Media Follow Us Banner */}
-              <NewsletterFooter
+              {/* 2B. NEET (11th & 12th) Full Course Premium Section */}
+              <HomeFullCourseCard
+                config={fullCourseConfig}
+                userProfile={userProfile}
+                orders={orders}
+                onViewCourse={() => handleNavigateScreen('neet-full-course')}
+                onQuickBuy={handleEnrollFullCourse}
+                onRequireAuth={() => {
+                  setAuthInitialMode('login');
+                  setIsAuthOpen(true);
+                }}
+              />
+
+              {/* 3. Popular Physical Books (Horizontal scroll / desktop grid, chosen by admin) */}
+              <PopularPhysicalBooksSection
+                products={products}
+                popularBookIds={storeConfig.popularBookIds}
+                onSelectProduct={(p) => setSelectedProduct(p)}
+                onAddToCart={handleAddToCart}
+                onViewAll={() => {
+                  handleSelectFormat('book');
+                  handleNavigateScreen('format-listing');
+                }}
+              />
+
+              {/* 4. Digital Study Material (Horizontal scroll / desktop grid, chosen by admin) */}
+              <DigitalStudyMaterialSection
+                products={products}
+                featuredPdfIds={storeConfig.featuredPdfIds}
+                purchasedProductIds={purchasedProductIds}
+                onSelectProduct={(p) => setSelectedProduct(p)}
+                onAddToCart={handleAddToCart}
+                onQuickBuy={handleQuickBuy}
+                onOpenPdfReader={(url, title) => setPdfReaderData({ url, title })}
+                onViewAll={() => {
+                  handleSelectFormat('pdf');
+                  handleNavigateScreen('format-listing');
+                }}
+              />
+
+              {/* 5. Featured Mock Tests (Real CBT Mock Tests) */}
+              <FeaturedMockTestsSection
+                tests={getStoredMockTests()}
+                onExploreMockTests={() => handleNavigateScreen('mock-tests')}
+                onSelectTest={handleStartMockTest}
+                userProfile={userProfile}
+              />
+
+              {/* 6. Connect With Us Section */}
+              <ConnectWithUsSection
                 storeConfig={storeConfig}
+                onSupportClick={() => setIsSupportOpen(true)}
               />
             </div>
           )}
 
-          {/* ================= 2. FORMAT LISTING DEDICATED VIEW ================= */}
+          {/* ================= MOCK TESTS SECTION ================= */}
+          {currentScreen === 'mock-tests' && (
+            <div className="p-3.5 sm:p-6 pb-16">
+              <MockTestsListingView
+                userProfile={userProfile}
+                onStartTest={handleStartMockTest}
+                onViewResult={(test, attempt) => {
+                  setActiveMockTest(test);
+                  setActiveMockTestAttempt(attempt);
+                  handleNavigateScreen('mock-test-result');
+                }}
+                onBuyTest={handleBuyMockTest}
+                onOpenAuth={() => {
+                  setAuthInitialMode('login');
+                  setIsAuthOpen(true);
+                }}
+                onOpenLeaderboard={handleOpenLeaderboard}
+                onBackToHome={() => handleNavigateScreen('home')}
+              />
+            </div>
+          )}
+
+          {/* ================= CBT EXAM INTERFACE ================= */}
+          {currentScreen === 'mock-test-cbt' && activeMockTest && (
+            <CbtTestInterface
+              test={activeMockTest}
+              userProfile={userProfile}
+              onSubmitTest={handleSubmitMockTest}
+              onExitTest={() => handleNavigateScreen('mock-tests')}
+            />
+          )}
+
+          {/* ================= MOCK TEST RESULTS & SCORECARD ================= */}
+          {currentScreen === 'mock-test-result' && activeMockTestAttempt && (
+            <div className="p-3.5 sm:p-6 pb-16">
+              <MockTestResultView
+                attempt={activeMockTestAttempt}
+                test={activeMockTest}
+                questions={activeMockTest?.questions}
+                onRetakeTest={() => {
+                  if (activeMockTest) {
+                    handleStartMockTest(activeMockTest);
+                  } else {
+                    handleNavigateScreen('mock-tests');
+                  }
+                }}
+                onOpenLeaderboard={() => {
+                  if (activeMockTest) {
+                    handleOpenLeaderboard(activeMockTest);
+                  }
+                }}
+                onBackToTests={() => handleNavigateScreen('mock-tests')}
+              />
+            </div>
+          )}
+
+          {/* ================= 2. FORMAT LISTING DEDICATED VIEW / SOFTCOPY PORTAL ================= */}
           {currentScreen === 'format-listing' && (
             <div className="p-3.5 pb-12">
-              <FormatListingView
-                initialFormat={selectedFormat}
+              {selectedFormat === 'pdf' ? (
+                <SoftCopyPdfPortal
+                  products={products}
+                  orders={orders}
+                  userProfile={userProfile}
+                  onAddToCart={handleAddToCart}
+                  onQuickBuy={handleQuickBuy}
+                  onOpenPdfReader={(url, title) => setPdfReaderData({ url, title })}
+                  onOpenAuth={(mode) => {
+                    setAuthInitialMode(mode || 'login');
+                    setIsAuthOpen(true);
+                  }}
+                  onOpenInvoice={(order) => setActiveInvoiceOrder(order)}
+                  onBackToHome={() => setCurrentScreen('home')}
+                  initialTab="pass"
+                />
+              ) : (
+                <FormatListingView
+                  initialFormat={selectedFormat}
+                  products={products}
+                  wishlist={wishlist}
+                  purchasedPdfs={purchasedProductIds}
+                  onBackToHome={() => setCurrentScreen('home')}
+                  onSelectProduct={(p) => setSelectedProduct(p)}
+                  onAddToCart={handleAddToCart}
+                  onQuickBuy={handleQuickBuy}
+                  onToggleWishlist={handleToggleWishlist}
+                  onOpenPdfReader={(url, title) => setPdfReaderData({ url, title })}
+                  initialCategory={selectedCategoryFilter}
+                />
+              )}
+            </div>
+          )}
+
+          {/* ================= 2B. DIRECT NEET PASS / DIGITAL SUITE SCREEN ================= */}
+          {currentScreen === 'neet-pass' && (
+            <div className="p-3.5 pb-12">
+              <SoftCopyPdfPortal
                 products={products}
-                wishlist={wishlist}
-                purchasedPdfs={purchasedProductIds}
-                onBackToHome={() => setCurrentScreen('home')}
-                onSelectProduct={(p) => setSelectedProduct(p)}
+                orders={orders}
+                userProfile={userProfile}
                 onAddToCart={handleAddToCart}
                 onQuickBuy={handleQuickBuy}
-                onToggleWishlist={handleToggleWishlist}
                 onOpenPdfReader={(url, title) => setPdfReaderData({ url, title })}
-                initialCategory={selectedCategoryFilter}
+                onOpenAuth={(mode) => {
+                  setAuthInitialMode(mode || 'login');
+                  setIsAuthOpen(true);
+                }}
+                onOpenInvoice={(order) => setActiveInvoiceOrder(order)}
+                onBackToHome={() => setCurrentScreen('home')}
+                initialTab="pass"
               />
             </div>
           )}
@@ -390,6 +784,7 @@ export default function App() {
               onOpenInvoiceModal={(order) => setActiveInvoiceOrder(order)}
               onOpenPdfReader={(url, title) => setPdfReaderData({ url, title })}
               onExplore={() => setCurrentScreen('home')}
+              onOpenFullCourse={() => handleNavigateScreen('neet-full-course')}
             />
           )}
 
@@ -406,6 +801,26 @@ export default function App() {
               onOpenPdfReader={(url, title) => setPdfReaderData({ url, title })}
               onOpenInvoice={(order) => setActiveInvoiceOrder(order)}
               onExploreStore={() => setCurrentScreen('home')}
+              onOpenDigitalPortal={() => {
+                setSelectedFormat('pdf');
+                setCurrentScreen('neet-pass');
+              }}
+            />
+          )}
+
+          {/* ================= 4B. NEET (11th & 12th) FULL COURSE DETAILS PAGE ================= */}
+          {currentScreen === 'neet-full-course' && (
+            <FullCourseDetailView
+              config={fullCourseConfig}
+              userProfile={userProfile}
+              orders={orders}
+              onBack={() => handleNavigateScreen('home')}
+              onEnrollCourse={handleEnrollFullCourse}
+              onOpenAuth={(mode) => {
+                setAuthInitialMode(mode || 'login');
+                setIsAuthOpen(true);
+              }}
+              onOpenSupport={() => setIsSupportOpen(true)}
             />
           )}
 
@@ -424,6 +839,11 @@ export default function App() {
               onOpenSupport={() => setIsSupportOpen(true)}
               onNavigateToAdmin={() => setCurrentScreen('admin')}
               onOpenPdfLibrary={() => setCurrentScreen('pdfs')}
+              onOpenNeetPass={() => {
+                setSelectedFormat('pdf');
+                setCurrentScreen('neet-pass');
+              }}
+              onOpenFullCourse={() => handleNavigateScreen('neet-full-course')}
               isAdmin={isAdmin}
             />
           )}
@@ -436,6 +856,7 @@ export default function App() {
                 orders={orders}
                 users={users}
                 onOpenInvoiceModal={(order) => setActiveInvoiceOrder(order)}
+                onOpenPdfReader={(url, title) => setPdfReaderData({ url, title })}
                 adminEmail={userProfile?.email || 'admin@neetmbbs.in'}
               />
             ) : (
@@ -461,13 +882,15 @@ export default function App() {
           )}
         </main>
 
-        {/* Fixed Bottom Navigation */}
-        <BottomNavigation
-          currentScreen={currentScreen}
-          onNavigate={handleNavigateScreen}
-          isAdmin={isAdmin}
-          orderBadgeCount={orders.filter(o => o.status === 'new' && (o.items || []).some(it => it.type !== 'pdf')).length}
-        />
+        {/* Fixed Bottom Navigation (Hidden during CBT exam) */}
+        {!isCbtMode && (
+          <BottomNavigation
+            currentScreen={currentScreen}
+            onNavigate={handleNavigateScreen}
+            isAdmin={isAdmin}
+            orderBadgeCount={orders.filter(o => o.status === 'new' && (o.items || []).some(it => it.type !== 'pdf')).length}
+          />
+        )}
 
         {/* ================= MODALS & DRAWERS ================= */}
 
@@ -524,10 +947,36 @@ export default function App() {
             showToast('Please sign in or sign up to complete your purchase');
           }}
           onOrderSuccess={(order) => {
+            // Check if any item is a mock test and unlock it
+            (order.items || []).forEach(it => {
+              if (it.category === 'Mock Test' || it.type === 'pdf') {
+                saveStoredMockPurchase({
+                  id: `mp_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+                  testId: it.productId,
+                  orderId: order.id,
+                  paymentId: (order as any).paymentId || 'upi_verified',
+                  userId: userProfile?.uid || order.userId || 'guest',
+                  userEmail: userProfile?.email || order.customerEmail || '',
+                  userName: userProfile?.displayName || order.userName || '',
+                  amount: Number(it.price) || 0,
+                  purchaseDate: new Date().toISOString(),
+                  status: 'active'
+                });
+              }
+            });
             setCart([]);
             saveStoredCart([]);
             showToast('Order Placed Successfully! 🎉');
-            setCurrentScreen('orders');
+            const hasMock = (order.items || []).some(it => it.category === 'Mock Test');
+            if (hasMock) {
+              handleNavigateScreen('mock-tests');
+            } else {
+              handleNavigateScreen('orders');
+            }
+          }}
+          onOpenDigitalLibrary={() => {
+            setSelectedFormat('pdf');
+            setCurrentScreen('neet-pass');
           }}
         />
 
@@ -558,6 +1007,18 @@ export default function App() {
             pdfUrl={pdfReaderData.url}
             title={pdfReaderData.title}
             onClose={() => setPdfReaderData(null)}
+          />
+        )}
+
+        {/* Mock Test Leaderboard Modal */}
+        {isLeaderboardOpen && leaderboardMockTest && (
+          <MockTestLeaderboardModal
+            test={leaderboardMockTest}
+            isOpen={isLeaderboardOpen}
+            onClose={() => {
+              setIsLeaderboardOpen(false);
+              setLeaderboardMockTest(null);
+            }}
           />
         )}
 

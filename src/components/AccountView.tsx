@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { User, LogOut, Package, ShieldCheck, Mail, Phone, Heart, FileText, Lock, ChevronRight, Sparkles, BookOpen, ExternalLink, Camera, Check, Loader2, X, Upload } from 'lucide-react';
+import { User, LogOut, Package, ShieldCheck, Mail, Phone, Heart, FileText, Lock, ChevronRight, Sparkles, BookOpen, ExternalLink, Camera, Check, Loader2, X, Upload, Crown, GraduationCap, Unlock, CheckCircle2 } from 'lucide-react';
 import { UserProfile, Order, StoreConfig } from '../types';
 import { BrandLogo } from './BrandLogo';
 import { updateUserProfile, getStoredStoreConfig } from '../lib/storage';
+import { hasUserPurchasedFullCourse, fetchVerifiedCourseAccess } from '../lib/fullCourseData';
 
 interface AccountViewProps {
   userProfile: UserProfile | null;
@@ -14,6 +15,8 @@ interface AccountViewProps {
   onOpenSupport: () => void;
   onNavigateToAdmin?: () => void;
   onOpenPdfLibrary?: () => void;
+  onOpenNeetPass?: () => void;
+  onOpenFullCourse?: () => void;
   isAdmin: boolean;
 }
 
@@ -38,6 +41,8 @@ export const AccountView: React.FC<AccountViewProps> = ({
   onOpenSupport,
   onNavigateToAdmin,
   onOpenPdfLibrary,
+  onOpenNeetPass,
+  onOpenFullCourse,
   isAdmin
 }) => {
   const [storeConfig, setStoreConfig] = useState<StoreConfig>(getStoredStoreConfig());
@@ -240,6 +245,82 @@ export const AccountView: React.FC<AccountViewProps> = ({
 
       {/* Menu Options Group */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs divide-y divide-slate-100 overflow-hidden text-xs">
+        {/* 0. NEET Success Pass & Digital Suite */}
+        {onOpenNeetPass && (
+          <button
+            id="profile-menu-neet-pass"
+            onClick={onOpenNeetPass}
+            className="w-full p-4 flex items-center justify-between bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-transparent hover:bg-amber-500/15 transition text-left cursor-pointer active:bg-amber-500/20"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center shadow-xs border border-amber-300">
+                <Crown className="w-5 h-5 fill-amber-100 text-amber-100" />
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-black text-slate-900 block text-xs">NEET Success Pass & Library</span>
+                  <span className="text-[9px] font-black bg-amber-500 text-white px-1.5 py-0.2 rounded-full uppercase">VIP</span>
+                </div>
+                <span className="text-[10px] text-amber-900/80 font-medium">Digital Library, Free Resources & Student Dashboard</span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-amber-600" />
+          </button>
+        )}
+
+        {/* 0B. NEET (11th & 12th) Full Course */}
+        <div 
+          id="profile-menu-full-course"
+          onClick={async () => {
+            const isPurchased = hasUserPurchasedFullCourse(userProfile, orders);
+            if (isPurchased) {
+              const res = await fetchVerifiedCourseAccess(userProfile?.email, userProfile?.uid);
+              if (res.success && res.accessUrl) {
+                window.open(res.accessUrl, '_blank', 'noopener,noreferrer');
+                return;
+              }
+            }
+            if (onOpenFullCourse) {
+              onOpenFullCourse();
+            }
+          }}
+          className="w-full p-4 flex items-center justify-between bg-gradient-to-r from-indigo-500/10 via-blue-500/10 to-transparent hover:bg-indigo-500/15 transition text-left cursor-pointer active:bg-indigo-500/20"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-violet-600 text-white flex items-center justify-center shadow-xs border border-indigo-300">
+              <GraduationCap className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-black text-slate-900 block text-xs">NEET (11th & 12th) Full Course</span>
+                {hasUserPurchasedFullCourse(userProfile, orders) ? (
+                  <span className="text-[9px] font-black bg-emerald-500 text-white px-1.5 py-0.2 rounded-full uppercase">
+                    Purchased
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-black bg-indigo-600 text-white px-1.5 py-0.2 rounded-full uppercase">
+                    Full Bundle
+                  </span>
+                )}
+              </div>
+              <span className="text-[10px] text-indigo-900/80 font-medium">
+                {hasUserPurchasedFullCourse(userProfile, orders)
+                  ? 'Access Main Google Drive Study Folder'
+                  : 'Complete Class 11 + 12 Study Material on Google Drive'}
+              </span>
+            </div>
+          </div>
+          {hasUserPurchasedFullCourse(userProfile, orders) ? (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black bg-emerald-600 text-white shadow-xs animate-pulse">
+              <Unlock className="w-3 h-3" />
+              <span>Access Course</span>
+              <ExternalLink className="w-2.5 h-2.5" />
+            </span>
+          ) : (
+            <ChevronRight className="w-4 h-4 text-indigo-600" />
+          )}
+        </div>
+
         {/* 1. Orders & Invoices */}
         <button
           id="profile-menu-orders"

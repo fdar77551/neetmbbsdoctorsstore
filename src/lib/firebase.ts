@@ -51,9 +51,15 @@ export const ADMIN_REQUIRED_PASSWORDS: Record<string, string> = {
   "shahzaibhusain6@gmail.com": "Mansoori"
 };
 
-export function getAdminRequiredPassword(email?: string | null): string | null {
-  if (!email) return null;
-  const clean = email.toLowerCase().trim();
+export function getAdminRequiredPassword(emailOrUser?: any): string | null {
+  if (!emailOrUser) return null;
+  const rawEmail = typeof emailOrUser === 'string'
+    ? emailOrUser
+    : (typeof emailOrUser === 'object' && emailOrUser !== null && typeof emailOrUser.email === 'string')
+      ? emailOrUser.email
+      : null;
+  if (!rawEmail) return null;
+  const clean = rawEmail.toLowerCase().trim();
   return ADMIN_REQUIRED_PASSWORDS[clean] || null;
 }
 
@@ -131,9 +137,15 @@ export async function safeCreateUser(email: string, pass: string) {
   }
 }
 
-export function isUserAdmin(email?: string | null): boolean {
-  if (!email) return false;
-  return ADMIN_EMAILS.includes(email.toLowerCase().trim());
+export function isUserAdmin(emailOrUser?: any): boolean {
+  if (!emailOrUser) return false;
+  const rawEmail = typeof emailOrUser === 'string'
+    ? emailOrUser
+    : (typeof emailOrUser === 'object' && emailOrUser !== null && typeof emailOrUser.email === 'string')
+      ? emailOrUser.email
+      : null;
+  if (!rawEmail) return false;
+  return ADMIN_EMAILS.includes(rawEmail.toLowerCase().trim());
 }
 
 export {

@@ -49,9 +49,12 @@ import {
   Smartphone,
   Instagram,
   Youtube,
-  Share2
+  Share2,
+  Eye,
+  Crown,
+  FolderOpen
 } from 'lucide-react';
-import { Product, Order, UserProfile, ProductType, OrderStatus, BannerSlide, SupportMessage, StoreConfig } from '../types';
+import { Product, Order, UserProfile, ProductType, OrderStatus, BannerSlide, SupportMessage, StoreConfig, NeetSubject, NeetMaterialType, UserNeetPass, NeetPassPlan, NeetPassSubjectKey } from '../types';
 import { 
   addProduct, 
   updateProduct, 
@@ -80,17 +83,24 @@ import {
   syncDataFromDatabase,
   getStoredStoreConfig,
   saveStoredStoreConfig,
-  DEFAULT_STORE_CONFIG
+  DEFAULT_STORE_CONFIG,
+  getUserNeetPasses,
+  activateNeetPass,
+  saveUserNeetPasses
 } from '../lib/storage';
+import { NEET_PASS_TIERS, NEET_SUBJECTS, NEET_MATERIAL_CATEGORIES, calculatePassExpiry } from '../lib/neetPassData';
 import { resolveImageUrl } from '../lib/storage';
 import { BookMockup3D } from './BookMockup3D';
 import { downloadInvoicePdf, downloadCombinedInvoicesPdf, sendBatchInvoicesToTelegram } from '../lib/pdfInvoice';
+import { AdminMockTestManager } from './AdminMockTestManager';
+import { AdminFullCourseManager } from './AdminFullCourseManager';
 
 interface AdminPanelProps {
   products: Product[];
   orders: Order[];
   users: UserProfile[];
   onOpenInvoiceModal: (order: Order) => void;
+  onOpenPdfReader?: (pdfUrl: string, title: string) => void;
   adminEmail: string;
 }
 
@@ -99,9 +109,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   orders,
   users,
   onOpenInvoiceModal,
+  onOpenPdfReader,
   adminEmail
 }) => {
-  const [adminTab, setAdminTab] = useState<'products' | 'banners' | 'orders' | 'order-search' | 'support' | 'users' | 'store-settings' | 'storage'>('products');
+  const [adminTab, setAdminTab] = useState<'products' | 'mock-tests' | 'banners' | 'orders' | 'order-search' | 'support' | 'users' | 'store-settings' | 'storage' | 'neet-passes' | 'full-course'>('products');
   const [orderSubTab, setOrderSubTab] = useState<OrderStatus>('new');
   
   // Store & Support Configuration State
@@ -117,6 +128,213 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userRoleFilter, setUserRoleFilter] = useState<'all' | 'admin' | 'user'>('all');
   const [isRefreshingUsers, setIsRefreshingUsers] = useState(false);
+
+  // NEET Pass Manager State
+  const [allUserPasses, setAllUserPasses] = useState<UserNeetPass[]>(getUserNeetPasses());
+  const [grantEmail, setGrantEmail] = useState('');
+  const [grantSubject, setGrantSubject] = useState<NeetPassSubjectKey>('pcb');
+  const [grantPlan, setGrantPlan] = useState<NeetPassPlan>('yearly');
+  const [grantFeedback, setGrantFeedback] = useState<string | null>(null);
+  const [passSearchQuery, setPassSearchQuery] = useState('');
+
+  // NEET Pass & Digital Library Material Uploader State
+  const [passAdminView, setPassAdminView] = useState<'upload-material' | 'manage-materials' | 'student-passes'>('upload-material');
+  const [passUploadTarget, setPassUploadTarget] = useState<'biology' | 'chemistry' | 'physics' | 'pcb' | 'free' | 'none'>('biology');
+  const [passUploadSubject, setPassUploadSubject] = useState<NeetSubject>('Biology');
+  const [passUploadMaterialType, setPassUploadMaterialType] = useState<NeetMaterialType>('Notes');
+  const [passUploadTitle, setPassUploadTitle] = useState('');
+  const [passUploadChapter, setPassUploadChapter] = useState('');
+  const [passUploadAuthor, setPassUploadAuthor] = useState('Dr. Faisal Fayaz & Dr. Shahzaib Husain');
+  const [passUploadPdfUrl, setPassUploadPdfUrl] = useState('');
+  const [passUploadCoverImage, setPassUploadCoverImage] = useState('');
+  const [passUploadPrice, setPassUploadPrice] = useState<number>(0);
+  const [passUploadPages, setPassUploadPages] = useState<number>(45);
+  const [passUploadDescription, setPassUploadDescription] = useState('');
+  const [passUploadTags, setPassUploadTags] = useState('NEET 2026, High-Yield');
+  const [isUploadingPassPdf, setIsUploadingPassPdf] = useState(false);
+  const [passPdfProgress, setPassPdfProgress] = useState<string>('');
+  const [isUploadingPassCover, setIsUploadingPassCover] = useState(false);
+  const [passCoverProgress, setPassCoverProgress] = useState<string>('');
+  const [passMaterialFeedback, setPassMaterialFeedback] = useState<string | null>(null);
+  const [passMaterialsFilter, setPassMaterialsFilter] = useState<'all' | 'biology' | 'chemistry' | 'physics' | 'pcb' | 'free'>('all');
+  const [passMaterialsSearch, setPassMaterialsSearch] = useState('');
+
+  const handlePassPdfFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingPassPdf(true);
+    setPassPdfProgress(`Uploading ${file.name} to Cloudflare R2...`);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+      formData.append('productId', `pass-mat-${Date.now()}`);
+      formData.append('productTitle', passUploadTitle || file.name.replace(/\.pdf$/i, ''));
+
+      const response = await fetch('/api/r2/upload-binary-pdf', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && (data.url || data.key)) {
+          const finalPdfUrl = data.url || `/api/r2/file/${data.key}`;
+          setPassUploadPdfUrl(finalPdfUrl);
+          const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+          setPassPdfProgress(`✓ Uploaded to Cloudflare R2 (${file.name}, ${sizeMb} MB)`);
+          if (!passUploadTitle) {
+            setPassUploadTitle(file.name.replace(/\.pdf$/i, '').replace(/[-_]/g, ' '));
+          }
+          setIsUploadingPassPdf(false);
+          return;
+        }
+      }
+
+      // Fallback object URL
+      const objUrl = URL.createObjectURL(file);
+      setPassUploadPdfUrl(objUrl);
+      setPassPdfProgress(`✓ File attached: ${file.name}`);
+      if (!passUploadTitle) {
+        setPassUploadTitle(file.name.replace(/\.pdf$/i, '').replace(/[-_]/g, ' '));
+      }
+    } catch (err: any) {
+      console.warn('Binary upload fallback:', err);
+      const objUrl = URL.createObjectURL(file);
+      setPassUploadPdfUrl(objUrl);
+      setPassPdfProgress(`✓ File attached: ${file.name}`);
+    } finally {
+      setIsUploadingPassPdf(false);
+    }
+  };
+
+  const handlePassCoverFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingPassCover(true);
+    setPassCoverProgress(`Uploading cover ${file.name}...`);
+
+    try {
+      const compressedBase64 = await compressImage(file, 900, 0.85);
+      const formData = new FormData();
+      formData.append('image', compressedBase64);
+      formData.append('filename', `cover-${Date.now()}-${file.name}`);
+
+      const response = await fetch('/api/r2/upload', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && (data.url || data.key)) {
+          const finalUrl = data.url || `/api/r2/file/${data.key}`;
+          setPassUploadCoverImage(finalUrl);
+          setPassCoverProgress(`✓ Cover uploaded to Cloudflare R2!`);
+          setIsUploadingPassCover(false);
+          return;
+        }
+      }
+
+      setPassUploadCoverImage(compressedBase64);
+      setPassCoverProgress('✓ Cover attached');
+    } catch (err: any) {
+      console.warn('Cover upload fallback:', err);
+    } finally {
+      setIsUploadingPassCover(false);
+    }
+  };
+
+  const handleSavePassMaterial = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passUploadTitle.trim()) {
+      alert('Please enter a title for the study material');
+      return;
+    }
+
+    const isFree = passUploadTarget === 'free' || Number(passUploadPrice) === 0;
+    const defaultCover = 
+      passUploadSubject === 'Biology' 
+        ? 'https://images.unsplash.com/photo-1532094349884-543bc11b234d?w=600&auto=format&fit=crop&q=80'
+        : passUploadSubject === 'Chemistry'
+        ? 'https://images.unsplash.com/photo-1603126857599-f6e157fa2fe6?w=600&auto=format&fit=crop&q=80'
+        : passUploadSubject === 'Physics'
+        ? 'https://images.unsplash.com/photo-1636466497217-26a8cbeaf0aa?w=600&auto=format&fit=crop&q=80'
+        : 'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=600&auto=format&fit=crop&q=80';
+
+    const tagsArray = passUploadTags
+      .split(',')
+      .map(t => t.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (isFree && !tagsArray.includes('free')) {
+      tagsArray.push('free');
+    }
+
+    const newMaterial: Product = {
+      id: `pass-mat-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      title: passUploadTitle.trim(),
+      author: passUploadAuthor.trim() || 'Dr. Faisal Fayaz & Dr. Shahzaib Husain',
+      type: 'pdf',
+      category: passUploadSubject,
+      subject: passUploadSubject,
+      materialType: passUploadMaterialType,
+      passTier: passUploadTarget,
+      chapterName: passUploadChapter.trim() || undefined,
+      isFreeResource: isFree,
+      includedInPass: !isFree,
+      price: isFree ? 0 : (Number(passUploadPrice) || 149),
+      originalPrice: isFree ? 0 : 299,
+      rating: 4.9,
+      reviewsCount: 128,
+      coverImage: passUploadCoverImage.trim() || defaultCover,
+      pdfUrl: passUploadPdfUrl.trim() || 'https://raw.githubusercontent.com/ncertify-neet/sample-notes/main/sample.pdf',
+      description: passUploadDescription.trim() || `High-yield NEET ${passUploadSubject} ${passUploadMaterialType} curated specifically for NEET 2026 aspirants.`,
+      features: [
+        `Aligned with latest NTA NEET syllabus and NCERT line pointers`,
+        `Instant 1-click online reading and offline PDF download`,
+        `Directly unlocked for ${passUploadTarget === 'free' ? 'all students for 100% Free' : passUploadTarget.toUpperCase() + ' Pass holders'}`
+      ],
+      tags: tagsArray,
+      pages: Number(passUploadPages) || 35,
+      edition: '2026 High-Yield Edition',
+      language: 'English',
+      inStock: true,
+      createdAt: new Date().toISOString()
+    };
+
+    addProduct(newMaterial);
+    setPassMaterialFeedback(`✓ Successfully published "${newMaterial.title}" to ${
+      passUploadTarget === 'free' ? '🎁 Free Resources' :
+      passUploadTarget === 'pcb' ? '🏆 Complete PCB Pass' :
+      passUploadTarget === 'biology' ? '🌿 Biology Pass' :
+      passUploadTarget === 'chemistry' ? '🧪 Chemistry Pass' :
+      passUploadTarget === 'physics' ? '⚡ Physics Pass' : 'Digital Store'
+    }!`);
+
+    // Reset form fields
+    setPassUploadTitle('');
+    setPassUploadChapter('');
+    setPassUploadPdfUrl('');
+    setPassUploadCoverImage('');
+    setPassPdfProgress('');
+    setPassCoverProgress('');
+    setTimeout(() => setPassMaterialFeedback(null), 5000);
+  };
+
+  const handleChangeMaterialPassTier = (product: Product, newTier: 'biology' | 'chemistry' | 'physics' | 'pcb' | 'free' | 'none') => {
+    const isFree = newTier === 'free';
+    const updated: Product = {
+      ...product,
+      passTier: newTier,
+      isFreeResource: isFree,
+      includedInPass: !isFree,
+      price: isFree ? 0 : (product.price || 149)
+    };
+    updateProduct(updated);
+  };
 
   // Batch Multi-Order Invoice Selection State
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
@@ -138,6 +356,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [author, setAuthor] = useState('');
   const [type, setType] = useState<ProductType>('book');
   const [category, setCategory] = useState('Biology');
+  const [subject, setSubject] = useState<NeetSubject>('Biology');
+  const [materialType, setMaterialType] = useState<NeetMaterialType>('Notes');
+  const [isFreeResource, setIsFreeResource] = useState<boolean>(false);
+  const [includedInPass, setIncludedInPass] = useState<boolean>(true);
   const [price, setPrice] = useState<number>(299);
   const [originalPrice, setOriginalPrice] = useState<number>(499);
   const [rating, setRating] = useState<number>(4.8);
@@ -607,7 +829,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       author: author || 'NEET MBBS Doctors Board',
       type,
       category,
-      price: Number(price) || 299,
+      subject: type === 'pdf' ? subject : undefined,
+      materialType: type === 'pdf' ? materialType : undefined,
+      isFreeResource: type === 'pdf' ? isFreeResource : false,
+      includedInPass: type === 'pdf' ? includedInPass : false,
+      price: isFreeResource ? 0 : (Number(price) || 299),
       originalPrice: Number(originalPrice || price) || 499,
       rating: Number(rating) || 4.8,
       reviewsCount: Number(reviewsCount) || 100,
@@ -645,6 +871,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setPdfUrl('');
     setDescription('');
     setFeatures('');
+    setSubject('Biology');
+    setMaterialType('Notes');
+    setIsFreeResource(false);
+    setIncludedInPass(true);
     setShippingCost(0);
     setIsFreeShipping(true);
     setRating(4.8);
@@ -694,6 +924,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setAuthor(product.author);
     setType(product.type);
     setCategory(product.category);
+    setSubject(product.subject || (product.category as NeetSubject) || 'Biology');
+    setMaterialType(product.materialType || 'Notes');
+    setIsFreeResource(!!product.isFreeResource);
+    setIncludedInPass(product.includedInPass !== false);
     setPrice(product.price);
     setOriginalPrice(product.originalPrice);
     setRating(product.rating ?? 4.8);
@@ -957,7 +1191,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   return (
-    <div className="p-4 space-y-4 pb-48 max-w-md mx-auto min-h-screen">
+    <div className={`p-2 sm:p-4 space-y-4 pb-48 mx-auto min-h-screen ${adminTab === 'mock-tests' ? 'max-w-7xl w-full' : 'max-w-md'}`}>
       {/* Admin Header */}
       <div className="bg-slate-900 text-white p-4 rounded-2xl shadow-lg border border-slate-800 space-y-3">
         <div className="flex justify-between items-start">
@@ -1016,8 +1250,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       </div>
 
-      {/* Tabs Navigation (8 Core Sections) */}
-      <div className="grid grid-cols-4 sm:grid-cols-8 gap-1 bg-slate-100 p-1 rounded-xl text-[9px] font-bold sticky top-14 z-30 shadow-xs">
+      {/* Tabs Navigation (10 Core Sections) */}
+      <div className="grid grid-cols-5 sm:grid-cols-10 gap-1 bg-slate-100 p-1 rounded-xl text-[9px] font-bold sticky top-14 z-30 shadow-xs">
         <button
           onClick={() => setAdminTab('products')}
           className={`py-2 rounded-lg text-center transition cursor-pointer ${
@@ -1025,6 +1259,36 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           }`}
         >
           Catalog
+        </button>
+        <button
+          onClick={() => setAdminTab('mock-tests')}
+          className={`py-2 rounded-lg text-center transition cursor-pointer ${
+            adminTab === 'mock-tests' ? 'bg-blue-600 text-white shadow-2xs font-black' : 'text-slate-600 hover:text-blue-600 hover:bg-blue-50/50'
+          }`}
+          title="NEET CBT Mock Tests, Question Bank & Diagram Crop"
+        >
+          📝 Tests
+        </button>
+        <button
+          onClick={() => {
+            setAdminTab('neet-passes');
+            setAllUserPasses(getUserNeetPasses());
+          }}
+          className={`py-2 rounded-lg text-center transition cursor-pointer ${
+            adminTab === 'neet-passes' ? 'bg-amber-400 text-slate-950 shadow-2xs font-black' : 'text-slate-500 hover:text-slate-800'
+          }`}
+          title="NEET Success Pass & Memberships"
+        >
+          👑 Passes
+        </button>
+        <button
+          onClick={() => setAdminTab('full-course')}
+          className={`py-2 rounded-lg text-center transition cursor-pointer ${
+            adminTab === 'full-course' ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-2xs font-black' : 'text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/50'
+          }`}
+          title="NEET (11th & 12th) Full Course & Google Drive Settings"
+        >
+          🎓 Course
         </button>
         <button
           onClick={() => setAdminTab('banners')}
@@ -1095,6 +1359,40 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           Cloud
         </button>
       </div>
+
+      {/* ================= MOCK TESTS (CBT) SECTION ================= */}
+      {adminTab === 'mock-tests' && (
+        <div className="space-y-3">
+          <AdminMockTestManager
+            adminEmail={adminEmail || 'fdar77551@gmail.com'}
+            totalRevenue={orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0)}
+            newOrdersCount={orders.filter(o => o.status === 'new').length}
+            registeredUsersCount={users.length}
+            onNavigateTab={(tab) => {
+              if (tab === 'Catalog') setAdminTab('products');
+              else if (tab === 'Orders') setAdminTab('orders');
+              else if (tab === 'Search') setAdminTab('order-search');
+              else if (tab === 'Support') setAdminTab('support');
+              else if (tab === 'Users') setAdminTab('users');
+              else if (tab === 'Settings') setAdminTab('store-settings');
+              else if (tab === 'Banners') setAdminTab('banners');
+              else if (tab === 'Cloud') setAdminTab('storage');
+              else if (tab === 'Mock Tests') setAdminTab('mock-tests');
+              else setAdminTab('products');
+            }}
+          />
+        </div>
+      )}
+
+      {/* ================= NEET (11th & 12th) FULL COURSE SECTION ================= */}
+      {adminTab === 'full-course' && (
+        <div className="space-y-3">
+          <AdminFullCourseManager
+            orders={orders}
+            onOpenInvoiceModal={onOpenInvoiceModal}
+          />
+        </div>
+      )}
 
       {/* ================= 1. PRODUCTS SECTION ================= */}
       {adminTab === 'products' && (
@@ -1196,7 +1494,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <label className="text-[10px] uppercase font-bold text-slate-600 block">Subject Category</label>
                   <select
                     value={category}
-                    onChange={(e) => setCategory(e.target.value)}
+                    onChange={(e) => {
+                      setCategory(e.target.value);
+                      if (['Biology', 'Physics', 'Chemistry'].includes(e.target.value)) {
+                        setSubject(e.target.value as NeetSubject);
+                      }
+                    }}
                     className="w-full text-xs bg-slate-50 border border-slate-200 p-2 rounded-xl text-slate-900 focus:ring-2 focus:ring-blue-500 focus:bg-white focus:outline-none font-medium cursor-pointer"
                   >
                     <option value="Biology">Biology</option>
@@ -1208,6 +1511,82 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </select>
                 </div>
               </div>
+
+              {/* Special NEET Soft Copy / PDF Material Categorization */}
+              {type === 'pdf' && (
+                <div className="p-3 bg-blue-50/70 border border-blue-200/80 rounded-xl space-y-2.5">
+                  <div className="flex items-center gap-1.5 text-blue-900 font-extrabold text-[11px]">
+                    <span>⚡</span>
+                    <span>Soft Copy PDF / Digital Library Settings</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-blue-900 block">NEET Subject</label>
+                      <select
+                        value={subject}
+                        onChange={(e) => setSubject(e.target.value as NeetSubject)}
+                        className="w-full text-xs bg-white border border-blue-200 p-2 rounded-xl text-slate-900 font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      >
+                        <option value="Biology">🌿 Biology</option>
+                        <option value="Chemistry">🧪 Chemistry</option>
+                        <option value="Physics">⚡ Physics</option>
+                        <option value="Complete PCB">🏆 Complete PCB</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-blue-900 block">Material Section</label>
+                      <select
+                        value={materialType}
+                        onChange={(e) => setMaterialType(e.target.value as NeetMaterialType)}
+                        className="w-full text-xs bg-white border border-blue-200 p-2 rounded-xl text-slate-900 font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      >
+                        <option value="Notes">📝 Notes</option>
+                        <option value="PYQs">📅 PYQs (Previous Year)</option>
+                        <option value="MCQs">🎯 MCQs & Practice</option>
+                        <option value="Formulas">📐 Formulas & Cheatsheets</option>
+                        <option value="Revision Material">⚡ Revision Material</option>
+                        <option value="Tests">📝 Mock Tests</option>
+                        <option value="Short Notes">📌 Short Notes</option>
+                        <option value="NCERT Content">📚 NCERT Content (Line-by-Line)</option>
+                        <option value="New Content">✨ New High-Yield Content</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-blue-200/50">
+                    <label className="flex items-center gap-2 p-2 bg-white rounded-lg border border-blue-100 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isFreeResource}
+                        onChange={(e) => {
+                          setIsFreeResource(e.target.checked);
+                          if (e.target.checked) setPrice(0);
+                        }}
+                        className="w-4 h-4 text-emerald-600 rounded accent-emerald-600"
+                      />
+                      <div>
+                        <span className="text-[11px] font-extrabold text-slate-900 block">Free Resource</span>
+                        <span className="text-[9px] text-slate-500 block">100% Free for all aspirants</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 bg-white rounded-lg border border-blue-100 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={includedInPass}
+                        onChange={(e) => setIncludedInPass(e.target.checked)}
+                        className="w-4 h-4 text-blue-600 rounded accent-blue-600"
+                      />
+                      <div>
+                        <span className="text-[11px] font-extrabold text-slate-900 block">NEET Pass Access</span>
+                        <span className="text-[9px] text-slate-500 block">Unlock with Pass</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              )}
 
               {/* Price & MRP & Rating */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -3866,6 +4245,126 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
             </div>
 
+            {/* Card 5: Homepage Featured Showcase Selection (Image 1 Style) */}
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-blue-200/90 space-y-4 shadow-2xs">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-900">Homepage Showcase Selection (Popular Books & Digital Material)</h4>
+                    <p className="text-[10px] text-slate-500">Choose the exact 2 to 3 physical books and PDFs to feature on the homepage horizontal rows</p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-200">
+                  Homepage Layout
+                </span>
+              </div>
+
+              {/* 1. Popular Physical Books Selector */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-slate-800 text-[11px] flex items-center gap-1.5">
+                    <span>📚</span>
+                    <span>Popular Physical Books (Selected: {(storeConfig.popularBookIds || []).length})</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400">Select 2 to 4 physical books to show in horizontal row</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {products.filter(p => p.type === 'book').map(book => {
+                    const isSelected = (storeConfig.popularBookIds || []).includes(book.id);
+                    return (
+                      <div
+                        key={book.id}
+                        onClick={() => {
+                          const current = storeConfig.popularBookIds || [];
+                          const updated = isSelected 
+                            ? current.filter(id => id !== book.id)
+                            : [...current, book.id];
+                          setStoreConfig({ ...storeConfig, popularBookIds: updated });
+                        }}
+                        className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-center gap-2.5 select-none ${
+                          isSelected 
+                            ? 'bg-blue-50/80 border-blue-500 shadow-2xs ring-1 ring-blue-400' 
+                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+                        }`}
+                      >
+                        <div className="w-10 h-12 bg-white rounded-lg border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                          {book.coverImage ? (
+                            <img src={book.coverImage} alt={book.title} className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-[9px] font-bold text-slate-400">BOOK</span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-slate-900 truncate">{book.title}</p>
+                          <p className="text-[10px] text-slate-500 font-medium">₹{book.price} • {book.category}</p>
+                        </div>
+                        <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
+                          isSelected ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-300 bg-white'
+                        }`}>
+                          {isSelected && <Check className="w-3.5 h-3.5" />}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 2. Digital Study Material (PDFs) Selector */}
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-slate-800 text-[11px] flex items-center gap-1.5">
+                    <span>📄</span>
+                    <span>Digital Study Material (PDFs) (Selected: {(storeConfig.featuredPdfIds || []).length})</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400">Select 2 to 4 PDFs to show in horizontal row</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {products.filter(p => p.type === 'pdf').map(pdf => {
+                    const isSelected = (storeConfig.featuredPdfIds || []).includes(pdf.id);
+                    return (
+                      <div
+                        key={pdf.id}
+                        onClick={() => {
+                          const current = storeConfig.featuredPdfIds || [];
+                          const updated = isSelected 
+                            ? current.filter(id => id !== pdf.id)
+                            : [...current, pdf.id];
+                          setStoreConfig({ ...storeConfig, featuredPdfIds: updated });
+                        }}
+                        className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-center gap-2.5 select-none ${
+                          isSelected 
+                            ? 'bg-purple-50/80 border-purple-500 shadow-2xs ring-1 ring-purple-400' 
+                            : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+                        }`}
+                      >
+                        <div className="w-10 h-12 bg-white rounded-lg border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                          {pdf.coverImage ? (
+                            <img src={pdf.coverImage} alt={pdf.title} className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-[9px] font-bold text-purple-600">PDF</span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-slate-900 truncate">{pdf.title}</p>
+                          <p className="text-[10px] text-slate-500 font-medium">₹{pdf.price} • {pdf.category}</p>
+                        </div>
+                        <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
+                          isSelected ? 'bg-purple-600 border-purple-600 text-white' : 'border-slate-300 bg-white'
+                        }`}>
+                          {isSelected && <Check className="w-3.5 h-3.5" />}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
             {/* Live Invoice Preview Box */}
             <div className="bg-slate-900 text-white p-4 sm:p-5 rounded-2xl border border-slate-800 space-y-3">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800">
@@ -3922,6 +4421,972 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* ================= 9. NEET SUCCESS PASS & MEMBERSHIPS SECTION ================= */}
+      {adminTab === 'neet-passes' && (
+        <div className="space-y-4">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-amber-50 via-white to-amber-50/50 p-4 rounded-2xl border border-amber-200/80 shadow-2xs">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 flex items-center justify-center font-black text-lg shadow-sm">
+                👑
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-900 font-['Outfit',sans-serif]">
+                  NEET Success Pass & Digital Library Manager
+                </h3>
+                <p className="text-[11px] text-slate-600 font-medium">
+                  Upload study materials, assign PDFs to respective passes or 100% Free Resources, and manage student licenses
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAllUserPasses(getUserNeetPasses());
+                }}
+                className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Refresh</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Sub-Navigation Tabs */}
+          <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setPassAdminView('upload-material')}
+              className={`flex-1 py-2 px-3 rounded-lg text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                passAdminView === 'upload-material'
+                  ? 'bg-amber-400 text-slate-950 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+              }`}
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>📤 Upload Material to Passes</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPassAdminView('manage-materials')}
+              className={`flex-1 py-2 px-3 rounded-lg text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                passAdminView === 'manage-materials'
+                  ? 'bg-white text-blue-600 shadow-2xs ring-1 ring-slate-200'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+              }`}
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              <span>📚 Pass Materials ({products.filter(p => p.type === 'pdf').length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPassAdminView('student-passes')}
+              className={`flex-1 py-2 px-3 rounded-lg text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                passAdminView === 'student-passes'
+                  ? 'bg-white text-amber-700 shadow-2xs ring-1 ring-slate-200'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+              }`}
+            >
+              <Crown className="w-3.5 h-3.5" />
+              <span>👑 Student Passes ({allUserPasses.length})</span>
+            </button>
+          </div>
+
+          {/* Quick Metrics Bar */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+              <span className="text-[9px] font-extrabold text-emerald-800 uppercase tracking-wider block">🌿 Biology Pass</span>
+              <div className="text-lg font-black text-slate-900 mt-0.5">
+                {products.filter(p => p.type === 'pdf' && (p.passTier === 'biology' || (!p.passTier && (p.subject === 'Biology' || p.category.toLowerCase().includes('bio'))))).length} Files
+              </div>
+            </div>
+
+            <div className="p-2.5 bg-cyan-50 border border-cyan-200 rounded-xl">
+              <span className="text-[9px] font-extrabold text-cyan-800 uppercase tracking-wider block">🧪 Chemistry Pass</span>
+              <div className="text-lg font-black text-slate-900 mt-0.5">
+                {products.filter(p => p.type === 'pdf' && (p.passTier === 'chemistry' || (!p.passTier && (p.subject === 'Chemistry' || p.category.toLowerCase().includes('chem'))))).length} Files
+              </div>
+            </div>
+
+            <div className="p-2.5 bg-purple-50 border border-purple-200 rounded-xl">
+              <span className="text-[9px] font-extrabold text-purple-800 uppercase tracking-wider block">⚡ Physics Pass</span>
+              <div className="text-lg font-black text-slate-900 mt-0.5">
+                {products.filter(p => p.type === 'pdf' && (p.passTier === 'physics' || (!p.passTier && (p.subject === 'Physics' || p.category.toLowerCase().includes('phys'))))).length} Files
+              </div>
+            </div>
+
+            <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+              <span className="text-[9px] font-extrabold text-amber-800 uppercase tracking-wider block">🏆 Complete PCB</span>
+              <div className="text-lg font-black text-slate-900 mt-0.5">
+                {products.filter(p => p.type === 'pdf' && (p.passTier === 'pcb' || p.passTier === 'all' || p.subject === 'PCB')).length} Files
+              </div>
+            </div>
+
+            <div className="p-2.5 bg-green-100/70 border border-green-300 rounded-xl col-span-2 sm:col-span-1">
+              <span className="text-[9px] font-extrabold text-green-900 uppercase tracking-wider block">🎁 Free Resources</span>
+              <div className="text-lg font-black text-slate-900 mt-0.5">
+                {products.filter(p => p.type === 'pdf' && (p.isFreeResource || p.passTier === 'free' || p.price === 0)).length} Open
+              </div>
+            </div>
+          </div>
+
+          {/* ========================================================================= */}
+          {/* SUB-TAB 1: UPLOAD STUDY MATERIAL TO PASS / FREE LIBRARY */}
+          {/* ========================================================================= */}
+          {passAdminView === 'upload-material' && (
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-amber-200/90 shadow-sm space-y-4 animate-in fade-in duration-150">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center font-black text-xs">
+                    📤
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-900">
+                      Upload PDF / Study Material to NEET Pass or Free Library
+                    </h4>
+                    <p className="text-[10px] text-slate-500">
+                      Any student with the matching pass will get instant online reading and offline PDF download access!
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {passMaterialFeedback && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-900 flex items-center gap-2 animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{passMaterialFeedback}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleSavePassMaterial} className="space-y-4">
+                {/* 1. Target Access Pass Selector */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] uppercase font-black tracking-wide text-slate-700 block">
+                    1. Select Target Pass / Access Tier *
+                  </label>
+                  <p className="text-[10px] text-slate-500">
+                    Choose which student membership plan unlocks this study material.
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+                    {/* Biology Pass Option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPassUploadTarget('biology');
+                        setPassUploadSubject('Biology');
+                        setPassUploadPrice(0);
+                      }}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                        passUploadTarget === 'biology'
+                          ? 'bg-emerald-50/70 border-emerald-500 ring-2 ring-emerald-500/20 shadow-2xs'
+                          : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base">🌿</span>
+                        <span className="text-xs font-black text-emerald-900">Biology Pass</span>
+                      </div>
+                      <p className="text-[9.5px] text-slate-500 mt-1 leading-tight">
+                        Instant access for Biology & PCB Pass holders
+                      </p>
+                    </button>
+
+                    {/* Chemistry Pass Option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPassUploadTarget('chemistry');
+                        setPassUploadSubject('Chemistry');
+                        setPassUploadPrice(0);
+                      }}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                        passUploadTarget === 'chemistry'
+                          ? 'bg-cyan-50/70 border-cyan-500 ring-2 ring-cyan-500/20 shadow-2xs'
+                          : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base">🧪</span>
+                        <span className="text-xs font-black text-cyan-900">Chemistry Pass</span>
+                      </div>
+                      <p className="text-[9.5px] text-slate-500 mt-1 leading-tight">
+                        Instant access for Chemistry & PCB Pass holders
+                      </p>
+                    </button>
+
+                    {/* Physics Pass Option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPassUploadTarget('physics');
+                        setPassUploadSubject('Physics');
+                        setPassUploadPrice(0);
+                      }}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                        passUploadTarget === 'physics'
+                          ? 'bg-purple-50/70 border-purple-500 ring-2 ring-purple-500/20 shadow-2xs'
+                          : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base">⚡</span>
+                        <span className="text-xs font-black text-purple-900">Physics Pass</span>
+                      </div>
+                      <p className="text-[9.5px] text-slate-500 mt-1 leading-tight">
+                        Instant access for Physics & PCB Pass holders
+                      </p>
+                    </button>
+
+                    {/* Complete PCB Pass Option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPassUploadTarget('pcb');
+                        setPassUploadPrice(0);
+                      }}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                        passUploadTarget === 'pcb'
+                          ? 'bg-amber-50/70 border-amber-500 ring-2 ring-amber-500/20 shadow-2xs'
+                          : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base">🏆</span>
+                        <span className="text-xs font-black text-amber-950">Complete PCB Pass</span>
+                      </div>
+                      <p className="text-[9.5px] text-slate-500 mt-1 leading-tight">
+                        Exclusive to All-in-One PCB Pass members
+                      </p>
+                    </button>
+
+                    {/* 100% Free Resource Option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPassUploadTarget('free');
+                        setPassUploadPrice(0);
+                      }}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                        passUploadTarget === 'free'
+                          ? 'bg-green-50 border-green-600 ring-2 ring-green-600/20 shadow-2xs'
+                          : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base">🎁</span>
+                        <span className="text-xs font-black text-green-900">100% Free Resource</span>
+                      </div>
+                      <p className="text-[9.5px] text-slate-500 mt-1 leading-tight">
+                        Free for all students (no pass or purchase required)
+                      </p>
+                    </button>
+
+                    {/* Standalone Paid Store Option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPassUploadTarget('none');
+                        setPassUploadPrice(149);
+                      }}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer ${
+                        passUploadTarget === 'none'
+                          ? 'bg-blue-50/70 border-blue-500 ring-2 ring-blue-500/20 shadow-2xs'
+                          : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base">🛒</span>
+                        <span className="text-xs font-black text-blue-900">Paid Store Only</span>
+                      </div>
+                      <p className="text-[9.5px] text-slate-500 mt-1 leading-tight">
+                        Individual purchase required (not in passes)
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. Subject & Content Category */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-600 block">Subject *</label>
+                    <select
+                      value={passUploadSubject}
+                      onChange={(e) => setPassUploadSubject(e.target.value as NeetSubject)}
+                      className="w-full text-xs bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-slate-900 font-bold focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
+                    >
+                      {NEET_SUBJECTS.map((subj) => (
+                        <option key={subj} value={subj}>
+                          {subj}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-600 block">Content Category *</label>
+                    <select
+                      value={passUploadMaterialType}
+                      onChange={(e) => setPassUploadMaterialType(e.target.value as NeetMaterialType)}
+                      className="w-full text-xs bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-slate-900 font-bold focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
+                    >
+                      {NEET_MATERIAL_CATEGORIES.map((cat) => (
+                        <option key={cat.type} value={cat.type}>
+                          {cat.icon} {cat.label} ({cat.type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* 3. Title & Chapter */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-600 block">
+                      Study Material Title *
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Human Physiology - Complete Hand-Drawn Mindmaps & PYQs"
+                      value={passUploadTitle}
+                      onChange={(e) => setPassUploadTitle(e.target.value)}
+                      className="w-full text-xs bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-600 block">
+                      Chapter / Topic Name (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Unit 5: Human Physiology (Digestion to Neural)"
+                      value={passUploadChapter}
+                      onChange={(e) => setPassUploadChapter(e.target.value)}
+                      className="w-full text-xs bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* 4. PDF File Upload (Cloudflare R2 Binary Upload) */}
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] uppercase font-bold text-slate-700 block flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Attach PDF Document (Cloudflare R2) *</span>
+                    </label>
+                    {isUploadingPassPdf && (
+                      <span className="text-[10px] text-blue-600 font-bold flex items-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span>Uploading...</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label className="flex items-center justify-center gap-2 p-3 bg-white border border-dashed border-blue-300 hover:border-blue-500 rounded-xl cursor-pointer text-xs font-bold text-blue-700 transition">
+                      <Upload className="w-4 h-4" />
+                      <span>Choose PDF File to Upload</span>
+                      <input
+                        type="file"
+                        accept="application/pdf"
+                        onChange={handlePassPdfFileUpload}
+                        className="hidden"
+                      />
+                    </label>
+
+                    <input
+                      type="url"
+                      placeholder="Or paste direct Cloudflare R2 PDF URL..."
+                      value={passUploadPdfUrl}
+                      onChange={(e) => setPassUploadPdfUrl(e.target.value)}
+                      className="w-full text-xs bg-white border border-slate-200 p-2.5 rounded-xl text-slate-900 focus:ring-2 focus:ring-amber-500 focus:outline-none font-mono"
+                    />
+                  </div>
+
+                  {passPdfProgress && (
+                    <p className="text-[10px] font-bold text-emerald-700">
+                      {passPdfProgress}
+                    </p>
+                  )}
+                </div>
+
+                {/* 5. Cover Image & Auto Palette */}
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] uppercase font-bold text-slate-700 block flex items-center gap-1.5">
+                      <ImageIcon className="w-3.5 h-3.5 text-purple-600" />
+                      <span>Cover Thumbnail Image</span>
+                    </label>
+                    {isUploadingPassCover && (
+                      <span className="text-[10px] text-purple-600 font-bold flex items-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span>Uploading...</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label className="flex items-center justify-center gap-2 p-2.5 bg-white border border-dashed border-purple-300 hover:border-purple-500 rounded-xl cursor-pointer text-xs font-bold text-purple-700 transition">
+                      <Upload className="w-4 h-4" />
+                      <span>Upload Custom Cover</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handlePassCoverFileUpload}
+                        className="hidden"
+                      />
+                    </label>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const autoImg = 
+                            passUploadSubject === 'Biology' 
+                              ? 'https://images.unsplash.com/photo-1532094349884-543bc11b234d?w=600&auto=format&fit=crop&q=80'
+                              : passUploadSubject === 'Chemistry'
+                              ? 'https://images.unsplash.com/photo-1603126857599-f6e157fa2fe6?w=600&auto=format&fit=crop&q=80'
+                              : passUploadSubject === 'Physics'
+                              ? 'https://images.unsplash.com/photo-1636466497217-26a8cbeaf0aa?w=600&auto=format&fit=crop&q=80'
+                              : 'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=600&auto=format&fit=crop&q=80';
+                          setPassUploadCoverImage(autoImg);
+                          setPassCoverProgress('✓ Applied verified subject artwork');
+                        }}
+                        className="w-full py-2.5 px-3 bg-white hover:bg-purple-50 border border-purple-200 text-purple-800 text-[11px] font-bold rounded-xl transition cursor-pointer"
+                      >
+                        ⚡ Use High-Yield {passUploadSubject} Artwork
+                      </button>
+                    </div>
+                  </div>
+
+                  {passUploadCoverImage && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <img
+                        src={resolveImageUrl(passUploadCoverImage)}
+                        alt="Thumbnail"
+                        className="w-10 h-10 object-cover rounded-lg border border-slate-200"
+                        referrerPolicy="no-referrer"
+                      />
+                      <span className="text-[10px] text-slate-500 truncate">{passUploadCoverImage}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 6. Pages, Standalone Price, Author */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-600 block">Total Pages</label>
+                    <input
+                      type="number"
+                      value={passUploadPages}
+                      onChange={(e) => setPassUploadPages(Number(e.target.value))}
+                      className="w-full text-xs bg-slate-50 border border-slate-200 p-2 rounded-xl text-slate-900 font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-600 block">
+                      Standalone Store Price (₹)
+                    </label>
+                    <input
+                      type="number"
+                      value={passUploadPrice}
+                      onChange={(e) => setPassUploadPrice(Number(e.target.value))}
+                      placeholder="0 for Free"
+                      disabled={passUploadTarget === 'free'}
+                      className="w-full text-xs bg-slate-50 border border-slate-200 p-2 rounded-xl text-slate-900 font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none disabled:opacity-50"
+                    />
+                    <span className="text-[9px] text-slate-400 block">
+                      {passUploadTarget === 'free' ? '100% Free (₹0)' : 'Pass holders always get free access'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-600 block">Faculty / Author</label>
+                    <input
+                      type="text"
+                      value={passUploadAuthor}
+                      onChange={(e) => setPassUploadAuthor(e.target.value)}
+                      className="w-full text-xs bg-slate-50 border border-slate-200 p-2 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* 7. Description & Tags */}
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-600 block">
+                    High-Yield Description & Key Features
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={passUploadDescription}
+                    onChange={(e) => setPassUploadDescription(e.target.value)}
+                    placeholder="Briefly describe why this notes/PYQ material is crucial for NEET 2026..."
+                    className="w-full text-xs bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
+                  />
+                </div>
+
+                {/* Submit Button */}
+                <button
+                  type="submit"
+                  className="w-full py-3 bg-gradient-to-r from-amber-500 via-amber-600 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs rounded-xl shadow-sm transition flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>
+                    🚀 Upload & Publish to {
+                      passUploadTarget === 'free' ? '🎁 100% Free Resources' :
+                      passUploadTarget === 'biology' ? '🌿 Biology Access Pass' :
+                      passUploadTarget === 'chemistry' ? '🧪 Chemistry Access Pass' :
+                      passUploadTarget === 'physics' ? '⚡ Physics Access Pass' :
+                      passUploadTarget === 'pcb' ? '🏆 Complete PCB Pass' : 'Store'
+                    }
+                  </span>
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* SUB-TAB 2: MANAGE UPLOADED PASS MATERIALS & LIBRARY */}
+          {/* ========================================================================= */}
+          {passAdminView === 'manage-materials' && (
+            <div className="space-y-3 animate-in fade-in duration-150">
+              {/* Filter Tabs & Search */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+                  <button
+                    type="button"
+                    onClick={() => setPassMaterialsFilter('all')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer shrink-0 ${
+                      passMaterialsFilter === 'all'
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    All ({products.filter(p => p.type === 'pdf').length})
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPassMaterialsFilter('biology')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer shrink-0 ${
+                      passMaterialsFilter === 'biology'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-50'
+                    }`}
+                  >
+                    🌿 Biology Pass
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPassMaterialsFilter('chemistry')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer shrink-0 ${
+                      passMaterialsFilter === 'chemistry'
+                        ? 'bg-cyan-600 text-white'
+                        : 'bg-white border border-cyan-200 text-cyan-800 hover:bg-cyan-50'
+                    }`}
+                  >
+                    🧪 Chemistry Pass
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPassMaterialsFilter('physics')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer shrink-0 ${
+                      passMaterialsFilter === 'physics'
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-white border border-purple-200 text-purple-800 hover:bg-purple-50'
+                    }`}
+                  >
+                    ⚡ Physics Pass
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPassMaterialsFilter('free')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer shrink-0 ${
+                      passMaterialsFilter === 'free'
+                        ? 'bg-green-600 text-white'
+                        : 'bg-white border border-green-200 text-green-800 hover:bg-green-50'
+                    }`}
+                  >
+                    🎁 Free Resources
+                  </button>
+                </div>
+
+                <input
+                  type="text"
+                  placeholder="Search title, chapter, category..."
+                  value={passMaterialsSearch}
+                  onChange={(e) => setPassMaterialsSearch(e.target.value)}
+                  className="text-xs bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-slate-900 w-full sm:w-56 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Materials List */}
+              <div className="space-y-2">
+                {products
+                  .filter(p => p.type === 'pdf')
+                  .filter(p => {
+                    if (passMaterialsFilter === 'biology') {
+                      return p.passTier === 'biology' || (!p.passTier && (p.subject === 'Biology' || p.category.toLowerCase().includes('bio')));
+                    }
+                    if (passMaterialsFilter === 'chemistry') {
+                      return p.passTier === 'chemistry' || (!p.passTier && (p.subject === 'Chemistry' || p.category.toLowerCase().includes('chem')));
+                    }
+                    if (passMaterialsFilter === 'physics') {
+                      return p.passTier === 'physics' || (!p.passTier && (p.subject === 'Physics' || p.category.toLowerCase().includes('phys')));
+                    }
+                    if (passMaterialsFilter === 'pcb') {
+                      return p.passTier === 'pcb' || p.subject === 'PCB';
+                    }
+                    if (passMaterialsFilter === 'free') {
+                      return p.isFreeResource || p.passTier === 'free' || p.price === 0;
+                    }
+                    return true;
+                  })
+                  .filter(p => {
+                    if (!passMaterialsSearch.trim()) return true;
+                    const q = passMaterialsSearch.toLowerCase().trim();
+                    return p.title.toLowerCase().includes(q) ||
+                           (p.chapterName || '').toLowerCase().includes(q) ||
+                           (p.subject || '').toLowerCase().includes(q) ||
+                           (p.materialType || '').toLowerCase().includes(q);
+                  })
+                  .map((product) => {
+                    const isFree = product.isFreeResource || product.passTier === 'free' || product.price === 0;
+
+                    return (
+                      <div
+                        key={product.id}
+                        className="bg-white p-3 sm:p-4 rounded-2xl border border-slate-200 shadow-2xs hover:shadow-xs transition flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      >
+                        {/* Left Info */}
+                        <div className="flex items-start gap-3 min-w-0">
+                          <img
+                            src={resolveImageUrl(product.coverImage)}
+                            alt={product.title}
+                            className="w-12 h-14 object-cover rounded-xl border border-slate-200 shrink-0"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 uppercase">
+                                {product.subject || product.category}
+                              </span>
+
+                              <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">
+                                {typeof product.materialType === 'object' && product.materialType !== null
+                                  ? ((product.materialType as any).label || (product.materialType as any).type || 'Notes')
+                                  : (product.materialType || 'Notes')}
+                              </span>
+
+                              {/* Pass Tier Badge */}
+                              {isFree ? (
+                                <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-green-100 text-green-800 flex items-center gap-1">
+                                  <span>🎁 100% Free</span>
+                                </span>
+                              ) : product.passTier === 'biology' ? (
+                                <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
+                                  🌿 Biology Pass Only
+                                </span>
+                              ) : product.passTier === 'chemistry' ? (
+                                <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-cyan-100 text-cyan-800">
+                                  🧪 Chemistry Pass Only
+                                </span>
+                              ) : product.passTier === 'physics' ? (
+                                <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-purple-100 text-purple-800">
+                                  ⚡ Physics Pass Only
+                                </span>
+                              ) : product.passTier === 'pcb' ? (
+                                <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-amber-100 text-amber-900">
+                                  🏆 PCB Exclusive
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-800">
+                                  👑 NEET Pass
+                                </span>
+                              )}
+                            </div>
+
+                            <h4 className="text-xs font-black text-slate-900 truncate">
+                              {product.title}
+                            </h4>
+
+                            {product.chapterName && (
+                              <p className="text-[10px] text-slate-500 font-medium">
+                                📖 {product.chapterName}
+                              </p>
+                            )}
+
+                            <div className="flex items-center gap-2 text-[9.5px] text-slate-400">
+                              <span>{product.pages || 35} Pages</span>
+                              <span>•</span>
+                              <span>Price: {isFree ? '₹0 (Free)' : `₹${product.price}`}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Right Controls */}
+                        <div className="flex items-center gap-2 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 justify-end flex-wrap">
+                          {/* Quick Change Pass Assignment */}
+                          <div className="flex items-center gap-1">
+                            <span className="text-[9px] font-bold text-slate-400 hidden sm:inline">Pass:</span>
+                            <select
+                              value={product.passTier || (product.isFreeResource ? 'free' : 'none')}
+                              onChange={(e) => handleChangeMaterialPassTier(product, e.target.value as any)}
+                              className="text-[10px] bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg text-slate-800 font-bold focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                              title="Change Target Pass"
+                            >
+                              <option value="biology">🌿 Biology Pass</option>
+                              <option value="chemistry">🧪 Chemistry Pass</option>
+                              <option value="physics">⚡ Physics Pass</option>
+                              <option value="pcb">🏆 Complete PCB</option>
+                              <option value="free">🎁 100% Free Resource</option>
+                              <option value="none">🛒 Store Only (Paid)</option>
+                            </select>
+                          </div>
+
+                          {/* Preview Online */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (onOpenPdfReader) {
+                                onOpenPdfReader(product.pdfUrl || '', product.title);
+                              } else {
+                                window.open(product.pdfUrl || '', '_blank');
+                              }
+                            }}
+                            className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer"
+                            title="Read Online / Preview"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Preview</span>
+                          </button>
+
+                          {/* Delete Item */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm(`Are you sure you want to remove "${product.title}" from the digital library?`)) {
+                                deleteProduct(product.id);
+                              }
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 transition rounded-lg"
+                            title="Delete Study Material"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* SUB-TAB 3: STUDENT PASS LICENSES & VIP ACCESS */}
+          {/* ========================================================================= */}
+          {passAdminView === 'student-passes' && (
+            <div className="space-y-4 animate-in fade-in duration-150">
+              {/* Grant New Pass Form */}
+              <div className="bg-white p-4 rounded-2xl border border-amber-200/80 shadow-xs space-y-3">
+                <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+                  <Sparkles className="w-4 h-4 text-amber-600" />
+                  <h4 className="text-xs font-black text-slate-900">Grant / Issue NEET Success Pass Manually</h4>
+                </div>
+
+                {grantFeedback && (
+                  <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-800 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{grantFeedback}</span>
+                  </div>
+                )}
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!grantEmail.trim()) {
+                      alert('Please enter student email address');
+                      return;
+                    }
+                    const tier = NEET_PASS_TIERS[grantSubject] || NEET_PASS_TIERS.pcb;
+                    const planObj = tier.plans[grantPlan];
+                    const expiryDate = calculatePassExpiry(grantPlan);
+                    const passPayload: UserNeetPass = {
+                      id: `grant-${Date.now()}-${grantSubject}`,
+                      subjectKey: grantSubject,
+                      subjectName: tier.subjectName,
+                      plan: grantPlan,
+                      planName: planObj.label,
+                      price: planObj.price,
+                      startDate: new Date().toISOString(),
+                      expiryDate,
+                      orderId: `ADMIN_GRANT_${Date.now()}`,
+                      active: true
+                    };
+                    activateNeetPass(passPayload, grantEmail.trim());
+                    setAllUserPasses(getUserNeetPasses());
+                    setGrantFeedback(`Successfully granted ${tier.subjectName} (${planObj.label}) to ${grantEmail.trim()}!`);
+                    setGrantEmail('');
+                    setTimeout(() => setGrantFeedback(null), 4500);
+                  }}
+                  className="space-y-3"
+                >
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-600 block">
+                      Student Account Email *
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="e.g. aspirant@gmail.com"
+                      value={grantEmail}
+                      onChange={(e) => setGrantEmail(e.target.value)}
+                      className="w-full text-xs bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-slate-600 block">Select Subject Pass</label>
+                      <select
+                        value={grantSubject}
+                        onChange={(e) => setGrantSubject(e.target.value as NeetPassSubjectKey)}
+                        className="w-full text-xs bg-slate-50 border border-slate-200 p-2 rounded-xl text-slate-900 font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                      >
+                        <option value="biology">🌿 Biology Pass</option>
+                        <option value="chemistry">🧪 Chemistry Pass</option>
+                        <option value="physics">⚡ Physics Pass</option>
+                        <option value="pcb">🏆 Complete PCB Pass (All 3)</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-slate-600 block">Pass Duration</label>
+                      <select
+                        value={grantPlan}
+                        onChange={(e) => setGrantPlan(e.target.value as NeetPassPlan)}
+                        className="w-full text-xs bg-slate-50 border border-slate-200 p-2 rounded-xl text-slate-900 font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                      >
+                        <option value="monthly">1 Month (30 Days)</option>
+                        <option value="yearly">1 Year (365 Days)</option>
+                        <option value="lifetime">Lifetime Access</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-sm transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <span>👑 Grant & Activate Pass</span>
+                  </button>
+                </form>
+              </div>
+
+              {/* Active Passes List */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-xs font-black text-slate-900">
+                    Active Student Passes ({allUserPasses.length})
+                  </h4>
+                  <input
+                    type="text"
+                    placeholder="Search email / subject..."
+                    value={passSearchQuery}
+                    onChange={(e) => setPassSearchQuery(e.target.value)}
+                    className="text-xs bg-white border border-slate-200 px-2.5 py-1 rounded-lg w-48 text-slate-900"
+                  />
+                </div>
+
+                {allUserPasses.length === 0 ? (
+                  <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center space-y-2">
+                    <span className="text-3xl">👑</span>
+                    <p className="text-xs font-bold text-slate-600">No NEET Success Passes active yet.</p>
+                    <p className="text-[10px] text-slate-400">When students purchase or when you grant passes, they appear here.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {allUserPasses
+                      .filter(p => {
+                        if (!passSearchQuery.trim()) return true;
+                        const q = passSearchQuery.toLowerCase().trim();
+                        return p.subjectName.toLowerCase().includes(q) ||
+                               p.planName.toLowerCase().includes(q) ||
+                               (p.orderId && p.orderId.toLowerCase().includes(q));
+                      })
+                      .map((pass) => {
+                        const isExpired = new Date(pass.expiryDate).getTime() < Date.now();
+                        return (
+                          <div
+                            key={pass.id}
+                            className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-2"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs font-black text-slate-900">{pass.subjectName}</span>
+                                  <span className="text-[9px] font-black bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded">
+                                    {pass.planName}
+                                  </span>
+                                  <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${
+                                    isExpired || !pass.active
+                                      ? 'bg-rose-100 text-rose-800'
+                                      : 'bg-emerald-100 text-emerald-800'
+                                  }`}>
+                                    {isExpired || !pass.active ? 'Expired' : 'Active'}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                                  Ref Order: {pass.orderId || 'Direct Grant'} • Price: ₹{pass.price}
+                                </p>
+                              </div>
+
+                              <button
+                                onClick={() => {
+                                  if (confirm(`Revoke pass "${pass.subjectName}"?`)) {
+                                    const updated = allUserPasses.filter(p => p.id !== pass.id);
+                                    saveUserNeetPasses(updated);
+                                    setAllUserPasses(updated);
+                                  }
+                                }}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 transition rounded-lg"
+                                title="Revoke / Delete Pass"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-[10px] pt-1.5 border-t border-slate-100 text-slate-600">
+                              <div>
+                                <span className="text-slate-400 block">Activated:</span>
+                                <span className="font-bold">{new Date(pass.startDate).toLocaleDateString()}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block">Valid Until:</span>
+                                <span className={`font-bold ${isExpired ? 'text-rose-600' : 'text-emerald-700'}`}>
+                                  {new Date(pass.expiryDate).toLocaleDateString()}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -56,8 +56,8 @@ export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose, use
     // Save to persistent storage for Admin Panel
     addSupportMessage(newMsg);
 
-    // Also send an instant Telegram alert to Admins (7004282468 & 1318240288)
-    const tokenToUse = localStorage.getItem('neetmbbs_telegram_token') || '7876878891:AAHR8rM7QGqF-yQk667T0-h5_P9Zz2_t69A';
+    // Send instant Telegram support alert to Admin 7004282468 via dedicated bot
+    const dedicatedBotToken = '7532901077:AAFNXAFmL6tp7k81HVskKJZuRoyHP3fe2qQ';
     
     const escapeTg = (str?: string) => {
       if (!str) return '';
@@ -74,18 +74,16 @@ export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose, use
 ${escapeTg(newMsg.message)}
 🆔 <b>Ticket ID:</b> #${newMsg.id}`;
 
-    if (tokenToUse) {
-      ['7004282468', '1318240288'].forEach(chatId => {
-        fetch(`https://api.telegram.org/bot${tokenToUse}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: alertText,
-            parse_mode: 'HTML'
-          })
-        }).catch(err => console.warn('Support telegram error:', err));
-      });
+    if (dedicatedBotToken) {
+      fetch(`https://api.telegram.org/bot${dedicatedBotToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: '7004282468',
+          text: alertText,
+          parse_mode: 'HTML'
+        })
+      }).catch(err => console.warn('Dedicated support telegram error:', err));
     }
 
     setIsSubmitting(false);

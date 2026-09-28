@@ -7,6 +7,7 @@ import Razorpay from "razorpay";
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { createServer as createViteServer } from "vite";
 import { generateInvoicePdfDoc, generateCombinedInvoicesPdfDoc } from "./src/lib/pdfInvoice";
+import { GoogleGenAI, Type } from "@google/genai";
 
 const app = express();
 const PORT = 3000;
@@ -76,6 +77,12 @@ interface DatabaseSchema {
   pdf_access: any[];
   payment_records: any[];
   settings?: any;
+  mock_tests?: any[];
+  mock_questions?: Record<string, any[]>;
+  mock_purchases?: any[];
+  mock_attempts?: any[];
+  full_course_config?: any;
+  full_course_purchases?: any[];
 }
 
 const SEED_PRODUCTS: any[] = [];
@@ -351,7 +358,8 @@ async function hydrateDualDatabases() {
       if (userList.length > 0) {
         for (const u of userList) {
           if (!u || !u.email) continue;
-          const exists = db.users.findIndex(localU => localU.email.toLowerCase() === u.email.toLowerCase());
+          const uEmail = String(u.email || '').toLowerCase().trim();
+          const exists = db.users.findIndex(localU => String(localU?.email || '').toLowerCase().trim() === uEmail);
           if (exists >= 0) {
             db.users[exists] = { ...db.users[exists], ...u };
           } else {
@@ -822,6 +830,98 @@ app.post("/api/telegram/notify-order", async (req, res) => {
   } catch (error: any) {
     console.error("Telegram notification error:", error);
     return res.status(500).json({ error: "Failed to send Telegram notification", message: error.message });
+  }
+});
+
+// Helper for Mock Test, PDF, and Portal Events
+async function sendTelegramAdminAlert(eventData: {
+  eventType: 'mock_test_purchase' | 'mock_test_completed' | 'pdf_purchase';
+  title: string;
+  studentName?: string;
+  studentEmail?: string;
+  studentPhone?: string;
+  details?: Record<string, any>;
+}) {
+  const token = TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || "7876878891:AAHR8rM7QGqF-yQk667T0-h5_P9Zz2_t69A";
+  if (!token) return { success: false, message: "Token not configured" };
+
+  let icon = "📢";
+  let header = "ADMIN ALERT";
+  if (eventData.eventType === 'mock_test_purchase') {
+    icon = "📝";
+    header = "MOCK TEST ENROLLED";
+  } else if (eventData.eventType === 'mock_test_completed') {
+    icon = "🎯";
+    header = "MOCK TEST SUBMITTED & EVALUATED";
+  } else if (eventData.eventType === 'pdf_purchase') {
+    icon = "📑";
+    header = "DIGITAL PDF UNLOCKED";
+  }
+
+  const name = escapeTelegramHtml(eventData.studentName || 'Verified Aspirant');
+  const email = escapeTelegramHtml(eventData.studentEmail || 'N/A');
+  const testTitle = escapeTelegramHtml(eventData.title || 'NEET Study Item');
+  
+  let extraLines = "";
+  if (eventData.details) {
+    for (const [k, v] of Object.entries(eventData.details)) {
+      if (v !== undefined && v !== null && v !== '') {
+        extraLines += `\n🔹 <b>${escapeTelegramHtml(k)}:</b> ${escapeTelegramHtml(String(v))}`;
+      }
+    }
+  }
+
+  const htmlMsg = `${icon} <b>${header}</b>
+👤 <b>Student:</b> ${name}
+📧 <b>Email:</b> ${email}
+📚 <b>Subject / Item:</b> ${testTitle}${extraLines}
+⏰ <b>Time:</b> ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`;
+
+  const plainMsg = `${icon} ${header}\nStudent: ${eventData.studentName || 'Verified Aspirant'}\nEmail: ${eventData.studentEmail || 'N/A'}\nItem: ${eventData.title || ''}\nTime: ${new Date().toLocaleString('en-IN')}`;
+
+  for (const chatId of TELEGRAM_ADMIN_CHAT_IDS) {
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: htmlMsg,
+          parse_mode: "HTML"
+        })
+      });
+    } catch (e: any) {
+      try {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: plainMsg
+          })
+        });
+      } catch (err2) {}
+    }
+  }
+
+  return { success: true };
+}
+
+// Telegram Event Alert Endpoint (Mock Test, PDF, Evaluation)
+app.post("/api/telegram/notify-event", async (req, res) => {
+  try {
+    const { eventType, title, studentName, studentEmail, studentPhone, details } = req.body;
+    const result = await sendTelegramAdminAlert({
+      eventType,
+      title,
+      studentName,
+      studentEmail,
+      studentPhone,
+      details
+    });
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to dispatch alert", message: err.message });
   }
 });
 
@@ -1897,7 +1997,7 @@ app.post("/api/db/users/register", async (req, res) => {
     const cleanEmail = email.trim().toLowerCase();
     const isAdmin = cleanEmail === "fdar77551@gmail.com" || cleanEmail === "shahzaibhusain6@gmail.com";
     
-    const existing = db.users.find(u => u.email.toLowerCase() === cleanEmail);
+    const existing = db.users.find(u => String(u.email || '').toLowerCase().trim() === cleanEmail);
     if (existing) {
       existing.displayName = displayName || existing.displayName;
       if (uid) existing.uid = uid;
@@ -1967,7 +2067,7 @@ app.post("/api/db/users/login", async (req, res) => {
     const cleanEmail = email.trim().toLowerCase();
     const isAdmin = cleanEmail === "fdar77551@gmail.com" || cleanEmail === "shahzaibhusain6@gmail.com";
 
-    let user = db.users.find(u => u.email.toLowerCase() === cleanEmail);
+    let user = db.users.find(u => String(u.email || '').toLowerCase().trim() === cleanEmail);
     if (!user) {
       user = {
         uid: uid || (isAdmin ? (cleanEmail === "fdar77551@gmail.com" ? "admin-1" : "admin-2") : `user-${Date.now()}`),
@@ -2151,7 +2251,308 @@ app.delete("/api/db/support/:id", async (req, res) => {
   }
 });
 
-// 6. CLOUDFLARE D1 STATUS & SYNC
+// 6. MOCK TESTS & QUESTIONS PERSISTENCE
+app.get("/api/db/mock-tests", async (_req, res) => {
+  try {
+    const db = loadDatabase();
+    return res.json({ success: true, tests: db.mock_tests || [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/db/mock-tests", async (req, res) => {
+  try {
+    const db = loadDatabase();
+    db.mock_tests = Array.isArray(req.body) ? req.body : req.body.tests || [];
+    saveDatabase(db);
+    return res.json({ success: true, count: db.mock_tests.length });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/db/mock-questions", async (req, res) => {
+  try {
+    const db = loadDatabase();
+    const testId = req.query.testId as string;
+    if (testId) {
+      const qList = (db.mock_questions && db.mock_questions[testId]) || [];
+      return res.json({ success: true, testId, questions: qList });
+    }
+    return res.json({ success: true, allQuestions: db.mock_questions || {} });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/db/mock-questions", async (req, res) => {
+  try {
+    const db = loadDatabase();
+    const { testId, questions } = req.body;
+    if (!testId || !Array.isArray(questions)) {
+      return res.status(400).json({ success: false, error: "testId and questions array required" });
+    }
+    if (!db.mock_questions) db.mock_questions = {};
+    db.mock_questions[testId] = questions;
+    saveDatabase(db);
+    return res.json({ success: true, testId, count: questions.length });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/db/mock-purchases", async (_req, res) => {
+  try {
+    const db = loadDatabase();
+    return res.json({ success: true, purchases: db.mock_purchases || [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/db/mock-purchases", async (req, res) => {
+  try {
+    const db = loadDatabase();
+    const purchase = req.body;
+    if (!db.mock_purchases) db.mock_purchases = [];
+    db.mock_purchases.unshift(purchase);
+    saveDatabase(db);
+    return res.json({ success: true, count: db.mock_purchases.length });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// NEET (11th & 12th) FULL COURSE API ENDPOINTS
+// ==========================================
+const DEFAULT_FULL_COURSE_SERVER_CONFIG = {
+  id: "neet-full-course-11-12",
+  title: "NEET (11th & 12th) Full Course",
+  subtitle: "Complete study material for your NEET preparation — Class 11 + Class 12.",
+  description: "Complete Class 11 + Class 12 preparation material for NEET aspirants. Master Physics, Chemistry & Biology with comprehensive digital study material delivered directly via Google Drive. Organized by experienced faculty, regularly updated with new high-yield resources, and designed so you can learn at your own pace.",
+  price: 499,
+  originalPrice: 1999,
+  sampleDriveLink: "https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH",
+  mainCourseDriveLink: "https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH",
+  isActive: true,
+  features: [
+    "Comprehensive Class 11 + Class 12 NEET Syllabus",
+    "Physics + Chemistry + Biology Core Concept Notes",
+    "Delivered Digitally through Dedicated Google Drive",
+    "Regularly Organized & Updated PDFs by Faculty",
+    "Formula Cheatsheets & Reaction Mechanisms",
+    "High-Yield Chapter-Wise Questions & NCERT Pointers",
+    "Learn At Your Own Pace with Lifetime Digital Access",
+    "Mobile, Tablet & Desktop Compatible with Instant Access"
+  ],
+  highlights: [
+    "Class 11 + 12",
+    "Physics + Chemistry + Biology",
+    "Complete study material",
+    "Regularly organized PDFs",
+    "Easy digital access",
+    "Learn at your own pace"
+  ]
+};
+
+// Public course metadata (SECURITY: NEVER exposes mainCourseDriveLink)
+app.get(["/api/course/public-info", "/api/course/info"], async (_req, res) => {
+  try {
+    const db = loadDatabase();
+    const cfg = { ...DEFAULT_FULL_COURSE_SERVER_CONFIG, ...(db.full_course_config || {}) };
+    const publicInfo = {
+      id: cfg.id || "neet-full-course-11-12",
+      title: cfg.title || "NEET (11th & 12th) Full Course",
+      subtitle: cfg.subtitle || "Complete study material for your NEET preparation — Class 11 + Class 12.",
+      description: cfg.description || "",
+      price: Number(cfg.price) > 0 ? Number(cfg.price) : 499,
+      originalPrice: Number(cfg.originalPrice) > 0 ? Number(cfg.originalPrice) : 1999,
+      sampleDriveLink: cfg.sampleDriveLink || "https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH",
+      isActive: cfg.isActive !== false,
+      features: cfg.features || DEFAULT_FULL_COURSE_SERVER_CONFIG.features,
+      highlights: cfg.highlights || DEFAULT_FULL_COURSE_SERVER_CONFIG.highlights
+    };
+    return res.json({ success: true, course: publicInfo });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin get full configuration including private mainCourseDriveLink and stats
+app.get("/api/course/admin-config", async (_req, res) => {
+  try {
+    const db = loadDatabase();
+    const cfg = { ...DEFAULT_FULL_COURSE_SERVER_CONFIG, ...(db.full_course_config || {}) };
+
+    // Calculate real-time purchase stats from orders
+    const orders = db.orders || [];
+    let totalPurchases = 0;
+    let successfulPurchases = 0;
+    let revenue = 0;
+
+    for (const o of orders) {
+      const isCourseOrder = (o.items || []).some((item: any) => {
+        const pId = (item.productId || "").toLowerCase();
+        const title = (item.title || "").toLowerCase();
+        return pId === "neet-full-course-11-12" || pId.includes("full-course") || title.includes("full course");
+      });
+
+      if (isCourseOrder) {
+        totalPurchases++;
+        const isPaid = (o.paymentStatus === "paid" || o.paymentStatus === "paid_sandbox" || o.paymentStatus === "cod") && o.status !== "cancelled";
+        if (isPaid) {
+          successfulPurchases++;
+          const courseItem = (o.items || []).find((item: any) => {
+            const pId = (item.productId || "").toLowerCase();
+            const title = (item.title || "").toLowerCase();
+            return pId === "neet-full-course-11-12" || pId.includes("full-course") || title.includes("full course");
+          });
+          revenue += (courseItem?.price || cfg.price || 499) * (courseItem?.quantity || 1);
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      course: cfg,
+      stats: {
+        totalPurchases,
+        successfulPurchases,
+        revenue
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin save configuration
+app.post("/api/course/admin-config", async (req, res) => {
+  try {
+    const db = loadDatabase();
+    const current = { ...DEFAULT_FULL_COURSE_SERVER_CONFIG, ...(db.full_course_config || {}) };
+    const updated = {
+      ...current,
+      ...req.body,
+      price: Number(req.body.price) > 0 ? Number(req.body.price) : current.price,
+      originalPrice: Number(req.body.originalPrice) > 0 ? Number(req.body.originalPrice) : current.originalPrice
+    };
+    db.full_course_config = updated;
+    saveDatabase(db);
+    return res.json({ success: true, course: updated });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Secure access verification: verifies user payment before revealing main course Google Drive link
+app.post("/api/course/access", async (req, res) => {
+  try {
+    const { userEmail, userId, orderId } = req.body;
+    const db = loadDatabase();
+    const email = (userEmail || "").trim().toLowerCase();
+    const uId = (userId || "").trim();
+    const ordId = (orderId || "").trim().toLowerCase();
+
+    const orders = db.orders || [];
+    const isPurchased = orders.some((order: any) => {
+      const isPaid = (order.paymentStatus === "paid" || order.paymentStatus === "paid_sandbox" || order.paymentStatus === "cod") && order.status !== "cancelled";
+      if (!isPaid) return false;
+
+      const orderEmail = (order.userEmail || "").trim().toLowerCase();
+      const orderUid = order.userId || "";
+      const cleanOrderId = (order.id || "").trim().toLowerCase();
+
+      const emailMatch = email && orderEmail === email;
+      const uidMatch = uId && orderUid === uId;
+      const orderIdMatch = ordId && (cleanOrderId === ordId || cleanOrderId.replace(/^ord-/, "") === ordId || cleanOrderId.replace(/^#/, "") === ordId);
+
+      if (emailMatch || uidMatch || orderIdMatch) {
+        return (order.items || []).some((item: any) => {
+          const pId = (item.productId || "").toLowerCase();
+          const title = (item.title || "").toLowerCase();
+          return pId === "neet-full-course-11-12" || pId.includes("full-course") || title.includes("full course");
+        });
+      }
+      return false;
+    });
+
+    const isPurchasedExplicit = (db.full_course_purchases || []).some((p: any) => {
+      return (email && p.userEmail?.toLowerCase() === email) || (uId && p.userId === uId) || (ordId && p.orderId?.toLowerCase() === ordId);
+    });
+
+    if (isPurchased || isPurchasedExplicit) {
+      const cfg = { ...DEFAULT_FULL_COURSE_SERVER_CONFIG, ...(db.full_course_config || {}) };
+      return res.json({
+        success: true,
+        accessUrl: cfg.mainCourseDriveLink || cfg.sampleDriveLink
+      });
+    }
+
+    return res.status(403).json({
+      success: false,
+      message: "Please complete your enrollment to access the NEET (11th & 12th) Full Course folder."
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin stats endpoint
+app.get("/api/course/admin-stats", async (_req, res) => {
+  try {
+    const db = loadDatabase();
+    const cfg = { ...DEFAULT_FULL_COURSE_SERVER_CONFIG, ...(db.full_course_config || {}) };
+    const orders = db.orders || [];
+    let totalPurchases = 0;
+    let successfulPurchases = 0;
+    let revenue = 0;
+    const purchases: any[] = [];
+
+    for (const o of orders) {
+      const isCourseOrder = (o.items || []).some((item: any) => {
+        const pId = (item.productId || "").toLowerCase();
+        const title = (item.title || "").toLowerCase();
+        return pId === "neet-full-course-11-12" || pId.includes("full-course") || title.includes("full course");
+      });
+
+      if (isCourseOrder) {
+        totalPurchases++;
+        const isPaid = (o.paymentStatus === "paid" || o.paymentStatus === "paid_sandbox" || o.paymentStatus === "cod") && o.status !== "cancelled";
+        if (isPaid) {
+          successfulPurchases++;
+          const courseItem = (o.items || []).find((item: any) => {
+            const pId = (item.productId || "").toLowerCase();
+            const title = (item.title || "").toLowerCase();
+            return pId === "neet-full-course-11-12" || pId.includes("full-course") || title.includes("full course");
+          });
+          revenue += (courseItem?.price || cfg.price || 499) * (courseItem?.quantity || 1);
+        }
+        purchases.push({
+          id: o.id,
+          userName: o.userName,
+          userEmail: o.userEmail,
+          paymentStatus: o.paymentStatus,
+          status: o.status,
+          orderDate: o.orderDate,
+          totalAmount: o.totalAmount
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      stats: { totalPurchases, successfulPurchases, revenue },
+      purchases
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7. CLOUDFLARE D1 STATUS & SYNC
 app.get("/api/db/d1-status", async (_req, res) => {
   try {
     const db = loadDatabase();
@@ -2213,6 +2614,726 @@ app.post("/api/db/d1-sync", async (req, res) => {
     return res.json({ success: true, message: `Synced ${db.products.length} products to Cloudflare D1 (${CF_D1_NAME})` });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// 8. GEMINI AI NEET PDF PARSER ENDPOINTS
+// ==========================================
+let geminiClient: GoogleGenAI | null = null;
+function getGeminiClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY environment variable is not configured. Please set it in Settings > Secrets.");
+  }
+  if (!geminiClient) {
+    geminiClient = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+  }
+  return geminiClient;
+}
+
+// Resilient multi-model fallback chain to handle transient 503 (high demand) and 429 surges
+// gemini-3.1-flash-lite has a higher 15 RPM quota limit on free tier, paired with gemini-2.5-flash
+const GEMINI_MODELS_FALLBACK_CHAIN = [
+  "gemini-3.1-flash-lite",
+  "gemini-3.8-flash",
+  "gemini-flash-latest"
+];
+
+function extractRetryDelaySeconds(err: any): number {
+  try {
+    const msg = err?.message || String(err);
+    const match = msg.match(/retry in ([\d\.]+)s/i) || msg.match(/retryDelay["']?\s*:\s*["']?(\d+)s/i);
+    if (match && match[1]) {
+      const parsed = Math.ceil(parseFloat(match[1]));
+      if (!isNaN(parsed) && parsed > 0) return Math.min(parsed, 60);
+    }
+    if (Array.isArray(err?.details)) {
+      for (const d of err.details) {
+        if (d?.retryDelay) {
+          const s = parseInt(String(d.retryDelay).replace(/[^\d]/g, ''), 10);
+          if (!isNaN(s) && s > 0) return Math.min(s, 60);
+        }
+      }
+    }
+  } catch (e) {}
+  return 35;
+}
+
+const NEET_QUESTION_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    questions: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          questionNumber: { type: Type.INTEGER },
+          subject: { type: Type.STRING },
+          chapter: { type: Type.STRING },
+          hasFigure: { type: Type.BOOLEAN },
+          figureDescription: { type: Type.STRING },
+          figureBoundingBox: {
+            type: Type.ARRAY,
+            items: { type: Type.INTEGER },
+            description: "[ymin, xmin, ymax, xmax] normalized 0-1000",
+          },
+          matchTable: {
+            type: Type.OBJECT,
+            properties: {
+              column1Header: { type: Type.STRING },
+              column2Header: { type: Type.STRING },
+              rows: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    leftKey: { type: Type.STRING },
+                    leftText: { type: Type.STRING },
+                    rightKey: { type: Type.STRING },
+                    rightText: { type: Type.STRING },
+                  },
+                  required: ["leftKey", "leftText", "rightKey", "rightText"],
+                },
+              },
+            },
+          },
+          english: {
+            type: Type.OBJECT,
+            properties: {
+              questionText: { type: Type.STRING },
+              options: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    label: { type: Type.STRING },
+                    text: { type: Type.STRING },
+                  },
+                  required: ["label"],
+                },
+              },
+            },
+            required: ["questionText", "options"],
+          },
+          hindi: {
+            type: Type.OBJECT,
+            properties: {
+              questionText: { type: Type.STRING },
+              options: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    label: { type: Type.STRING },
+                    text: { type: Type.STRING },
+                  },
+                  required: ["label"],
+                },
+              },
+            },
+          },
+          optionsWithFigures: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                label: { type: Type.STRING },
+                boundingBox: {
+                  type: Type.ARRAY,
+                  items: { type: Type.INTEGER },
+                },
+              },
+              required: ["label", "boundingBox"],
+            },
+          },
+          correctAnswer: { type: Type.STRING },
+        },
+        required: ["questionNumber", "english"],
+      },
+    },
+  },
+  required: ["questions"],
+};
+
+const ANSWER_KEY_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    answers: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          questionNumber: { type: Type.INTEGER },
+          answer: { type: Type.STRING },
+          confidence: { type: Type.NUMBER },
+          rawText: { type: Type.STRING }
+        },
+        required: ["questionNumber", "answer"]
+      }
+    }
+  },
+  required: ["answers"]
+};
+
+const SOLUTIONS_AND_KEY_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    answers: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          questionNumber: { type: Type.INTEGER },
+          answer: { type: Type.STRING },
+          rawText: { type: Type.STRING }
+        },
+        required: ["questionNumber", "answer"]
+      }
+    },
+    solutions: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          questionNumber: { type: Type.INTEGER },
+          answer: { type: Type.STRING },
+          explanation: { type: Type.STRING },
+          formulaSummary: { type: Type.STRING }
+        },
+        required: ["questionNumber", "explanation"]
+      }
+    }
+  },
+  required: ["answers"]
+};
+
+/**
+ * Resilient Gemini caller that catches 503 (high demand), 429, and transient timeouts
+ * with automatic exponential backoff and seamless multi-model fallback.
+ */
+async function callGeminiWithFallback(
+  ai: GoogleGenAI,
+  params: {
+    contents: any;
+    systemInstruction: string;
+    preferredModel?: string;
+    responseSchema?: any;
+    responseMimeType?: string;
+  }
+): Promise<{ rawText: string; modelUsed: string }> {
+  let lastError: any = null;
+
+  // If user requested a preferred model, try it first, followed by others
+  const modelsToTry = params.preferredModel
+    ? [params.preferredModel, ...GEMINI_MODELS_FALLBACK_CHAIN.filter(m => m !== params.preferredModel)]
+    : GEMINI_MODELS_FALLBACK_CHAIN;
+
+  const targetSchema = params.responseSchema === undefined
+    ? NEET_QUESTION_SCHEMA
+    : params.responseSchema;
+
+  const configObj: any = {
+    systemInstruction: params.systemInstruction,
+    responseMimeType: params.responseMimeType || "application/json",
+  };
+  if (targetSchema) {
+    configObj.responseSchema = targetSchema;
+  }
+
+  for (const model of modelsToTry) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        console.log(`[Gemini OCR] Requesting model: ${model} (attempt ${attempt})...`);
+        const response = await ai.models.generateContent({
+          model,
+          contents: params.contents,
+          config: configObj,
+        });
+
+        const rawText = response.text || "{}";
+        console.log(`[Gemini OCR] Model ${model} successfully digitized content.`);
+        return { rawText, modelUsed: model };
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = err?.message || String(err);
+        const isQuota =
+          errMsg.includes("429") ||
+          errMsg.includes("RESOURCE_EXHAUSTED") ||
+          errMsg.includes("Quota exceeded") ||
+          errMsg.includes("quota");
+        const isTransient =
+          isQuota ||
+          errMsg.includes("503") ||
+          errMsg.includes("UNAVAILABLE") ||
+          errMsg.includes("high demand") ||
+          errMsg.includes("spikes in demand") ||
+          errMsg.includes("temporarily unavailable") ||
+          errMsg.includes("fetch failed");
+
+        console.warn(`[Gemini OCR] Model ${model} attempt ${attempt} note:`, errMsg);
+
+        // If Google explicitly reports quota exhaustion (429 with e.g. "retry in 45s"),
+        // retrying the exact same model after 1.2s is futile and wastes time.
+        // Immediately break to try the next alternative model in the fallback chain.
+        if (isQuota) {
+          const retrySec = extractRetryDelaySeconds(err);
+          (lastError as any).isRateLimited = true;
+          (lastError as any).retryAfterSeconds = retrySec;
+          console.log(`[Gemini OCR] Quota limit reached for ${model} (${retrySec}s cooldown). Switching to next model immediately...`);
+          break;
+        }
+
+        if (isTransient && attempt === 1) {
+          const delayMs = 1200 + Math.floor(Math.random() * 800);
+          console.log(`[Gemini OCR] Temporary surge detected. Retrying ${model} after ${delayMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        } else {
+          // Break to next candidate model in fallback chain
+          break;
+        }
+      }
+    }
+  }
+
+  // Provide clear, actionable message
+  const isHighDemand = lastError?.message?.includes("503") || lastError?.message?.includes("high demand");
+  const isQuota =
+    Boolean((lastError as any)?.isRateLimited) ||
+    lastError?.message?.includes("429") ||
+    lastError?.message?.includes("RESOURCE_EXHAUSTED") ||
+    lastError?.message?.includes("Quota exceeded") ||
+    lastError?.message?.includes("quota");
+
+  const retrySec = extractRetryDelaySeconds(lastError);
+
+  const finalMsg = isQuota
+    ? `Gemini API quota reached across models (Free tier limit: 5-15 RPM). Please wait ${retrySec}s for quota window to reset.`
+    : isHighDemand
+    ? "Gemini models are experiencing temporary high demand from Google. Please wait a moment and try again."
+    : (lastError?.message || "Failed to communicate with Gemini API");
+
+  const wrappedErr: any = new Error(finalMsg);
+  wrappedErr.isRateLimited = isQuota;
+  wrappedErr.retryAfterSeconds = retrySec;
+  throw wrappedErr;
+}
+
+// AI Status Check Endpoint
+app.get("/api/ai/status", (_req, res) => {
+  return res.json({
+    success: true,
+    configured: Boolean(process.env.GEMINI_API_KEY),
+    defaultModel: "gemini-flash-latest",
+    availableModels: GEMINI_MODELS_FALLBACK_CHAIN
+  });
+});
+
+// Parse Single NEET PDF Page (High Resolution Vision + Figure Detection)
+app.post("/api/ai/parse-neet-page", async (req, res) => {
+  try {
+    const { imageBase64, pageNumber, totalPages, preferredModel } = req.body;
+    if (!imageBase64) {
+      return res.status(400).json({ success: false, error: "Missing imageBase64 data" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({
+        success: false,
+        error: "GEMINI_API_KEY environment variable is missing. Please configure it in Settings > Secrets."
+      });
+    }
+
+    const cleanBase64 = imageBase64.replace(/^data:image\/[a-z0-9.+]+;base64,/, "").trim();
+    let mimeType = "image/png";
+    if (imageBase64.startsWith("data:image/jpeg")) {
+      mimeType = "image/jpeg";
+    } else if (imageBase64.startsWith("data:image/webp")) {
+      mimeType = "image/webp";
+    }
+
+    const ai = getGeminiClient();
+
+    const systemPrompt = `You are an expert NTA NEET Question Paper Digitization Assistant.
+Your task is to accurately transcribe and digitize exam questions from this NEET exam page image with 100% fidelity.
+
+CRITICAL RULES:
+1. ONLY DIGITIZE GENUINE EXAM QUESTIONS (NEVER EXTRACT ANSWER KEYS OR SOLUTIONS AS QUESTIONS):
+   - Many NEET PDFs have "Answer Key" grids (e.g. "1. (1), 2. (4)...") or "Hints & Solutions" / "Explanations" (e.g. "Sol: F1 = F2...", "Sol: F = qE_dipole...", "Answer: 1").
+   - DO NOT extract answer key matrices or solution derivations as new questions!
+   - If this page only contains "Answer Key", "Hints & Solutions", "Explanations", or "Answers", return: {"questions": []}.
+   - NEVER create a question whose text is just "Answer: 1", "Ans: 4", "Sol:", or formula derivations without a question statement.
+   - NEVER output dummy options like "N/A", "n/a", or invent fake options like "Calculate the ratio of velocities", "Application of...", "None of the above" when no options exist.
+   - Every valid question MUST have a real question prompt and 4 real options (A, B, C, D) printed on the exam paper. If a block lacks 4 real options, it is NOT a question—do NOT output it!
+
+2. Question Numbering & Layout:
+   - NEET papers often have a 2-column layout: Left column is English, right column is Hindi for the EXACT SAME question number!
+   - Associate both English and Hindi versions to the same questionNumber.
+   - Extract the exact question number as printed (1 to 200). Never skip, merge, or re-order questions.
+
+3. Complete Verbatim Text (Zero Paraphrasing):
+   - Never summarize, rewrite, or paraphrase. Extract the exact words, symbols, and units.
+   - All 4 options (A, B, C, D) must be captured with their exact printed text. If printed as (1), (2), (3), (4), map them to A, B, C, D.
+
+4. Strict Bilingual Separation & Scientific Symbols (Clean Text):
+   - english.questionText and english.options: Full verbatim English text and all options.
+     * MUST contain ONLY clean English text and standard scientific symbols (e.g. Ω, μ, °, √, →, ⇌, Δ, α, β, γ, π, ×, ±, Å).
+     * NEVER include Hindi or Devanagari script inside the english fields!
+   - hindi.questionText and hindi.options: Full verbatim Hindi text in clean Devanagari script and all options.
+   - NEVER output corrupted unicode, mojibake (like âˆ−, â€", Ã—, Â°C), or garbled characters.
+
+5. Match-the-Column Questions & Tables (Zero Duplication):
+   - When a question has Column-I & Column-II (or List-I & List-II):
+     * Put ALL column names, labels, keys, and row contents EXCLUSIVELY into the structured "matchTable" object:
+       "matchTable": {
+         "column1Header": "Column-I",
+         "column2Header": "Column-II",
+         "rows": [
+           { "leftKey": "(i)", "leftText": "...", "rightKey": "(a)", "rightText": "..." }
+         ]
+       }
+     * CRITICAL: DO NOT repeat or duplicate the table rows, column lists, or items inside "english.questionText"!
+     * "english.questionText" must ONLY contain the introductory premise sentence (e.g. "Match List-I with List-II:") and if present, the closing instruction (e.g. "Choose the correct answer from the options given below:").
+
+6. MANDATORY Figures, Diagrams, Graphs, and Circuits (High Precision Bounding Boxes):
+   - NEET Physics, Chemistry, and Biology questions frequently feature diagrams (circuits, mechanics setups, pulleys, graphs, ray optics sketches, potential energy curves, mutarotation curves, reaction schemes, apparatus sketches, plant/animal biological anatomy).
+   - If a question contains ANY diagram, figure, chart, schematic, circuit, graph, sketch, reaction scheme, or visual apparatus:
+     * Set "hasFigure": true
+     * "figureDescription": a concise 3-5 word label (e.g. "Magnetic field wire circular bend", "Square loop near wire", "Blocks on smooth surface", "Chromatography plate")
+     * "figureBoundingBox": [ymin, xmin, ymax, xmax] as 4 integers normalized between 0 and 1000 representing the PRECISE bounding box of ONLY the diagram. Do not clip the diagram edges, and do not include the question text above or neighboring question text.
+   - If individual options (A, B, C, D) contain diagrams or chemical structures:
+     * Include in "optionsWithFigures": [ { "label": "A", "boundingBox": [ymin, xmin, ymax, xmax] }, ... ]
+
+7. Correct Answer:
+   - If clearly marked on this question paper page, set correctAnswer ('A'|'B'|'C'|'D'). Otherwise default to 'A'.`;
+
+    const imagePart = {
+      inlineData: {
+        mimeType: mimeType,
+        data: cleanBase64,
+      },
+    };
+    const textPart = {
+      text: `Please parse all questions on this page (Page ${pageNumber || 1}${totalPages ? ` of ${totalPages}` : ""}). Return valid JSON adhering strictly to the schema.`,
+    };
+
+    const { rawText, modelUsed } = await callGeminiWithFallback(ai, {
+      contents: { parts: [imagePart, textPart] },
+      systemInstruction: systemPrompt,
+      preferredModel
+    });
+
+    let parsedData: any = {};
+    try {
+      parsedData = JSON.parse(rawText);
+    } catch {
+      try {
+        const cleaned = rawText.replace(/```(?:json)?/gi, "").trim();
+        parsedData = JSON.parse(cleaned);
+      } catch {
+        const start = rawText.indexOf('{');
+        const end = rawText.lastIndexOf('}');
+        if (start !== -1 && end !== -1 && end > start) {
+          parsedData = JSON.parse(rawText.slice(start, end + 1));
+        } else {
+          parsedData = { questions: [] };
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      pageNumber: pageNumber || 1,
+      modelUsed,
+      questions: parsedData.questions || []
+    });
+  } catch (err: any) {
+    console.error("Gemini NEET PDF page parse error:", err);
+    const isRateLimited = Boolean(
+      err?.isRateLimited ||
+      err?.message?.includes("429") ||
+      err?.message?.includes("RESOURCE_EXHAUSTED") ||
+      err?.message?.includes("Quota exceeded") ||
+      err?.message?.includes("quota")
+    );
+    const retryAfterSeconds = err?.retryAfterSeconds || 35;
+    return res.status(isRateLimited ? 429 : 500).json({
+      success: false,
+      isRateLimited,
+      retryAfterSeconds,
+      error: isRateLimited
+        ? `Gemini API rate limit reached (Free tier). Please pause for ${retryAfterSeconds}s before retrying.`
+        : (err.message || "Failed to parse page with Gemini API")
+    });
+  }
+});
+
+// Parse Complete NEET PDF File Directly
+app.post("/api/ai/parse-neet-pdf", upload.single("pdf"), async (req, res) => {
+  try {
+    let pdfBase64 = "";
+    if (req.file && req.file.buffer) {
+      pdfBase64 = req.file.buffer.toString("base64");
+    } else if (req.body?.pdfBase64) {
+      pdfBase64 = req.body.pdfBase64.replace(/^data:application\/pdf;base64,/, "").trim();
+    }
+
+    if (!pdfBase64) {
+      return res.status(400).json({ success: false, error: "PDF file or pdfBase64 required" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({
+        success: false,
+        error: "GEMINI_API_KEY environment variable is missing. Please set it in Settings > Secrets."
+      });
+    }
+
+    const ai = getGeminiClient();
+
+    const { rawText, modelUsed } = await callGeminiWithFallback(ai, {
+      contents: [
+        {
+          inlineData: {
+            mimeType: "application/pdf",
+            data: pdfBase64,
+          },
+        },
+        {
+          text: `Parse all questions from this NEET exam PDF. ONLY parse genuine exam questions with problem statements and 4 real options. STRICTLY IGNORE answer key grids, hints, solutions, and explanations—never create questions from solutions or return 'N/A' options. Maintain verbatim accuracy, question numbering, bilingual Hindi & English text, all 4 options, and figure bounding boxes [ymin, xmin, ymax, xmax] (normalized 0-1000).`,
+        },
+      ],
+      systemInstruction: `You are an expert NTA NEET Question Paper Digitization Assistant. Accurately digitize all exam questions from this PDF. ONLY extract genuine exam questions. DO NOT create questions out of Answer Key matrices, Hints, or Solutions pages. If a page or block contains solutions or answer keys, IGNORE it. Every question must have real question text and 4 distinct options. Preserve verbatim math, formulas, bilingual text, and detect figures with normalized bounding boxes [ymin, xmin, ymax, xmax].`,
+    });
+
+    let parsedData: any = {};
+    try {
+      parsedData = JSON.parse(rawText);
+    } catch {
+      try {
+        const cleaned = rawText.replace(/```(?:json)?/gi, "").trim();
+        parsedData = JSON.parse(cleaned);
+      } catch {
+        const start = rawText.indexOf('{');
+        const end = rawText.lastIndexOf('}');
+        if (start !== -1 && end !== -1 && end > start) {
+          parsedData = JSON.parse(rawText.slice(start, end + 1));
+        } else {
+          parsedData = { questions: [] };
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      modelUsed,
+      questions: parsedData.questions || []
+    });
+  } catch (err: any) {
+    console.error("Gemini NEET PDF parse error:", err);
+    const isRateLimited = Boolean(
+      err?.isRateLimited ||
+      err?.message?.includes("429") ||
+      err?.message?.includes("RESOURCE_EXHAUSTED") ||
+      err?.message?.includes("Quota exceeded") ||
+      err?.message?.includes("quota")
+    );
+    const retryAfterSeconds = err?.retryAfterSeconds || 35;
+    return res.status(isRateLimited ? 429 : 500).json({
+      success: false,
+      isRateLimited,
+      retryAfterSeconds,
+      error: isRateLimited
+        ? `Gemini API rate limit reached (Free tier). Please pause for ${retryAfterSeconds}s before retrying.`
+        : (err.message || "Failed to parse PDF with Gemini API")
+    });
+  }
+});
+
+// Parse NEET Exam Answer Key (Text, Image or PDF)
+app.post("/api/ai/parse-answer-key", async (req, res) => {
+  try {
+    const { rawText, imageBase64, pdfBase64, totalQuestions = 180, preferredModel } = req.body;
+    
+    if (!rawText && !imageBase64 && !pdfBase64) {
+      return res.status(400).json({ success: false, error: "Either rawText, imageBase64, or pdfBase64 must be provided" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({
+        success: false,
+        error: "GEMINI_API_KEY environment variable is missing."
+      });
+    }
+
+    const ai = getGeminiClient();
+
+    const parts: any[] = [];
+    if (imageBase64) {
+      const cleanBase64 = imageBase64.replace(/^data:image\/[a-z0-9.+]+;base64,/, "").trim();
+      let mimeType = "image/png";
+      if (imageBase64.startsWith("data:image/jpeg")) mimeType = "image/jpeg";
+      parts.push({
+        inlineData: { mimeType, data: cleanBase64 }
+      });
+    } else if (pdfBase64) {
+      const cleanPdf = pdfBase64.replace(/^data:application\/pdf;base64,/, "").trim();
+      parts.push({
+        inlineData: { mimeType: "application/pdf", data: cleanPdf }
+      });
+    }
+
+    const promptText = `You are an expert NEET Answer Key digitizer.
+Extract all Question Number -> Correct Answer Option pairs from this answer key.
+Format rules:
+- Questions are numbered (e.g. 1 to 180, or 1 to 200).
+- Answer options are A, B, C, D (or 1, 2, 3, 4 which map to A, B, C, D: 1->A, 2->B, 3->C, 4->D).
+- Common patterns in NEET exams: "1. Answer: 3", "1 - B", "1. (4)", "1 B", "Q1: C", tabular columns.
+- For each detected answer, return:
+  "questionNumber": integer,
+  "answer": "A" | "B" | "C" | "D",
+  "confidence": float 0.0 to 1.0 (set < 0.8 if ambiguous),
+  "rawText": the exact snippet matched.
+Return JSON strictly in this structure:
+{
+  "answers": [
+    { "questionNumber": 1, "answer": "C", "confidence": 1.0, "rawText": "1. Answer: 3" }
+  ]
+}
+${rawText ? `Pasted Answer Key Text:\n${rawText}` : ""}`;
+
+    parts.push({ text: promptText });
+
+    const systemInstruction = `You are a precision Answer Key Digitizer. Extract all question numbers and correct options (A, B, C, D) with 100% accuracy. Never guess or hallucinate. Return strictly valid JSON.`;
+
+    const { rawText: resultText, modelUsed } = await callGeminiWithFallback(ai, {
+      contents: parts,
+      systemInstruction,
+      preferredModel,
+      responseSchema: ANSWER_KEY_SCHEMA
+    });
+
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(resultText);
+    } catch {
+      const cleaned = resultText.replace(/```(?:json)?/gi, "").trim();
+      parsed = JSON.parse(cleaned);
+    }
+
+    return res.json({
+      success: true,
+      modelUsed,
+      answers: parsed.answers || []
+    });
+  } catch (err: any) {
+    console.error("Answer key parse error:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Failed to parse answer key"
+    });
+  }
+});
+
+// Parse Detailed Solutions & Answer Key PDF/Text (Full Step-by-Step Explanations)
+app.post("/api/ai/parse-solutions-and-key", async (req, res) => {
+  try {
+    const { rawText, imageBase64, pdfBase64, preferredModel } = req.body;
+
+    if (!rawText && !imageBase64 && !pdfBase64) {
+      return res.status(400).json({ success: false, error: "Either rawText, imageBase64, or pdfBase64 must be provided" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({
+        success: false,
+        error: "GEMINI_API_KEY environment variable is missing."
+      });
+    }
+
+    const ai = getGeminiClient();
+
+    const parts: any[] = [];
+    if (imageBase64) {
+      const cleanBase64 = imageBase64.replace(/^data:image\/[a-z0-9.+]+;base64,/, "").trim();
+      let mimeType = "image/png";
+      if (imageBase64.startsWith("data:image/jpeg")) mimeType = "image/jpeg";
+      parts.push({
+        inlineData: { mimeType, data: cleanBase64 }
+      });
+    } else if (pdfBase64) {
+      const cleanPdf = pdfBase64.replace(/^data:application\/pdf;base64,/, "").trim();
+      parts.push({
+        inlineData: { mimeType: "application/pdf", data: cleanPdf }
+      });
+    }
+
+    const promptText = `You are an expert NTA NEET Solutions and Answer Key Digitizer.
+Your job is to extract:
+1. The exact Correct Answer Option (A, B, C, or D) for every question number.
+   * If given as numbers (1, 2, 3, 4), map strictly to (A, B, C, D): 1->A, 2->B, 3->C, 4->D.
+2. The detailed step-by-step mathematical / conceptual Solution & Explanation for each question.
+   * Preserve formulas, calculations, chemical reaction steps, and laws verbatim.
+   * Do not omit steps. Clean up any weird font artifacts into standard math symbols (e.g. sqrt √, minus −, times ×, mu μ, ohm Ω, degree °).
+
+Return JSON strictly matching this schema:
+{
+  "answers": [
+    { "questionNumber": 1, "answer": "B", "rawText": "1. Answer (2)" }
+  ],
+  "solutions": [
+    {
+      "questionNumber": 1,
+      "answer": "B",
+      "explanation": "Sol. Given F = qE ... Therefore, the ratio of velocities is ...",
+      "formulaSummary": "F = qE"
+    }
+  ]
+}
+${rawText ? `Document Text:\n${rawText}` : ""}`;
+
+    parts.push({ text: promptText });
+
+    const systemInstruction = `You are a precision NEET exam solutions extractor. Extract exact question numbers, correct answers (A, B, C, D), and complete step-by-step solutions/explanations. Never skip questions. Return valid JSON only.`;
+
+    const { rawText: resultText, modelUsed } = await callGeminiWithFallback(ai, {
+      contents: parts,
+      systemInstruction,
+      preferredModel,
+      responseSchema: SOLUTIONS_AND_KEY_SCHEMA
+    });
+
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(resultText);
+    } catch {
+      const cleaned = resultText.replace(/```(?:json)?/gi, "").trim();
+      parsed = JSON.parse(cleaned);
+    }
+
+    return res.json({
+      success: true,
+      modelUsed,
+      answers: parsed.answers || [],
+      solutions: parsed.solutions || []
+    });
+  } catch (err: any) {
+    console.error("Solutions & key parse error:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Failed to parse solutions and answer key"
+    });
   }
 });
 

@@ -22,7 +22,9 @@ import {
   User,
   ShoppingBag,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  Unlock,
+  GraduationCap
 } from 'lucide-react';
 import { Order, OrderStatus } from '../types';
 import { 
@@ -34,6 +36,7 @@ import {
   deleteOrder
 } from '../lib/storage';
 import { downloadNotesPdf } from '../lib/pdfDownloader';
+import { COURSE_ID, hasUserPurchasedFullCourse, fetchVerifiedCourseAccess } from '../lib/fullCourseData';
 
 interface OrdersViewProps {
   orders: Order[];
@@ -45,6 +48,7 @@ interface OrdersViewProps {
   onOpenInvoice?: (order: Order) => void;
   onExplore?: () => void;
   onExploreStore?: () => void;
+  onOpenFullCourse?: () => void;
 }
 
 export const OrdersView: React.FC<OrdersViewProps> = ({
@@ -56,7 +60,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   onOpenInvoiceModal,
   onOpenInvoice,
   onExplore,
-  onExploreStore
+  onExploreStore,
+  onOpenFullCourse
 }) => {
   const [filter, setFilter] = useState<'all' | 'books' | 'pdfs'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -365,6 +370,46 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
         </div>
       </div>
 
+      {/* Enrolled NEET Full Course Card (VIP Digital Access) */}
+      {hasUserPurchasedFullCourse(userEmail ? { uid: '', email: userEmail, displayName: '', role: 'user', createdAt: '' } : null, orders) && (
+        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-4 border border-indigo-500/40 shadow-md relative overflow-hidden flex items-center justify-between gap-3">
+          <div className="space-y-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[9px] font-black bg-gradient-to-r from-amber-400 to-orange-500 text-slate-950 px-2 py-0.5 rounded-full uppercase">
+                VIP Enrolled
+              </span>
+              <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" />
+                Status: Purchased
+              </span>
+            </div>
+            <h3 className="text-xs sm:text-sm font-black text-white truncate">
+              NEET (11th & 12th) Full Course
+            </h3>
+            <p className="text-[10px] text-slate-300 truncate">
+              Class 11 + Class 12 Master Digital Study Material on Google Drive
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={async () => {
+              const res = await fetchVerifiedCourseAccess(userEmail || undefined);
+              if (res.success && res.accessUrl) {
+                window.open(res.accessUrl, '_blank', 'noopener,noreferrer');
+              } else if (onOpenFullCourse) {
+                onOpenFullCourse();
+              }
+            }}
+            className="px-3.5 sm:px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 text-xs font-black rounded-xl shadow-md transition cursor-pointer active:scale-95 shrink-0 flex items-center gap-1.5 animate-pulse"
+          >
+            <Unlock className="w-3.5 h-3.5" />
+            <span>Access Course</span>
+            <ExternalLink className="w-3 h-3" />
+          </button>
+        </div>
+      )}
+
       {/* Orders List */}
       {filteredOrders.length === 0 ? (
         <div className="bg-white rounded-2xl p-7 border border-slate-200 text-center space-y-3 shadow-xs">
@@ -407,7 +452,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           {filteredOrders.map((order) => {
             const firstItem = order.items[0];
             const extraItemsCount = order.items.length - 1;
-            const isCod = order.paymentStatus.toLowerCase().includes('cod');
+            const isCod = String(order.paymentStatus || '').toLowerCase().includes('cod');
             const cleanOrderId = order.id.startsWith('#') ? order.id : `#${order.id}`;
 
             return (
@@ -582,8 +627,31 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                         Qty: {item.quantity} • ₹{item.price * item.quantity}
                       </p>
 
-                      {/* PDF Actions if Digital */}
-                      {(item.type === 'pdf' || getPdfUrlForItem(item)) && (
+                      {/* Full Course Direct Access Action */}
+                      {(item.productId === COURSE_ID || (item.title || '').toLowerCase().includes('full course')) ? (
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                            Status: Purchased
+                          </span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const res = await fetchVerifiedCourseAccess(userEmail || undefined);
+                              if (res.success && res.accessUrl) {
+                                window.open(res.accessUrl, '_blank', 'noopener,noreferrer');
+                              } else if (onOpenFullCourse) {
+                                setSelectedOrderDetails(null);
+                                onOpenFullCourse();
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 text-[10px] font-black text-slate-950 bg-gradient-to-r from-emerald-400 to-teal-400 hover:from-emerald-300 hover:to-teal-300 px-3 py-1 rounded-lg shadow-xs transition cursor-pointer"
+                          >
+                            <Unlock className="w-3 h-3" />
+                            <span>Access Course</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      ) : (item.type === 'pdf' || getPdfUrlForItem(item)) && (
                         <div className="flex items-center gap-2 mt-2">
                           <button
                             onClick={() => handleDownloadPdf(getPdfUrlForItem(item), item.title, item.productId, selectedOrderDetails.id)}
@@ -643,7 +711,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                 <div className="flex justify-between items-center">
                   <span className="text-slate-600">Payment Mode:</span>
                   <span className="font-bold text-slate-900">
-                    {selectedOrderDetails.paymentStatus.toLowerCase().includes('cod') ? 'Cash on Delivery (COD)' : 'Prepaid Online (Razorpay)'}
+                    {String(selectedOrderDetails.paymentStatus || '').toLowerCase().includes('cod') ? 'Cash on Delivery (COD)' : 'Prepaid Online (Razorpay)'}
                   </span>
                 </div>
                 <div className="flex justify-between items-center pt-2 border-t border-slate-200 text-sm font-black text-slate-950">

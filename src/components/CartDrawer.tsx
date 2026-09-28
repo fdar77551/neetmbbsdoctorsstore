@@ -139,9 +139,26 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                      <span className="inline-block mt-0.5 text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded border border-blue-100">
-                        {product.type === 'pdf' ? '⚡ Instant PDF' : '📖 Physical Book'}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`inline-block mt-0.5 text-[9.5px] font-black px-1.5 py-0.2 rounded border ${
+                          product.id.startsWith('pass-')
+                            ? 'bg-amber-100 text-amber-900 border-amber-300'
+                            : product.type === 'pdf' 
+                            ? 'text-blue-700 bg-blue-50 border-blue-100' 
+                            : 'text-emerald-700 bg-emerald-50 border-emerald-100'
+                        }`}>
+                          {product.id.startsWith('pass-') 
+                            ? '👑 NEET SUCCESS PASS' 
+                            : product.type === 'pdf' 
+                            ? '⚡ Instant PDF' 
+                            : '📖 Physical Book'}
+                        </span>
+                        {product.id.startsWith('pass-') && (
+                          <span className="text-[9px] font-bold text-amber-700">
+                            Instant VIP Unlock
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-100">
@@ -156,24 +173,30 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                         )}
                       </div>
 
-                      {/* Quantity controls */}
-                      <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5">
-                        <button
-                          onClick={() => onUpdateQuantity(product.id, -1)}
-                          className="text-slate-600 hover:text-slate-950 text-xs font-bold p-0.5 cursor-pointer"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="text-xs font-black text-slate-900 min-w-4 text-center">
-                          {quantity}
+                      {/* Quantity controls (disabled / fixed to 1 for passes) */}
+                      {product.id.startsWith('pass-') ? (
+                        <span className="text-[10px] font-extrabold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
+                          1 Subscription
                         </span>
-                        <button
-                          onClick={() => onUpdateQuantity(product.id, 1)}
-                          className="text-slate-600 hover:text-slate-950 text-xs font-bold p-0.5 cursor-pointer"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      </div>
+                      ) : (
+                        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5">
+                          <button
+                            onClick={() => onUpdateQuantity(product.id, -1)}
+                            className="text-slate-600 hover:text-slate-950 text-xs font-bold p-0.5 cursor-pointer"
+                          >
+                            <Minus className="w-3 h-3" />
+                          </button>
+                          <span className="text-xs font-black text-slate-900 min-w-4 text-center">
+                            {quantity}
+                          </span>
+                          <button
+                            onClick={() => onUpdateQuantity(product.id, 1)}
+                            className="text-slate-600 hover:text-slate-950 text-xs font-bold p-0.5 cursor-pointer"
+                          >
+                            <Plus className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Allow: /api/invoice/
+Allow: /api/pdf/download/
+
+# Sitemap location for Google Search Console
+Sitemap: https://neetmbbsdoctorsstore.com/sitemap.xml

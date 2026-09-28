@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from 'react';
-import { BookOpen, Download, Eye, FileText, Sparkles, CheckCircle2, Search, ArrowRight, ShieldCheck, Receipt } from 'lucide-react';
+import { BookOpen, Download, Eye, FileText, Sparkles, CheckCircle2, Search, ArrowRight, ShieldCheck, Receipt, Crown, Printer } from 'lucide-react';
 import { Order, Product, UserProfile } from '../types';
 import { resolveImageUrl, getMyDeviceOrderIds } from '../lib/storage';
-import { downloadNotesPdf } from '../lib/pdfDownloader';
+import { downloadNotesPdf, printNotesPdf } from '../lib/pdfDownloader';
 
 interface PdfPurchasesViewProps {
   orders: Order[];
@@ -12,6 +12,7 @@ interface PdfPurchasesViewProps {
   onOpenPdfReader: (pdfUrl: string, title: string, isPurchased: boolean) => void;
   onOpenInvoice?: (order: Order) => void;
   onExploreStore: () => void;
+  onOpenDigitalPortal?: (tab?: 'pass' | 'library' | 'free' | 'dashboard') => void;
 }
 
 export interface PurchasedPdfItem {
@@ -35,7 +36,8 @@ export const PdfPurchasesView: React.FC<PdfPurchasesViewProps> = ({
   onOpenAuth,
   onOpenPdfReader,
   onOpenInvoice,
-  onExploreStore
+  onExploreStore,
+  onOpenDigitalPortal
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -179,6 +181,20 @@ export const PdfPurchasesView: React.FC<PdfPurchasesViewProps> = ({
           <p className="text-xs text-slate-300 leading-relaxed font-medium">
             Read online or download high-yield NCERT mindmaps, formula sheets, & chapter notes purchased with your account.
           </p>
+
+          {onOpenDigitalPortal && (
+            <div className="pt-2">
+              <button
+                type="button"
+                id="pdf-view-open-pass-btn"
+                onClick={() => onOpenDigitalPortal('pass')}
+                className="w-full py-2 px-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 active:scale-98 text-white font-black text-xs rounded-xl shadow-md flex items-center justify-center gap-2 cursor-pointer transition"
+              >
+                <Crown className="w-3.5 h-3.5 text-yellow-200 fill-yellow-200" />
+                <span>NEET Success Pass & Full Digital Library →</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -275,27 +291,49 @@ export const PdfPurchasesView: React.FC<PdfPurchasesViewProps> = ({
                   </div>
                 </div>
 
-                {/* Action Buttons: Read Online + Download PDF */}
+                {/* Action Buttons: Read Online + Download PDF + Print/Save */}
                 <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
                   <button
+                    type="button"
                     onClick={() => onOpenPdfReader(pdf.pdfUrl || '', pdf.title, true)}
                     className="flex-1 py-2.5 px-3 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer shadow-2xs active:scale-98"
                   >
                     <Eye className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Read Online</span>
+                    <span>Read</span>
                   </button>
 
                   <button
+                    type="button"
                     onClick={() => handleDownload(pdf)}
                     disabled={downloadingId === pdf.productId}
                     className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer shadow-md shadow-emerald-500/20 active:scale-98 disabled:opacity-50"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    <span>{downloadingId === pdf.productId ? 'Downloading...' : 'Download PDF'}</span>
+                    <span>{downloadingId === pdf.productId ? 'Saving...' : 'Download'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => printNotesPdf({
+                      id: pdf.productId,
+                      title: pdf.title,
+                      author: pdf.author,
+                      category: pdf.category,
+                      pdfUrl: pdf.pdfUrl,
+                      orderId: pdf.orderId,
+                      userName: userProfile?.displayName,
+                      userEmail: userProfile?.email,
+                      orderDate: pdf.orderDate
+                    })}
+                    className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer"
+                    title="Print or Save to PDF"
+                  >
+                    <Printer className="w-4 h-4" />
                   </button>
 
                   {pdf.orderRef && onOpenInvoice && (
                     <button
+                      type="button"
                       onClick={() => onOpenInvoice(pdf.orderRef!)}
                       className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer"
                       title="View Invoice"
@@ -326,14 +364,22 @@ export const PdfPurchasesView: React.FC<PdfPurchasesViewProps> = ({
             </p>
           </div>
 
-          <button
-            onClick={onExploreStore}
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-blue-500/20 transition cursor-pointer active:scale-98"
-          >
-            <Sparkles className="w-4 h-4 text-yellow-300" />
-            <span>Explore High-Yield PDF Notes</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-1">
+            <button
+              onClick={() => onOpenDigitalPortal ? onOpenDigitalPortal('pass') : onExploreStore()}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-extrabold text-xs rounded-xl shadow-md shadow-amber-500/20 transition cursor-pointer active:scale-98"
+            >
+              <Crown className="w-4 h-4 text-yellow-200 fill-yellow-200" />
+              <span>Get NEET Success Pass & Access All Notes</span>
+            </button>
+            <button
+              onClick={onExploreStore}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition cursor-pointer active:scale-98"
+            >
+              <span>Explore Store</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       )}
 

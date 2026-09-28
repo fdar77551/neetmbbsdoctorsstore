@@ -136,6 +136,62 @@ export async function downloadNotesPdf(details: NotePdfDetails): Promise<void> {
 }
 
 /**
+ * Universal PDF printer for My PDFs:
+ * Opens print dialog directly for the PDF document so students can print or save to PDF
+ */
+export async function printNotesPdf(details: NotePdfDetails): Promise<void> {
+  let rawUrl = (details.pdfUrl || '').trim();
+  if (!rawUrl) {
+    try {
+      const allProducts = getStoredProducts();
+      const matched = allProducts.find(p => 
+        (details.id && p.id === details.id) || 
+        (details.title && p.title.toLowerCase() === details.title.toLowerCase())
+      );
+      if (matched && matched.pdfUrl) {
+        rawUrl = matched.pdfUrl.trim();
+      }
+    } catch (e) {}
+  }
+
+  let finalUrl = '';
+  let isCreatedBlob = false;
+
+  if (rawUrl.startsWith('data:application/pdf') || (rawUrl.startsWith('data:') && rawUrl.includes('base64'))) {
+    const blob = base64ToBlob(rawUrl, 'application/pdf');
+    finalUrl = URL.createObjectURL(blob);
+    isCreatedBlob = true;
+  } else if (rawUrl.startsWith('blob:')) {
+    finalUrl = rawUrl;
+  } else if (rawUrl) {
+    finalUrl = resolvePdfUrl(rawUrl);
+  } else {
+    const doc = generateHighYieldNotesPdfDoc(details);
+    const blob = doc.output('blob');
+    finalUrl = URL.createObjectURL(blob);
+    isCreatedBlob = true;
+  }
+
+  // Open in new window or iframe for printing
+  try {
+    const printWin = window.open(finalUrl, '_blank');
+    if (printWin) {
+      printWin.focus();
+    }
+  } catch (e) {
+    console.warn('Window open fallback for print:', e);
+  }
+
+  if (isCreatedBlob) {
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(finalUrl);
+      } catch (e) {}
+    }, 60000);
+  }
+}
+
+/**
  * Generate a complete, high-quality multi-page PDF document for NEET study notes
  * when a direct remote file isn't attached.
  */

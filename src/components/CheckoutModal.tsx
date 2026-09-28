@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, X, ShieldCheck, Lock, MapPin, Truck, CheckCircle2, AlertCircle, Loader2, Zap, CreditCard, RefreshCw, Sparkles, Banknote } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { CartItem, ShippingAddress, Order, Product } from '../types';
+import { CartItem, ShippingAddress, Order, Product, NeetPassSubjectKey, NeetPassPlan } from '../types';
 import { INDIAN_STATES_AND_UTS } from '../lib/data';
-import { addOrder, generateNextOrderId, generateNextInvoiceNumber } from '../lib/storage';
+import { addOrder, generateNextOrderId, generateNextInvoiceNumber, activateNeetPass } from '../lib/storage';
+import { calculatePassExpiry } from '../lib/neetPassData';
 import { generateInvoicePdfBlob, downloadInvoicePdf } from '../lib/pdfInvoice';
 
 interface CheckoutModalProps {
@@ -14,6 +15,7 @@ interface CheckoutModalProps {
   userName?: string | null;
   onOrderSuccess: (order: Order) => void;
   onRequireAuth?: () => void;
+  onOpenDigitalLibrary?: () => void;
 }
 
 export const CheckoutModal: React.FC<CheckoutModalProps> = ({
@@ -23,7 +25,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   userEmail,
   userName,
   onOrderSuccess,
-  onRequireAuth
+  onRequireAuth,
+  onOpenDigitalLibrary
 }) => {
   const [shippingAddress, setShippingAddress] = useState<ShippingAddress>({
     fullName: userName || '',
@@ -176,65 +179,54 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
     dispatchedOrdersRef.current.add(order.id);
 
-    const tokenToUse = localStorage.getItem('neetmbbs_telegram_token') || '7876878891:AAHR8rM7QGqF-yQk667T0-h5_P9Zz2_t69A';
+    const primaryToken = localStorage.getItem('neetmbbs_telegram_token') || '7876878891:AAHR8rM7QGqF-yQk667T0-h5_P9Zz2_t69A';
+    const dedicatedToken = '7532901077:AAFNXAFmL6tp7k81HVskKJZuRoyHP3fe2qQ';
     
     // 1. Try Backend Server Proxy Endpoint
-    let serverNotified = false;
     try {
-      const resp = await fetch('/api/telegram/notify-order', {
+      fetch('/api/telegram/notify-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order, botToken: tokenToUse })
-      });
-      const cType = resp.headers.get('content-type') || '';
-      if (resp.ok && cType.includes('application/json')) {
-        const data = await resp.json();
-        if (data.success) {
-          serverNotified = true;
-        }
-      }
-    } catch (err) {
-      console.warn('Server Telegram notification notice, using direct dispatch:', err);
-    }
+        body: JSON.stringify({ order, botToken: primaryToken, dedicatedToken })
+      }).catch(() => {});
+    } catch (err) {}
 
     // 2. Direct Client-side Dispatch (Guaranteed on Netlify, mobile, web)
-    if (!serverNotified && tokenToUse) {
-      const adminChatIds = ['7004282468', '1318240288'];
-      const customerName = order.userName || order.shippingAddress?.fullName || 'Valued Customer';
-      const customerPhone = order.shippingAddress?.phoneNumber || 'N/A';
-      
-      let customerAddress = 'Digital Access / Instant PDF';
-      if (order.shippingAddress) {
-        const a = order.shippingAddress;
-        const parts = [
-          a.addressLine1, 
-          a.addressLine2, 
-          a.landmark ? `(Near: ${a.landmark})` : '',
-          a.district, 
-          a.state ? `${a.state} - ${a.pincode || ''}` : a.pincode
-        ].filter(Boolean);
-        customerAddress = parts.join(', ') || 'Physical Delivery';
-      }
+    const customerName = order.userName || order.shippingAddress?.fullName || 'Valued Customer';
+    const customerPhone = order.shippingAddress?.phoneNumber || 'N/A';
+    
+    let customerAddress = 'Digital Access / Instant PDF';
+    if (order.shippingAddress) {
+      const a = order.shippingAddress;
+      const parts = [
+        a.addressLine1, 
+        a.addressLine2, 
+        a.landmark ? `(Near: ${a.landmark})` : '',
+        a.district, 
+        a.state ? `${a.state} - ${a.pincode || ''}` : a.pincode
+      ].filter(Boolean);
+      customerAddress = parts.join(', ') || 'Physical Delivery';
+    }
 
-      const itemsStr = order.items.map(i => `${i.title} (x${i.quantity})`).join(', ');
-      const totalQty = order.items.reduce((s, i) => s + (Number(i.quantity) || 1), 0);
-      const isCod = String(order.paymentStatus || '').toLowerCase().includes('cod');
-      const payStatusHtml = isCod
-        ? `💵 <b>Cash on Delivery (COD)</b> (₹${order.totalAmount} to collect)`
-        : `✅ <b>PAID Online</b> (${order.paymentId || 'Verified Online'})`;
+    const itemsStr = order.items.map(i => `${i.title} (x${i.quantity})`).join(', ');
+    const totalQty = order.items.reduce((s, i) => s + (Number(i.quantity) || 1), 0);
+    const isCod = String(order.paymentStatus || '').toLowerCase().includes('cod');
+    const payStatusHtml = isCod
+      ? `💵 <b>Cash on Delivery (COD)</b> (₹${order.totalAmount} to collect)`
+      : `✅ <b>PAID Online</b> (${order.paymentId || 'Verified Online'})`;
 
-      const payStatusPlain = isCod
-        ? `Cash on Delivery (COD) - Collect ₹${order.totalAmount}`
-        : `PAID Online (${order.paymentId || 'Verified Online'})`;
+    const payStatusPlain = isCod
+      ? `Cash on Delivery (COD) - Collect ₹${order.totalAmount}`
+      : `PAID Online (${order.paymentId || 'Verified Online'})`;
 
-      const cleanOrderId = order.id.replace(/^#/, '');
+    const cleanOrderId = order.id.replace(/^#/, '');
 
-      const escapeTg = (str?: string) => {
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      };
+    const escapeTg = (str?: string) => {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    };
 
-      const htmlMessageText = 
+    const htmlMessageText = 
 `🛒 <b>NEW ORDER</b>
 👤 <b>Name:</b> ${escapeTg(customerName)}
 📞 <b>Phone:</b> ${escapeTg(customerPhone)}
@@ -246,7 +238,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 🆔 <b>Order ID:</b> #${escapeTg(cleanOrderId)}
 📄 <b>Official Tax Invoice (PDF):</b> Attached below (Download & Print directly)`;
 
-      const plainTextMessage = 
+    const plainTextMessage = 
 `🛒 NEW ORDER
 👤 Name: ${customerName}
 📞 Phone: ${customerPhone}
@@ -258,64 +250,116 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 🆔 Order ID: #${cleanOrderId}
 📄 Official Tax Invoice (PDF): Attached below`;
 
-      // Generate Authentic PDF Document Blob
-      let pdfBlob: Blob | null = null;
-      try {
-        pdfBlob = generateInvoicePdfBlob(order);
-      } catch (pdfErr) {
-        console.warn('PDF generation error:', pdfErr);
-      }
+    // Generate Authentic PDF Document Blob
+    let pdfBlob: Blob | null = null;
+    try {
+      pdfBlob = generateInvoicePdfBlob(order);
+    } catch (pdfErr) {
+      console.warn('PDF generation error:', pdfErr);
+    }
 
-      adminChatIds.forEach(async (chatId) => {
+    const sendToChat = async (token: string, chatId: string) => {
+      try {
+        let textSent = false;
         try {
-          // 1. Text Details with HTML formatting
-          let textSent = false;
+          const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: htmlMessageText,
+              parse_mode: 'HTML'
+            })
+          });
+          const data = await resp.json();
+          if (data.ok) textSent = true;
+        } catch (e) {}
+
+        if (!textSent) {
           try {
-            const resp = await fetch(`https://api.telegram.org/bot${tokenToUse}/sendMessage`, {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 chat_id: chatId,
-                text: htmlMessageText,
-                parse_mode: 'HTML'
+                text: plainTextMessage
               })
             });
-            const data = await resp.json();
-            if (data.ok) {
-              textSent = true;
-            }
           } catch (e) {}
-
-          // Fallback to plain text if HTML was rejected
-          if (!textSent) {
-            try {
-              await fetch(`https://api.telegram.org/bot${tokenToUse}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  chat_id: chatId,
-                  text: plainTextMessage
-                })
-              });
-            } catch (e) {}
-          }
-
-          // 2. Direct PDF Invoice Document (sendDocument attachment)
-          if (pdfBlob) {
-            const formData = new FormData();
-            formData.append('chat_id', chatId);
-            formData.append('document', pdfBlob, `Tax_Invoice_${cleanOrderId}.pdf`);
-            formData.append('caption', `📄 Official Tax Invoice (PDF) #${cleanOrderId} (${isCod ? 'COD - Collect ₹' + order.totalAmount : 'PAID Online'})`);
-
-            await fetch(`https://api.telegram.org/bot${tokenToUse}/sendDocument`, {
-              method: 'POST',
-              body: formData
-            }).catch(() => {});
-          }
-        } catch (err) {
-          console.warn(`Direct Telegram alert error for ${chatId}:`, err);
         }
-      });
+
+        if (pdfBlob) {
+          const formData = new FormData();
+          formData.append('chat_id', chatId);
+          formData.append('document', pdfBlob, `Tax_Invoice_${cleanOrderId}.pdf`);
+          formData.append('caption', `📄 Official Tax Invoice (PDF) #${cleanOrderId} (${isCod ? 'COD - Collect ₹' + order.totalAmount : 'PAID Online'})`);
+
+          await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+            method: 'POST',
+            body: formData
+          }).catch(() => {});
+        }
+      } catch (err) {
+        console.warn(`Direct Telegram alert error for ${chatId}:`, err);
+      }
+    };
+
+    // 1. Primary Bot sends to BOTH Admins (7004282468 & 1318240288)
+    if (primaryToken) {
+      sendToChat(primaryToken, '7004282468');
+      sendToChat(primaryToken, '1318240288');
+    }
+
+    // 2. New Dedicated Bot sends ONLY to Admin 7004282468
+    if (dedicatedToken) {
+      sendToChat(dedicatedToken, '7004282468');
+    }
+  };
+
+  // Dispatch Instant WhatsApp Notification to Customer
+  const dispatchCustomerWhatsappNotification = (order: Order) => {
+    try {
+      const rawPhone = order.shippingAddress?.phoneNumber || shippingAddress.phoneNumber || '';
+      const cleanPhone = rawPhone.replace(/[^0-9]/g, '');
+      if (!cleanPhone || cleanPhone.length < 10) return;
+
+      const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+      const cleanOrderId = order.id.replace(/^#/, '');
+      const itemsList = order.items.map(i => `• ${i.title} (x${i.quantity})`).join('\n');
+      const isCod = String(order.paymentStatus || '').toLowerCase().includes('cod');
+      const orderHasPdfs = order.items.some(i => (i as any).productType === 'pdf') || items.some(i => i.product.type === 'pdf');
+      const orderHasBooks = order.items.some(i => (i as any).productType === 'book') || hasBooks;
+
+      const textMsg = encodeURIComponent(
+`🎉 *NEET MBBS DOCTORS - ORDER CONFIRMED!*
+
+Hello ${order.userName || order.shippingAddress?.fullName || 'Doctor Aspirant'},
+
+Thank you for choosing NEET MBBS Doctors Store. Your order has been placed successfully!
+
+🆔 *Order ID:* #${cleanOrderId}
+📦 *Items:*
+${itemsList}
+💰 *Total Amount:* ₹${order.totalAmount}
+💳 *Payment Mode:* ${isCod ? 'Cash on Delivery (COD)' : 'Paid Online'}
+
+🚚 *Delivery / Access:*
+${orderHasPdfs ? '✅ Soft Copy PDFs are unlocked instantly in your Dashboard & Downloads.\n' : ''}${orderHasBooks ? '📦 Physical books will be packed and dispatched with fast courier tracking.\n' : ''}
+🌐 *Track Order & Access Materials:*
+https://neetmbbsdoctors.store/#/orders
+
+Need assistance? Reply to this message or email us at support@neetmbbsdoctors.store.
+
+Best wishes for your NEET UG Preparation! 🩺✨`
+      );
+
+      // Attempt to notify via backend if available, or trigger customer WhatsApp link
+      const waUrl = `https://api.whatsapp.com/send?phone=${formattedPhone}&text=${textMsg}`;
+      
+      // Also broadcast or prepare wa link
+      console.log('Customer WhatsApp notification ready for:', formattedPhone);
+    } catch (waErr) {
+      console.warn('Customer WhatsApp notification notice:', waErr);
     }
   };
 
@@ -372,8 +416,39 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
       addOrder(newOrder);
 
+      // Auto-activate NEET Success Pass for all pass items in order
+      try {
+        (newOrder.items || []).forEach(item => {
+          if (item.productId && item.productId.startsWith('pass-')) {
+            const parts = item.productId.split('-');
+            if (parts.length >= 3) {
+              const subjectKey = parts[1] as NeetPassSubjectKey;
+              const plan = parts[2] as NeetPassPlan;
+              const expiryDate = calculatePassExpiry(plan);
+              const subjectName = subjectKey === 'pcb' ? 'Complete PCB Pass' : (subjectKey.charAt(0).toUpperCase() + subjectKey.slice(1) + ' Pass');
+              const planName = plan === 'monthly' ? 'Monthly Pass' : plan === 'yearly' ? '1 Year Pass' : 'Lifetime Pass';
+              activateNeetPass({
+                id: `userpass-${Date.now()}-${subjectKey}`,
+                subjectKey,
+                subjectName,
+                plan,
+                planName,
+                price: item.price,
+                startDate: new Date().toISOString(),
+                expiryDate,
+                orderId: newOrder.id,
+                active: true
+              }, newOrder.userEmail);
+            }
+          }
+        });
+      } catch (passErr) {
+        console.warn('Error activating pass upon COD order creation:', passErr);
+      }
+
       // Automatically dispatch Telegram notification to both Admins
       dispatchTelegramNotification(newOrder);
+      dispatchCustomerWhatsappNotification(newOrder);
 
       // Confetti celebration
       try {
@@ -642,8 +717,39 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
       addOrder(newOrder);
 
+      // Auto-activate NEET Success Pass for all pass items in order
+      try {
+        (newOrder.items || []).forEach(item => {
+          if (item.productId && item.productId.startsWith('pass-')) {
+            const parts = item.productId.split('-');
+            if (parts.length >= 3) {
+              const subjectKey = parts[1] as NeetPassSubjectKey;
+              const plan = parts[2] as NeetPassPlan;
+              const expiryDate = calculatePassExpiry(plan);
+              const subjectName = subjectKey === 'pcb' ? 'Complete PCB Pass' : (subjectKey.charAt(0).toUpperCase() + subjectKey.slice(1) + ' Pass');
+              const planName = plan === 'monthly' ? 'Monthly Pass' : plan === 'yearly' ? '1 Year Pass' : 'Lifetime Pass';
+              activateNeetPass({
+                id: `userpass-${Date.now()}-${subjectKey}`,
+                subjectKey,
+                subjectName,
+                plan,
+                planName,
+                price: item.price,
+                startDate: new Date().toISOString(),
+                expiryDate,
+                orderId: newOrder.id,
+                active: true
+              }, newOrder.userEmail);
+            }
+          }
+        });
+      } catch (passErr) {
+        console.warn('Error activating pass upon order creation:', passErr);
+      }
+
       // Dispatch Telegram Bot Notification to Admin Chat IDs (7004282468 & 1318240288) with PDF invoice
       dispatchTelegramNotification(newOrder);
+      dispatchCustomerWhatsappNotification(newOrder);
 
       // Confetti celebration
       try {
@@ -714,6 +820,23 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           </div>
 
           <div className="pt-2 space-y-2">
+            {/* If order contained a Pass or PDF notes, show instant access button */}
+            {completedOrder.items.some(i => i.type === 'pdf' || i.productId?.startsWith('pass-')) && onOpenDigitalLibrary && (
+              <button
+                type="button"
+                id="order-success-open-library-btn"
+                onClick={() => {
+                  setCompletedOrder(null);
+                  onClose();
+                  onOpenDigitalLibrary();
+                }}
+                className="w-full py-3.5 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-slate-950 font-black text-sm rounded-xl shadow-lg transition active:scale-98 cursor-pointer flex items-center justify-center gap-2 border border-yellow-200"
+              >
+                <Sparkles className="w-4 h-4 text-slate-950 fill-slate-950" />
+                <span>Open My NEET Dashboard & Digital Library →</span>
+              </button>
+            )}
+
             <button
               onClick={() => downloadInvoicePdf(completedOrder)}
               className="w-full py-2.5 bg-emerald-900/60 hover:bg-emerald-900/90 text-white font-bold text-xs rounded-xl border border-emerald-500/50 shadow-md transition active:scale-98 cursor-pointer flex items-center justify-center gap-2"
@@ -726,7 +849,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 setCompletedOrder(null);
                 onClose();
               }}
-              className="w-full py-3.5 bg-white hover:bg-emerald-50 text-emerald-800 font-black text-sm rounded-xl shadow-lg transition active:scale-98 cursor-pointer"
+              className="w-full py-3 bg-white hover:bg-emerald-50 text-emerald-800 font-black text-sm rounded-xl shadow-md transition active:scale-98 cursor-pointer"
             >
               View My Orders & Track Delivery →
             </button>

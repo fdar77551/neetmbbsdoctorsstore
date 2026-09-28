@@ -2,12 +2,58 @@ export type ProductType = 'book' | 'pdf';
 
 export type ProductCategory = 'All' | 'Physics' | 'Chemistry' | 'Biology' | 'Full NEET Combo' | 'PYQ' | 'Mock Tests';
 
+export type NeetSubject = 'Biology' | 'Chemistry' | 'Physics' | 'Complete PCB';
+
+export type NeetMaterialType = 
+  | 'Notes'
+  | 'PYQs'
+  | 'MCQs'
+  | 'Formulas'
+  | 'Revision Material'
+  | 'Tests'
+  | 'Short Notes'
+  | 'NCERT Content'
+  | 'New Content';
+
+export type NeetPassPlan = 'monthly' | 'yearly' | 'lifetime';
+export type NeetPassSubjectKey = 'biology' | 'chemistry' | 'physics' | 'pcb';
+
+export interface UserNeetPass {
+  id: string;
+  subjectKey: NeetPassSubjectKey;
+  subjectName: string;
+  plan: NeetPassPlan;
+  planName: string;
+  price: number;
+  startDate: string;
+  expiryDate: string; // ISO date string or 'lifetime'
+  orderId: string;
+  active: boolean;
+}
+
+export interface DownloadHistoryItem {
+  id: string;
+  productId: string;
+  title: string;
+  subject?: string;
+  materialType?: string;
+  pdfUrl: string;
+  downloadedAt: string;
+}
+
 export interface Product {
   id: string;
   title: string;
   author: string;
   type: ProductType;
   category: string;
+  subject?: NeetSubject | string;
+  materialType?: NeetMaterialType | string;
+  passTier?: 'biology' | 'chemistry' | 'physics' | 'pcb' | 'all' | 'free' | 'none';
+  chapterName?: string;
+  isFreeResource?: boolean;
+  includedInPass?: boolean;
+  downloadCount?: number;
   price: number;
   originalPrice: number;
   rating: number;
@@ -100,6 +146,7 @@ export interface UserProfile {
   totalOrders?: number;
   totalSpent?: number;
   savedAddresses?: ShippingAddress[];
+  neetPasses?: UserNeetPass[];
 }
 
 export interface StoreConfig {
@@ -116,6 +163,8 @@ export interface StoreConfig {
   youtubeUrl?: string;
   hardcopyCardImage?: string;
   softcopyCardImage?: string;
+  popularBookIds?: string[];
+  featuredPdfIds?: string[];
   websiteUrl: string;
   companyLegalName: string;
   gstin: string;
@@ -177,3 +226,253 @@ export interface PaymentRecord {
   signature?: string;
   createdAt: string;
 }
+
+// ==========================================
+// MOCK TEST SYSTEM TYPES
+// ==========================================
+
+export type MockTestType = 
+  | 'full_syllabus' 
+  | 'part_test' 
+  | 'chapter_test' 
+  | 'subject_test' 
+  | 'pyq_based' 
+  | 'custom';
+
+export type MockSubject = 'Physics' | 'Chemistry' | 'Biology';
+
+export type MockQuestionDifficulty = 'Easy' | 'Moderate' | 'Hard';
+
+export interface MockQuestionOption {
+  label: 'A' | 'B' | 'C' | 'D';
+  type: 'text' | 'image' | 'text_and_image';
+  value?: string;
+  imageUrl?: string;
+}
+
+export interface MockQuestionContentBlock {
+  type: 'text' | 'image';
+  value?: string;
+  imageUrl?: string;
+}
+
+export interface MockMatchTableRow {
+  leftKey: string;
+  leftText: string;
+  rightKey: string;
+  rightText: string;
+}
+
+export interface MockMatchTable {
+  column1Header: string;
+  column2Header: string;
+  rows: MockMatchTableRow[];
+}
+
+export interface MockQuestionLanguageContent {
+  questionText: string;
+  options: MockQuestionOption[];
+  explanation?: string;
+  explanationImageUrl?: string;
+  figureUrl?: string;
+  matchTable?: MockMatchTable;
+}
+
+export interface MockQuestion {
+  id: string;
+  testId: string;
+  questionNumber: number;
+  subject: MockSubject;
+  chapter?: string;
+  difficulty?: MockQuestionDifficulty;
+  // Bilingual representations: One question, multiple language versions
+  languages?: {
+    en: MockQuestionLanguageContent;
+    hi?: MockQuestionLanguageContent;
+  };
+  // Match-the-column table
+  matchTable?: MockMatchTable;
+  // Figures
+  figures?: string[];
+  figureUrl?: string;
+  questionImageUrl?: string; // Backwards-compatible alias for primary figure
+  // Legacy aliases for English text & options for backwards compatibility
+  questionText: string;
+  options: MockQuestionOption[];
+  explanation?: string;
+  explanationImageUrl?: string;
+  questionContent?: MockQuestionContentBlock[];
+  // Option figures (e.g. chemical structures for A, B, C, D)
+  optionFigures?: {
+    A?: string;
+    B?: string;
+    C?: string;
+    D?: string;
+  };
+  correctAnswer: 'A' | 'B' | 'C' | 'D';
+  marks?: number;
+  negativeMarks?: number;
+  pdfPageNumber?: number;
+  figureCropInfo?: {
+    box?: number[];
+    pageNumber?: number;
+    cropUrl?: string;
+  };
+  needsReview?: boolean;
+  reviewReason?: string;
+}
+
+export interface MockTest {
+  id: string;
+  testNumber: string; // e.g. "Test 01" or "#01"
+  code?: string; // e.g. "01" or "#01"
+  title: string;
+  description: string;
+  shortDescription?: string;
+  fullDescription?: string;
+  folderId?: string;
+  folderName?: string;
+  type: MockTestType;
+  subjects: (MockSubject | string)[];
+  totalQuestions: number;
+  durationMinutes: number; // e.g. 180
+  totalMarks?: number;
+  maxMarks: number; // e.g. 720
+  correctMarks: number; // +4
+  negativeMarks: number; // -1
+  price: number; // e.g. 99 (0 for free)
+  isFree?: boolean;
+  isPaid?: boolean;
+  originalPrice?: number; // e.g. 299
+  discountedPrice?: number;
+  razorpayPlanId?: string;
+  difficulty?: MockQuestionDifficulty;
+  status: 'draft' | 'published';
+  syllabus?: string;
+  instructions?: string[];
+  languages?: ('en' | 'hi')[]; // ['en', 'hi']
+  isBilingual?: boolean;
+  attemptLimit?: 'once' | 'multiple' | 'unlimited';
+  allowMultipleAttempts: boolean;
+  showLeaderboard: boolean;
+  createdAt: string;
+  startDate?: string;
+  endDate?: string;
+  scheduledAt?: string;
+  questionsCount?: number;
+  questions?: MockQuestion[];
+  purchasesCount?: number;
+  completionsCount?: number;
+}
+
+export interface MockTestPurchase {
+  id: string;
+  testId: string;
+  userId: string;
+  userEmail: string;
+  userName?: string;
+  orderId: string;
+  paymentId: string;
+  amount: number;
+  purchaseDate: string;
+  status: 'active' | 'completed';
+}
+
+export interface SubjectScoreBreakdown {
+  correct: number;
+  incorrect: number;
+  unanswered: number;
+  score: number;
+  totalMarks: number;
+  questionsCount: number;
+}
+
+export interface MockTestAttempt {
+  id: string;
+  testId: string;
+  testTitle?: string;
+  attemptNumber?: number; // 1, 2, 3...
+  userId: string;
+  userEmail: string;
+  userName: string;
+  startedAt: string; // ISO timestamp
+  expiresAt: string; // ISO timestamp
+  submittedAt?: string; // ISO timestamp
+  endTime?: string; // ISO timestamp
+  timeTakenFormatted?: string; // e.g. "2h 41m"
+  rank?: number;
+  status: 'in_progress' | 'submitted' | 'timed_out';
+  answers: Record<number, 'A' | 'B' | 'C' | 'D'>; // questionNumber -> chosen option
+  markedForReview: number[]; // array of question numbers
+  visited: number[]; // array of question numbers
+  timeSpentSeconds: number;
+  score?: number;
+  maxMarks?: number;
+  correctCount?: number;
+  incorrectCount?: number;
+  unansweredCount?: number;
+  accuracy?: number; // percentage
+  subjectScores?: {
+    Physics: SubjectScoreBreakdown;
+    Chemistry: SubjectScoreBreakdown;
+    Biology: SubjectScoreBreakdown;
+  };
+}
+
+export interface MockTestLeaderboardEntry {
+  rank: number;
+  userId: string;
+  userName: string;
+  score: number;
+  maxMarks: number;
+  accuracy: number;
+  timeSpentSeconds: number;
+  submittedAt: string;
+  testId?: string;
+  testTitle?: string;
+}
+
+export interface CombinedLeaderboardUser {
+  rank: number;
+  userId: string;
+  userName: string;
+  score: number; // Combined or best score
+  totalScore: number;
+  bestScore: number;
+  averageScore: number;
+  testsAttempted: number;
+  accuracy: number;
+  lastAttemptDate: string;
+}
+
+// ==========================================
+// NEET (11th & 12th) FULL COURSE SYSTEM TYPES
+// ==========================================
+
+export interface NeetFullCourseConfig {
+  id: string; // 'neet-full-course-11-12'
+  title: string;
+  subtitle: string;
+  description: string;
+  price: number;
+  originalPrice: number;
+  sampleDriveLink: string;
+  mainCourseDriveLink?: string; // Private - only exposed upon verified purchase
+  isActive: boolean;
+  features?: string[];
+  highlights?: string[];
+}
+
+export interface NeetFullCoursePurchase {
+  id: string;
+  courseId: string;
+  userId: string;
+  userEmail: string;
+  userName?: string;
+  orderId: string;
+  paymentId: string;
+  amount: number;
+  purchaseDate: string;
+  status: 'active' | 'completed';
+}
+

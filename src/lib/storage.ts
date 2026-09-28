@@ -1,4 +1,14 @@
-import { Product, Order, UserProfile, CartItem, BannerSlide, SupportMessage, StoreConfig } from '../types';
+import { 
+  Product, 
+  Order, 
+  UserProfile, 
+  CartItem, 
+  BannerSlide, 
+  SupportMessage, 
+  StoreConfig,
+  UserNeetPass,
+  DownloadHistoryItem
+} from '../types';
 import { INITIAL_PRODUCTS, INITIAL_ORDERS, INITIAL_REGISTERED_USERS, DEFAULT_BANNERS } from './data';
 import { 
   rtdb,
@@ -18,6 +28,72 @@ const CART_KEY = 'neetmbbs_cart_v2';
 const WISHLIST_KEY = 'neetmbbs_wishlist_v2';
 const SUPPORT_KEY = 'neetmbbs_support_messages_v1';
 const R2_PUBLIC_DOMAIN_KEY = 'neetmbbs_r2_public_domain';
+
+const DELETED_ORDERS_KEY = 'neetmbbs_deleted_orders_v1';
+const DELETED_PRODUCTS_KEY = 'neetmbbs_deleted_products_v1';
+const DELETED_BANNERS_KEY = 'neetmbbs_deleted_banners_v1';
+
+export function getDeletedOrderIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DELETED_ORDERS_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch (e) {}
+  return new Set<string>();
+}
+
+export function markOrderDeleted(orderId: string): void {
+  try {
+    const cleanId = orderId.trim();
+    const set = getDeletedOrderIds();
+    set.add(cleanId);
+    set.add(cleanId.replace(/^ORD-/, ''));
+    set.add(`ORD-${cleanId.replace(/^ORD-/, '')}`);
+    localStorage.setItem(DELETED_ORDERS_KEY, JSON.stringify(Array.from(set)));
+  } catch (e) {}
+}
+
+export function getDeletedProductIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DELETED_PRODUCTS_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch (e) {}
+  return new Set<string>();
+}
+
+export function markProductDeleted(productId: string): void {
+  try {
+    const cleanId = productId.trim();
+    const set = getDeletedProductIds();
+    set.add(cleanId);
+    localStorage.setItem(DELETED_PRODUCTS_KEY, JSON.stringify(Array.from(set)));
+  } catch (e) {}
+}
+
+export function getDeletedBannerIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DELETED_BANNERS_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch (e) {}
+  return new Set<string>();
+}
+
+export function markBannerDeleted(bannerId: string): void {
+  try {
+    const cleanId = bannerId.trim();
+    const set = getDeletedBannerIds();
+    set.add(cleanId);
+    localStorage.setItem(DELETED_BANNERS_KEY, JSON.stringify(Array.from(set)));
+  } catch (e) {}
+}
 
 const FIREBASE_RTDB_BASE = "https://ncertify-neet-master-tests-default-rtdb.firebaseio.com";
 
@@ -524,9 +600,9 @@ export function initRealtimeFirebaseSync(): void {
       onValue(productsRef, (snapshot) => {
         const val = snapshot.val();
         if (val) {
-          const prodList: Product[] = Array.isArray(val) 
-            ? val.filter(Boolean) 
-            : Object.values(val);
+          const deletedProds = getDeletedProductIds();
+          const prodList: Product[] = (Array.isArray(val) ? val.filter(Boolean) : Object.values(val))
+            .filter(p => p && p.id && !deletedProds.has(p.id));
           const cleanProds = sortProductsNewestFirst(deduplicateById<Product>(prodList).map(sanitizeProductForStorage));
           if (cleanProds.length > 0) {
             safeSetLocalStorage(PRODUCTS_KEY, JSON.stringify(cleanProds));
@@ -540,9 +616,9 @@ export function initRealtimeFirebaseSync(): void {
       onValue(ordersRef, (snapshot) => {
         const val = snapshot.val();
         if (val) {
-          const orderList: Order[] = Array.isArray(val) 
-            ? val.filter(Boolean) 
-            : Object.values(val);
+          const deletedOrders = getDeletedOrderIds();
+          const orderList: Order[] = (Array.isArray(val) ? val.filter(Boolean) : Object.values(val))
+            .filter(o => o && o.id && !deletedOrders.has(o.id) && !deletedOrders.has(o.id.replace(/^ORD-/, '')) && !deletedOrders.has(`ORD-${o.id}`));
           const cleanOrders = sortOrdersNewestFirst(deduplicateById<Order>(orderList).map(sanitizeOrderForStorage));
           if (cleanOrders.length > 0) {
             safeSetLocalStorage(ORDERS_KEY, JSON.stringify(cleanOrders));
@@ -556,10 +632,11 @@ export function initRealtimeFirebaseSync(): void {
       onValue(bannersRef, (snapshot) => {
         const val = snapshot.val();
         if (val) {
-          const bannerList: BannerSlide[] = Array.isArray(val) 
-            ? val.filter(Boolean) 
-            : Object.values(val);
-          const cleanBanners = deduplicateById<BannerSlide>(bannerList);
+          const deletedBanners = getDeletedBannerIds();
+          const bannerList: BannerSlide[] = (Array.isArray(val) ? val.filter(Boolean) : Object.values(val))
+            .filter(b => b && b.id && !deletedBanners.has(b.id));
+          const currentBanners = getStoredBanners().filter(b => b && b.id && !deletedBanners.has(b.id));
+          const cleanBanners = deduplicateById<BannerSlide>([...currentBanners, ...bannerList]);
           if (cleanBanners.length > 0) {
             safeSetLocalStorage(BANNERS_KEY, JSON.stringify(cleanBanners));
             window.dispatchEvent(new Event('neetmbbs_banners_updated'));
@@ -650,9 +727,9 @@ export async function syncDataFromDatabase(): Promise<void> {
     // 1. Direct fetch from Firebase Realtime Database (Primary source of truth for Netlify & everywhere)
     const remoteProducts = await fetchFromFirebaseRTDBRest('products');
     if (remoteProducts && (Array.isArray(remoteProducts) || typeof remoteProducts === 'object')) {
-      const prodList: Product[] = Array.isArray(remoteProducts)
-        ? remoteProducts.filter(Boolean)
-        : Object.values(remoteProducts);
+      const deletedProds = getDeletedProductIds();
+      const prodList: Product[] = (Array.isArray(remoteProducts) ? remoteProducts.filter(Boolean) : Object.values(remoteProducts))
+        .filter(p => p && p.id && !deletedProds.has(p.id));
       const cleanProds = sortProductsNewestFirst(deduplicateById<Product>(prodList).map(sanitizeProductForStorage));
       if (cleanProds.length > 0) {
         safeSetLocalStorage(PRODUCTS_KEY, JSON.stringify(cleanProds));
@@ -662,10 +739,11 @@ export async function syncDataFromDatabase(): Promise<void> {
 
     const remoteBanners = await fetchFromFirebaseRTDBRest('banners');
     if (remoteBanners && (Array.isArray(remoteBanners) || typeof remoteBanners === 'object')) {
-      const banList: BannerSlide[] = Array.isArray(remoteBanners)
-        ? remoteBanners.filter(Boolean)
-        : Object.values(remoteBanners);
-      const cleanBanners = deduplicateById<BannerSlide>(banList);
+      const deletedBanners = getDeletedBannerIds();
+      const banList: BannerSlide[] = (Array.isArray(remoteBanners) ? remoteBanners.filter(Boolean) : Object.values(remoteBanners))
+        .filter(b => b && b.id && !deletedBanners.has(b.id));
+      const currentBanners = getStoredBanners().filter(b => b && b.id && !deletedBanners.has(b.id));
+      const cleanBanners = deduplicateById<BannerSlide>([...currentBanners, ...banList]);
       if (cleanBanners.length > 0) {
         safeSetLocalStorage(BANNERS_KEY, JSON.stringify(cleanBanners));
         window.dispatchEvent(new Event('neetmbbs_banners_updated'));
@@ -674,9 +752,9 @@ export async function syncDataFromDatabase(): Promise<void> {
 
     const remoteOrders = await fetchFromFirebaseRTDBRest('orders');
     if (remoteOrders && (Array.isArray(remoteOrders) || typeof remoteOrders === 'object')) {
-      const orderList: Order[] = Array.isArray(remoteOrders)
-        ? remoteOrders.filter(Boolean)
-        : Object.values(remoteOrders);
+      const deletedOrders = getDeletedOrderIds();
+      const orderList: Order[] = (Array.isArray(remoteOrders) ? remoteOrders.filter(Boolean) : Object.values(remoteOrders))
+        .filter(o => o && o.id && !deletedOrders.has(o.id) && !deletedOrders.has(o.id.replace(/^ORD-/, '')) && !deletedOrders.has(`ORD-${o.id}`));
       const cleanOrders = sortOrdersNewestFirst(deduplicateById<Order>(orderList).map(sanitizeOrderForStorage));
       if (cleanOrders.length > 0) {
         safeSetLocalStorage(ORDERS_KEY, JSON.stringify(cleanOrders));
@@ -839,11 +917,14 @@ export function hasUserPurchasedProduct(
 export function getStoredProducts(): Product[] {
   try {
     const raw = localStorage.getItem(PRODUCTS_KEY);
+    const deletedProds = getDeletedProductIds();
     if (raw !== null) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         const clean = sortProductsNewestFirst(
-          deduplicateById<Product>(parsed).map(sanitizeProductForStorage)
+          deduplicateById<Product>(parsed)
+            .filter(p => p && p.id && !deletedProds.has(p.id))
+            .map(sanitizeProductForStorage)
         );
         // Self-heal localStorage if duplicates or unsorted
         if (clean.length !== parsed.length) {
@@ -861,8 +942,11 @@ export function getStoredProducts(): Product[] {
 
 export function saveStoredProducts(products: Product[]): void {
   try {
+    const deletedProds = getDeletedProductIds();
     const clean = sortProductsNewestFirst(
-      deduplicateById<Product>(products).map(sanitizeProductForStorage)
+      deduplicateById<Product>(products)
+        .filter(p => p && p.id && !deletedProds.has(p.id))
+        .map(sanitizeProductForStorage)
     );
     safeSetLocalStorage(PRODUCTS_KEY, JSON.stringify(clean));
     window.dispatchEvent(new Event('neetmbbs_products_updated'));
@@ -938,25 +1022,51 @@ export function updateProduct(updatedProduct: Product): void {
 }
 
 export function deleteProduct(productId: string): void {
+  const cleanId = productId.trim();
+  markProductDeleted(cleanId);
   const current = getStoredProducts();
-  const updated = current.filter(p => p.id !== productId);
+  const updated = current.filter(p => p.id !== cleanId);
   saveStoredProducts(updated);
 
+  // Clean up user purchases and download records associated with this deleted PDF
+  try {
+    const rawPurchases = localStorage.getItem('neetmbbs_purchased_pdfs_v2');
+    if (rawPurchases) {
+      const parsed = JSON.parse(rawPurchases);
+      if (Array.isArray(parsed)) {
+        const cleanedPurchases = parsed.filter(p => (p.id || p.productId) !== cleanId);
+        localStorage.setItem('neetmbbs_purchased_pdfs_v2', JSON.stringify(cleanedPurchases));
+        window.dispatchEvent(new Event('neetmbbs_purchases_updated'));
+      }
+    }
+  } catch (e) {}
+
+  try {
+    const rawDownloads = localStorage.getItem('neetmbbs_download_history_v1');
+    if (rawDownloads) {
+      const parsed = JSON.parse(rawDownloads);
+      if (Array.isArray(parsed)) {
+        const cleaned = parsed.filter((d: any) => d.productId !== cleanId);
+        localStorage.setItem('neetmbbs_download_history_v1', JSON.stringify(cleaned));
+      }
+    }
+  } catch (e) {}
+
   // 1. Direct REST Sync to Firebase Realtime Database
-  fetch(`${FIREBASE_RTDB_BASE}/products/${productId}.json`, { method: 'DELETE' }).catch(() => {});
+  fetch(`${FIREBASE_RTDB_BASE}/products/${cleanId}.json`, { method: 'DELETE' }).catch(() => {});
   const prodMap: Record<string, Product> = {};
   updated.forEach(p => { if (p.id) prodMap[p.id] = p; });
   syncToFirebaseRTDBRest('products', prodMap);
 
   // 2. Sync to Server & Cloudflare D1
-  fetch(`/api/db/products/${productId}`, {
+  fetch(`/api/db/products/${cleanId}`, {
     method: 'DELETE'
   }).catch(() => {});
 
   // 3. Sync via Firebase Realtime Database SDK
   try {
-    if (rtdb && productId) {
-      rtdbRemove(ref(rtdb, `products/${productId}`)).catch(err =>
+    if (rtdb && cleanId) {
+      rtdbRemove(ref(rtdb, `products/${cleanId}`)).catch(err =>
         console.warn('Firebase RTDB product delete sync note:', err)
       );
     }
@@ -969,19 +1079,21 @@ export function deleteProduct(productId: string): void {
 export function getStoredBanners(): BannerSlide[] {
   try {
     const raw = localStorage.getItem(BANNERS_KEY);
+    const deletedBanners = getDeletedBannerIds();
     if (!raw) {
-      safeSetLocalStorage(BANNERS_KEY, JSON.stringify(DEFAULT_BANNERS));
-      return DEFAULT_BANNERS;
+      const initBanners = DEFAULT_BANNERS.filter(b => !deletedBanners.has(b.id));
+      safeSetLocalStorage(BANNERS_KEY, JSON.stringify(initBanners));
+      return initBanners;
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      const clean = deduplicateById<BannerSlide>(parsed);
+      const clean = deduplicateById<BannerSlide>(parsed).filter(b => b && b.id && !deletedBanners.has(b.id));
       if (clean.length !== parsed.length) {
         safeSetLocalStorage(BANNERS_KEY, JSON.stringify(clean));
       }
       return clean;
     }
-    return DEFAULT_BANNERS;
+    return DEFAULT_BANNERS.filter(b => !deletedBanners.has(b.id));
   } catch (err) {
     console.error('Error loading banners from storage:', err);
     return DEFAULT_BANNERS;
@@ -990,7 +1102,8 @@ export function getStoredBanners(): BannerSlide[] {
 
 export function saveStoredBanners(banners: BannerSlide[]): void {
   try {
-    const clean = deduplicateById<BannerSlide>(banners);
+    const deletedBanners = getDeletedBannerIds();
+    const clean = deduplicateById<BannerSlide>(banners).filter(b => b && b.id && !deletedBanners.has(b.id));
     safeSetLocalStorage(BANNERS_KEY, JSON.stringify(clean));
     window.dispatchEvent(new Event('neetmbbs_banners_updated'));
   } catch (err) {
@@ -1041,20 +1154,22 @@ export function updateBanner(updatedBanner: BannerSlide): void {
 }
 
 export function deleteBanner(bannerId: string): void {
+  const cleanId = bannerId.trim();
+  markBannerDeleted(cleanId);
   const current = getStoredBanners();
-  const updated = deduplicateById<BannerSlide>(current.filter(b => b.id !== bannerId));
+  const updated = deduplicateById<BannerSlide>(current.filter(b => b.id !== cleanId));
   saveStoredBanners(updated);
 
   syncToFirebaseRTDBRest('banners', updated);
-  fetch(`${FIREBASE_RTDB_BASE}/banners/${bannerId}.json`, { method: 'DELETE' }).catch(() => {});
+  fetch(`${FIREBASE_RTDB_BASE}/banners/${cleanId}.json`, { method: 'DELETE' }).catch(() => {});
 
-  fetch(`/api/db/banners/${bannerId}`, {
+  fetch(`/api/db/banners/${cleanId}`, {
     method: 'DELETE'
   }).catch(() => {});
 
   try {
-    if (rtdb && bannerId) {
-      rtdbRemove(ref(rtdb, `banners/${bannerId}`)).catch(() => {});
+    if (rtdb && cleanId) {
+      rtdbRemove(ref(rtdb, `banners/${cleanId}`)).catch(() => {});
     }
   } catch (e) {}
 }
@@ -1063,15 +1178,18 @@ export function deleteBanner(bannerId: string): void {
 export function getStoredOrders(): Order[] {
   try {
     const raw = localStorage.getItem(ORDERS_KEY);
+    const deletedOrders = getDeletedOrderIds();
     if (!raw) {
-      const initial = sortOrdersNewestFirst(INITIAL_ORDERS.map(sanitizeOrderForStorage));
+      const initial = sortOrdersNewestFirst(INITIAL_ORDERS.filter(o => !deletedOrders.has(o.id)).map(sanitizeOrderForStorage));
       safeSetLocalStorage(ORDERS_KEY, JSON.stringify(initial));
       return initial;
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       const clean = sortOrdersNewestFirst(
-        deduplicateById<Order>(parsed).map(sanitizeOrderForStorage)
+        deduplicateById<Order>(parsed)
+          .filter(o => o && o.id && !deletedOrders.has(o.id) && !deletedOrders.has(o.id.replace(/^ORD-/, '')) && !deletedOrders.has(`ORD-${o.id}`))
+          .map(sanitizeOrderForStorage)
       );
       if (clean.length !== parsed.length) {
         safeSetLocalStorage(ORDERS_KEY, JSON.stringify(clean));
@@ -1087,8 +1205,11 @@ export function getStoredOrders(): Order[] {
 
 export function saveStoredOrders(orders: Order[]): void {
   try {
+    const deletedOrders = getDeletedOrderIds();
     const clean = sortOrdersNewestFirst(
-      deduplicateById<Order>(orders).map(sanitizeOrderForStorage)
+      deduplicateById<Order>(orders)
+        .filter(o => o && o.id && !deletedOrders.has(o.id) && !deletedOrders.has(o.id.replace(/^ORD-/, '')) && !deletedOrders.has(`ORD-${o.id}`))
+        .map(sanitizeOrderForStorage)
     );
     safeSetLocalStorage(ORDERS_KEY, JSON.stringify(clean));
     window.dispatchEvent(new Event('neetmbbs_orders_updated'));
@@ -1179,9 +1300,24 @@ export function updateOrderStatus(orderId: string, status: Order['status'], note
 
 export function deleteOrder(orderId: string): void {
   const cleanId = orderId.trim();
+  markOrderDeleted(cleanId);
   const current = getStoredOrders();
+  const targetOrder = current.find(o => o.id === cleanId || o.id === `ORD-${cleanId}` || o.id === cleanId.replace(/^ORD-/, ''));
   const updated = current.filter(o => o.id !== cleanId && o.id !== `ORD-${cleanId}` && o.id !== cleanId.replace(/^ORD-/, ''));
   saveStoredOrders(updated);
+
+  // If deleted order had revenue, deduct from user's lifetime totalSpent and order count
+  if (targetOrder && targetOrder.userEmail && targetOrder.totalAmount) {
+    try {
+      const users = getRegisteredUsers();
+      const uIndex = users.findIndex(u => (u.email || '').toLowerCase() === (targetOrder.userEmail || '').toLowerCase());
+      if (uIndex >= 0) {
+        users[uIndex].totalOrders = Math.max(0, (users[uIndex].totalOrders || 1) - 1);
+        users[uIndex].totalSpent = Math.max(0, (users[uIndex].totalSpent || targetOrder.totalAmount) - targetOrder.totalAmount);
+        saveRegisteredUsers(users);
+      }
+    } catch (e) {}
+  }
 
   // 1. Direct REST sync to Firebase Realtime Database
   fetch(`${FIREBASE_RTDB_BASE}/orders/${cleanId}.json`, { method: 'DELETE' }).catch(() => {});
@@ -1192,7 +1328,7 @@ export function deleteOrder(orderId: string): void {
     method: 'DELETE'
   }).catch(() => {});
 
-  // 3. Sync to Firebase SDK
+  // 3. Sync via Firebase SDK
   try {
     if (rtdb && cleanId) {
       rtdbRemove(ref(rtdb, `orders/${cleanId}`)).catch(e => console.warn(e));
@@ -1202,8 +1338,27 @@ export function deleteOrder(orderId: string): void {
 
 export function deleteMultipleOrders(orderIds: string[]): void {
   if (!Array.isArray(orderIds) || orderIds.length === 0) return;
+  orderIds.forEach(id => markOrderDeleted(id));
   const idSet = new Set(orderIds.map(id => id.trim()));
   const current = getStoredOrders();
+  
+  // Deduct revenue for all targeted orders
+  current.forEach(order => {
+    if (idSet.has(order.id) || idSet.has(order.id.replace(/^ORD-/, '')) || idSet.has(`ORD-${order.id}`)) {
+      if (order.userEmail && order.totalAmount) {
+        try {
+          const users = getRegisteredUsers();
+          const uIndex = users.findIndex(u => (u.email || '').toLowerCase() === (order.userEmail || '').toLowerCase());
+          if (uIndex >= 0) {
+            users[uIndex].totalOrders = Math.max(0, (users[uIndex].totalOrders || 1) - 1);
+            users[uIndex].totalSpent = Math.max(0, (users[uIndex].totalSpent || order.totalAmount) - order.totalAmount);
+            saveRegisteredUsers(users);
+          }
+        } catch (e) {}
+      }
+    }
+  });
+
   const updated = current.filter(o => !idSet.has(o.id) && !idSet.has(o.id.replace(/^ORD-/, '')) && !idSet.has(`ORD-${o.id}`));
   saveStoredOrders(updated);
 
@@ -1288,12 +1443,13 @@ export function saveCurrentUser(user: UserProfile | null): void {
 
 export function registerNewUser(user: UserProfile): void {
   const current = getRegisteredUsers();
-  const exists = current.some(u => u.email.toLowerCase() === user.email.toLowerCase());
+  const cleanTargetEmail = (user?.email || '').toLowerCase().trim();
+  const exists = current.some(u => (u?.email || '').toLowerCase().trim() === cleanTargetEmail);
   let updated = current;
   if (!exists) {
     updated = deduplicateUsers([user, ...current]);
   } else {
-    updated = deduplicateUsers(current.map(u => u.email.toLowerCase() === user.email.toLowerCase() ? { ...u, ...user } : u));
+    updated = deduplicateUsers(current.map(u => (u?.email || '').toLowerCase().trim() === cleanTargetEmail ? { ...u, ...user } : u));
   }
   saveRegisteredUsers(updated);
 
@@ -1301,11 +1457,11 @@ export function registerNewUser(user: UserProfile): void {
   saveCurrentUser(user);
 
   // 1. Direct REST Sync to Firebase Realtime Database
-  const userKey = (user.uid || user.email).replace(/[\.\#\$\/\[\]]/g, '_');
+  const userKey = (user.uid || user.email || 'user').replace(/[\.\#\$\/\[\]]/g, '_');
   syncToFirebaseRTDBRest(`users/${userKey}`, user);
   const usrMap: Record<string, UserProfile> = {};
   updated.forEach(u => {
-    const k = (u.uid || u.email).replace(/[\.\#\$\/\[\]]/g, '_');
+    const k = (u.uid || u.email || '').replace(/[\.\#\$\/\[\]]/g, '_');
     if (k) usrMap[k] = u;
   });
   syncToFirebaseRTDBRest('users', usrMap);
@@ -1327,8 +1483,9 @@ export function registerNewUser(user: UserProfile): void {
 
 export function updateUserProfile(updatedUser: Partial<UserProfile> & { email: string }): void {
   const current = getRegisteredUsers();
+  const targetEmail = (updatedUser?.email || '').toLowerCase().trim();
   const updated = deduplicateUsers(current.map(u => {
-    if (u.email.toLowerCase() === updatedUser.email.toLowerCase()) {
+    if ((u?.email || '').toLowerCase().trim() === targetEmail) {
       return { ...u, ...updatedUser };
     }
     return u;
@@ -1337,13 +1494,13 @@ export function updateUserProfile(updatedUser: Partial<UserProfile> & { email: s
 
   // If active user is being updated, sync active session
   const activeUser = getCurrentUser();
-  if (activeUser && activeUser.email.toLowerCase() === updatedUser.email.toLowerCase()) {
+  if (activeUser && (activeUser.email || '').toLowerCase().trim() === targetEmail) {
     saveCurrentUser({ ...activeUser, ...updatedUser });
   }
 
   // 1. Sync to Firebase RTDB
-  const userKey = (updatedUser.uid || updatedUser.email).replace(/[\.\#\$\/\[\]]/g, '_');
-  const targetUser = updated.find(u => u.email.toLowerCase() === updatedUser.email.toLowerCase());
+  const userKey = (updatedUser.uid || updatedUser.email || 'user').replace(/[\.\#\$\/\[\]]/g, '_');
+  const targetUser = updated.find(u => (u?.email || '').toLowerCase().trim() === targetEmail);
   if (targetUser) {
     syncToFirebaseRTDBRest(`users/${userKey}`, targetUser);
     try {
@@ -1354,7 +1511,7 @@ export function updateUserProfile(updatedUser: Partial<UserProfile> & { email: s
   }
   const usrMap: Record<string, UserProfile> = {};
   updated.forEach(u => {
-    const k = (u.uid || u.email).replace(/[\.\#\$\/\[\]]/g, '_');
+    const k = (u.uid || u.email || '').replace(/[\.\#\$\/\[\]]/g, '_');
     if (k) usrMap[k] = u;
   });
   syncToFirebaseRTDBRest('users', usrMap);
@@ -1367,15 +1524,19 @@ export function updateUserProfile(updatedUser: Partial<UserProfile> & { email: s
   }).catch(e => console.warn(e));
 }
 
-export function isEmailRegistered(email: string): boolean {
+export function isEmailRegistered(email: any): boolean {
+  if (!email || typeof email !== 'string') return false;
   const current = getRegisteredUsers();
-  return current.some(u => u.email.toLowerCase() === email.toLowerCase().trim());
+  const clean = email.toLowerCase().trim();
+  return current.some(u => (u?.email || '').toLowerCase().trim() === clean);
 }
 
-export function updateUserOrderStats(email: string, amount: number): void {
+export function updateUserOrderStats(email: any, amount: number): void {
+  if (!email || typeof email !== 'string') return;
+  const cleanEmail = email.toLowerCase().trim();
   const current = getRegisteredUsers();
   const updated = deduplicateUsers(current.map(u => {
-    if (u.email.toLowerCase() === email.toLowerCase()) {
+    if ((u?.email || '').toLowerCase().trim() === cleanEmail) {
       return {
         ...u,
         totalOrders: (u.totalOrders || 0) + 1,
@@ -1386,9 +1547,9 @@ export function updateUserOrderStats(email: string, amount: number): void {
   }));
   saveRegisteredUsers(updated);
 
-  const matched = updated.find(u => u.email.toLowerCase() === email.toLowerCase());
+  const matched = updated.find(u => (u?.email || '').toLowerCase().trim() === cleanEmail);
   if (matched) {
-    const userKey = (matched.uid || matched.email).replace(/[\.\#\$\/\[\]]/g, '_');
+    const userKey = (matched.uid || matched.email || 'user').replace(/[\.\#\$\/\[\]]/g, '_');
     syncToFirebaseRTDBRest(`users/${userKey}`, matched);
     fetch('/api/db/users/register', {
       method: 'POST',
@@ -1671,5 +1832,232 @@ export function generateNextInvoiceNumber(orderId?: string): string {
   const nextId = generateNextOrderId();
   return nextId.replace(/^NMD-/, 'INV-');
 }
+
+// ---------------------------------------------------------------------------
+// NEET SUCCESS PASS & DIGITAL LIBRARY ACCESS PERMISSION SYSTEM
+// ---------------------------------------------------------------------------
+export const NEET_PASSES_KEY = 'neetmbbs_user_passes_v1';
+export const DOWNLOAD_HISTORY_KEY = 'neetmbbs_download_history_v1';
+
+export function getUserNeetPasses(user?: UserProfile | null): UserNeetPass[] {
+  try {
+    const raw = localStorage.getItem(NEET_PASSES_KEY);
+    let localPasses: UserNeetPass[] = [];
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) localPasses = parsed;
+    }
+
+    const currentUser = user || getCurrentUser();
+    if (currentUser?.neetPasses && Array.isArray(currentUser.neetPasses)) {
+      const combined = [...localPasses, ...currentUser.neetPasses];
+      const uniqueMap = new Map<string, UserNeetPass>();
+      combined.forEach(p => {
+        if (p && p.id) uniqueMap.set(p.id, p);
+      });
+      return Array.from(uniqueMap.values());
+    }
+
+    return localPasses;
+  } catch (e) {
+    return [];
+  }
+}
+
+export function saveUserNeetPasses(passes: UserNeetPass[]): void {
+  try {
+    safeSetLocalStorage(NEET_PASSES_KEY, JSON.stringify(passes));
+    window.dispatchEvent(new Event('neetmbbs_user_passes_updated'));
+  } catch (e) {}
+}
+
+export function activateNeetPass(pass: UserNeetPass, userEmail?: string): void {
+  try {
+    const current = getUserNeetPasses();
+    const updated = [pass, ...current.filter(p => p.id !== pass.id)];
+    saveUserNeetPasses(updated);
+
+    const currentUser = getCurrentUser();
+    const emailToUse = userEmail || currentUser?.email;
+    if (emailToUse) {
+      const allUsers = getRegisteredUsers();
+      const cleanEmailToUse = String(emailToUse).toLowerCase().trim();
+      const target = allUsers.find(u => (u?.email || '').toLowerCase().trim() === cleanEmailToUse);
+      if (target) {
+        const userPasses = target.neetPasses ? [pass, ...target.neetPasses.filter(p => p.id !== pass.id)] : [pass];
+        updateUserProfile({ email: target.email, neetPasses: userPasses });
+      }
+    }
+
+    // Sync pass record to Firebase RTDB
+    if (emailToUse) {
+      const cleanEmail = emailToUse.replace(/[\.\#\$\/\[\]]/g, '_');
+      syncToFirebaseRTDBRest(`user_passes/${cleanEmail}/${pass.id}`, pass);
+    }
+  } catch (e) {
+    console.error('Error activating NEET Pass:', e);
+  }
+}
+
+/**
+ * Checks if user has an active NEET Pass for a specific subject or complete PCB
+ */
+export function hasActivePassForSubject(subject?: string, user?: UserProfile | null): boolean {
+  if (!subject) return false;
+  const passes = getUserNeetPasses(user);
+  if (!passes || passes.length === 0) return false;
+
+  const now = Date.now();
+  const activePasses = passes.filter(p => {
+    if (!p.active) return false;
+    if (p.expiryDate.toLowerCase() === 'lifetime') return true;
+    try {
+      return new Date(p.expiryDate).getTime() > now;
+    } catch (e) {
+      return false;
+    }
+  });
+
+  if (activePasses.length === 0) return false;
+
+  // If user has complete PCB pass -> has access to all subjects
+  if (activePasses.some(p => p.subjectKey === 'pcb')) {
+    return true;
+  }
+
+  const cleanSubject = subject.toLowerCase().trim();
+  if (cleanSubject.includes('bio') || cleanSubject.includes('botany') || cleanSubject.includes('zoology')) {
+    return activePasses.some(p => p.subjectKey === 'biology');
+  }
+  if (cleanSubject.includes('chem') || cleanSubject.includes('organic') || cleanSubject.includes('inorganic') || cleanSubject.includes('physical')) {
+    return activePasses.some(p => p.subjectKey === 'chemistry');
+  }
+  if (cleanSubject.includes('phys') || cleanSubject.includes('mechanics') || cleanSubject.includes('optics')) {
+    return activePasses.some(p => p.subjectKey === 'physics');
+  }
+  if (cleanSubject.includes('pcb') || cleanSubject.includes('full') || cleanSubject.includes('combo')) {
+    return activePasses.some(p => p.subjectKey === 'pcb');
+  }
+
+  return false;
+}
+
+/**
+ * Universal Access check for any PDF study resource:
+ * 1. Free resource or price 0 or passTier === 'free'
+ * 2. Individually purchased by order
+ * 3. Covered by active NEET Success Pass (Biology, Chemistry, Physics, Complete PCB)
+ */
+export function hasUserAccessToPdf(
+  product: Product,
+  user?: UserProfile | null,
+  orders?: Order[]
+): boolean {
+  if (!product) return false;
+  
+  // 1. 100% Free resource or free tier
+  if (product.isFreeResource || product.price === 0 || product.passTier === 'free') {
+    return true;
+  }
+
+  // 2. Purchased directly via order
+  if (hasUserPurchasedProduct(product.id, user, orders)) {
+    return true;
+  }
+
+  // 3. Check active NEET Success Passes
+  const passes = getUserNeetPasses(user);
+  if (!passes || passes.length === 0) return false;
+
+  const now = Date.now();
+  const activePasses = passes.filter(p => {
+    if (!p.active) return false;
+    if (p.expiryDate.toLowerCase() === 'lifetime') return true;
+    try {
+      return new Date(p.expiryDate).getTime() > now;
+    } catch (e) {
+      return false;
+    }
+  });
+
+  if (activePasses.length === 0) return false;
+
+  // If user has complete PCB pass -> has access to all biology, chemistry, physics & pcb study materials
+  const hasPcbPass = activePasses.some(p => p.subjectKey === 'pcb');
+  if (hasPcbPass) {
+    return true;
+  }
+
+  // If product is specifically tagged with a passTier:
+  if (product.passTier) {
+    if (product.passTier === 'biology') {
+      return activePasses.some(p => p.subjectKey === 'biology' || p.subjectKey === 'pcb');
+    }
+    if (product.passTier === 'chemistry') {
+      return activePasses.some(p => p.subjectKey === 'chemistry' || p.subjectKey === 'pcb');
+    }
+    if (product.passTier === 'physics') {
+      return activePasses.some(p => p.subjectKey === 'physics' || p.subjectKey === 'pcb');
+    }
+    if (product.passTier === 'pcb') {
+      return hasPcbPass;
+    }
+    if (product.passTier === 'all') {
+      return activePasses.length > 0;
+    }
+  }
+
+  // 4. Covered by NEET Success Pass based on subject or category
+  const targetSubject = product.subject || product.category;
+  if (targetSubject && hasActivePassForSubject(targetSubject, user)) {
+    return true;
+  }
+
+  return false;
+}
+
+// Download History Tracking
+export function getDownloadHistory(): DownloadHistoryItem[] {
+  try {
+    const raw = localStorage.getItem(DOWNLOAD_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export function recordPdfDownload(
+  productId: string, 
+  title: string, 
+  pdfUrl: string, 
+  subject?: string, 
+  materialType?: string
+): void {
+  try {
+    const current = getDownloadHistory();
+    const newItem: DownloadHistoryItem = {
+      id: `dl-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      productId,
+      title,
+      subject: subject || 'NEET Study Material',
+      materialType: materialType || 'Notes',
+      pdfUrl,
+      downloadedAt: new Date().toISOString()
+    };
+    const updated = [newItem, ...current.filter(item => item.productId !== productId)].slice(0, 50);
+    safeSetLocalStorage(DOWNLOAD_HISTORY_KEY, JSON.stringify(updated));
+    window.dispatchEvent(new Event('neetmbbs_download_history_updated'));
+  } catch (e) {}
+}
+
+export function clearDownloadHistory(): void {
+  try {
+    localStorage.removeItem(DOWNLOAD_HISTORY_KEY);
+    window.dispatchEvent(new Event('neetmbbs_download_history_updated'));
+  } catch (e) {}
+}
+
 
 
