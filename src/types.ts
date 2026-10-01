@@ -282,6 +282,8 @@ export type MockTestType =
   | 'pyq_based' 
   | 'custom';
 
+export type MockTestCategory = 'chapter_wise' | 'full_subject' | 'full_syllabus';
+
 export type MockSubject = 'Physics' | 'Chemistry' | 'Biology';
 
 export type MockQuestionDifficulty = 'Easy' | 'Moderate' | 'Hard';
@@ -361,6 +363,16 @@ export interface MockQuestion {
     pageNumber?: number;
     cropUrl?: string;
   };
+  sourceMetadata?: {
+    pdfId?: string;
+    pdfName?: string;
+    pageNumber?: number;
+    questionNumber?: number;
+    targetType?: 'question' | 'option_A' | 'option_B' | 'option_C' | 'option_D' | 'matchTable';
+    box?: [number, number, number, number];
+    cropUrl?: string;
+    storagePath?: string;
+  };
   needsReview?: boolean;
   reviewReason?: string;
 }
@@ -375,6 +387,10 @@ export interface MockTest {
   fullDescription?: string;
   folderId?: string;
   folderName?: string;
+  testTypeCategory?: MockTestCategory; // 'chapter_wise' | 'full_subject' | 'full_syllabus'
+  subject?: MockSubject; // 'Physics' | 'Chemistry' | 'Biology'
+  chapter?: string; // Chapter name (e.g. "Laws of Motion", "Chemical Bonding")
+  orderIndex?: number;
   type: MockTestType;
   subjects: (MockSubject | string)[];
   totalQuestions: number;
@@ -406,6 +422,8 @@ export interface MockTest {
   questions?: MockQuestion[];
   purchasesCount?: number;
   completionsCount?: number;
+  pdfUrl?: string;
+  answerKeyStatus?: 'pending' | 'reviewed' | 'published';
 }
 
 export interface MockTestPurchase {

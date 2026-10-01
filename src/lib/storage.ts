@@ -216,7 +216,14 @@ export function selfHealLocalStorage(): void {
       const cfRaw = localStorage.getItem(CLOUDFLARE_CONFIG_KEY);
       if (cfRaw) {
         const cfParsed = JSON.parse(cfRaw);
-        if (!cfParsed.publicDevUrl || cfParsed.publicDevUrl.includes('pub-8faec') || !cfParsed.secretAccessKey || cfParsed.secretAccessKey.length !== 64) {
+        const needsUpdate = !cfParsed.publicDevUrl || 
+          cfParsed.publicDevUrl.includes('pub-8faec') || 
+          !cfParsed.secretAccessKey || 
+          cfParsed.secretAccessKey.length !== 64 ||
+          cfParsed.storageMode === 'direct_r2' ||
+          !cfParsed.storageMode;
+
+        if (needsUpdate) {
           safeSetLocalStorage(CLOUDFLARE_CONFIG_KEY, JSON.stringify({
             ...DEFAULT_CLOUDFLARE_CONFIG,
             ...cfParsed,
@@ -224,9 +231,12 @@ export function selfHealLocalStorage(): void {
             secretAccessKey: DEFAULT_CLOUDFLARE_CONFIG.secretAccessKey,
             accessKeyId: DEFAULT_CLOUDFLARE_CONFIG.accessKeyId,
             accountId: DEFAULT_CLOUDFLARE_CONFIG.accountId,
-            bucketName: DEFAULT_CLOUDFLARE_CONFIG.bucketName
+            bucketName: DEFAULT_CLOUDFLARE_CONFIG.bucketName,
+            storageMode: (cfParsed.customCdnDomain && cfParsed.customCdnDomain.trim()) ? 'custom_cdn' : 'proxy'
           }));
         }
+      } else {
+        safeSetLocalStorage(CLOUDFLARE_CONFIG_KEY, JSON.stringify(DEFAULT_CLOUDFLARE_CONFIG));
       }
     } catch (e) {}
   } catch (err) {

@@ -3,7 +3,7 @@
     {
       "author": "Fywsvv",
       "category": "Biology",
-      "coverImage": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/book-covers/1788968385106-1000009757.png",
+      "coverImage": "/api/r2/file/book-covers/1788968385106-1000009757.png",
       "createdAt": "2026-09-09T15:39:48.593Z",
       "description": "For testing purpose ",
       "edition": "2026 Latest Edition",
@@ -57,7 +57,7 @@
     {
       "author": "Faisal Fayaz ",
       "category": "Biology",
-      "coverImage": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/book-covers/1787390639944-1000083953.png",
+      "coverImage": "/api/r2/file/book-covers/1787390639944-1000083953.png",
       "createdAt": "2026-08-22T09:24:03.760Z",
       "description": "This product is for checking live payment orders",
       "edition": "2026 Latest Edition",
@@ -954,7 +954,7 @@
       "badge": "Bestseller",
       "buttonText": "Explore Store →",
       "id": "banner-1787304534512",
-      "imageUrl": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/banners/1787304530583-1000083596.png",
+      "imageUrl": "/api/r2/file/banners/1787304530583-1000083596.png",
       "subtitle": "",
       "titleLine1": "NEET UG 2026",
       "titleLine2": "High-Yield Notes &",
@@ -966,7 +966,7 @@
       "badge": "",
       "buttonText": "Explore Store →",
       "id": "banner-1787382623744",
-      "imageUrl": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/banners/1787736741677-1000083598.png",
+      "imageUrl": "/api/r2/file/banners/1787736741677-1000083598.png",
       "subtitle": "",
       "titleLine1": "NEET UG 2026",
       "titleLine2": "",
@@ -978,7 +978,7 @@
       "badge": "",
       "buttonText": "Explore Store →",
       "id": "banner-1787578280112",
-      "imageUrl": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/banners/1787578276524-1000083597.png",
+      "imageUrl": "/api/r2/file/banners/1787578276524-1000083597.png",
       "subtitle": "",
       "titleLine1": "NEET UG 2026",
       "titleLine2": "",
@@ -1008,13 +1008,13 @@
   "payment_records": [],
   "settings": {
     "cloudflare": {
-      "accessKeyId": "887e302ecc7e249de5f16198ddfb7bd4",
       "accountId": "d715d090a75efd8790b9a6da1e2f42d4",
       "bucketName": "ncertify",
-      "customCdnDomain": "",
-      "publicDevUrl": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev",
-      "s3Endpoint": "https://d715d090a75efd8790b9a6da1e2f42d4.r2.cloudflarestorage.com",
+      "accessKeyId": "887e302ecc7e249de5f16198ddfb7bd4",
       "secretAccessKey": "20ddb02f48c59b9e1ae64dd1a164290e63396632633f0b49e2b5f310ba7fb79e",
+      "s3Endpoint": "https://d715d090a75efd8790b9a6da1e2f42d4.r2.cloudflarestorage.com",
+      "publicDevUrl": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev",
+      "customCdnDomain": "",
       "storageMode": "proxy"
     }
   }

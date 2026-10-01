@@ -1,50 +1,172 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Helper function for admin identification
-    function isAdmin() {
-      return request.auth != null && 
-        (request.auth.token.email.lower() == 'fdar77551@gmail.com' || 
-         request.auth.token.email.lower() == 'shahzaibhusain6@gmail.com');
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    // Products: anyone can read, only admins can modify
+    function isAdmin() {
+      return isSignedIn() && 
+        (request.auth.token.email.lower() == 'fdar77551@gmail.com' || 
+         request.auth.token.email.lower() == 'shahzaibhusain6@gmail.com' ||
+         exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isUserEmail(email) {
+      return isSignedIn() && request.auth.token.email.lower() == email.lower();
+    }
+
+    // 1. Users & User Profiles
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId);
+      allow update: if (isOwner(userId) && 
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isAdmin', 'purchases', 'purchasedTests', 'purchasedBooks', 'courseAccess'])) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /user_profiles/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // 2. Orders: Users can place orders and read their own. Only admins can update status or payment confirmation.
+    match /orders/{orderId} {
+      allow create: if true;
+      allow read: if isAdmin() || (isSignedIn() && (resource.data.userId == request.auth.uid || isUserEmail(resource.data.userEmail)));
+      allow update, delete: if isAdmin();
+    }
+
+    // 3. Purchases & Access Grants (Mock Tests, PDFs, Books, Full Course)
+    // Users CANNOT write, modify, or elevate their own access. Only Admin or Server backend can write.
+    match /purchases/{purchaseId} {
+      allow read: if isAdmin() || (isSignedIn() && (resource.data.userId == request.auth.uid || isUserEmail(resource.data.userEmail)));
+      allow write: if isAdmin();
+    }
+
+    match /mock_purchases/{purchaseId} {
+      allow read: if isAdmin() || (isSignedIn() && (resource.data.userId == request.auth.uid || isUserEmail(resource.data.userEmail)));
+      allow write: if isAdmin();
+    }
+
+    match /pdf_access/{accessId} {
+      allow read: if isAdmin() || (isSignedIn() && (resource.data.userId == request.auth.uid || isUserEmail(resource.data.userEmail)));
+      allow write: if isAdmin();
+    }
+
+    // 4. Mock Tests: Chapter Wise, Full Subject, Full Syllabus
+    // Students can read published tests. Only Admin can create, modify, or delete tests and prices.
+    match /mock_tests/{testId} {
+      allow read: if resource.data.status == 'published' || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // 5. Mock Test Questions: Options, diagrams, figures
+    // Only Admin can create, edit, or delete questions. Students cannot change questions or answers.
+    match /mock_questions/{questionId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 6. Test Attempts: Students can record their own attempts and read their own history.
+    match /mock_attempts/{attemptId} {
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow read: if isAdmin() || (isSignedIn() && (resource.data.userId == request.auth.uid || isUserEmail(resource.data.userEmail)));
+      allow update: if (isSignedIn() && resource.data.userId == request.auth.uid && !resource.data.keys().hasAny(['isScoreLocked'])) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /mock_test_attempts/{attemptId} {
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow read: if isAdmin() || (isSignedIn() && (resource.data.userId == request.auth.uid || isUserEmail(resource.data.userEmail)));
+      allow update: if (isSignedIn() && resource.data.userId == request.auth.uid && !resource.data.keys().hasAny(['isScoreLocked'])) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // 7. Results & Leaderboards
+    match /mock_results/{resultId} {
+      allow read: if true;
+      allow write: if isAdmin() || (isSignedIn() && request.resource.data.userId == request.auth.uid);
+    }
+
+    match /leaderboards/{boardId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 8. Reviews: Students can read all reviews, post their own, but cannot tamper with other users' reviews.
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow delete: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // 9. Coupons: Public read for coupon code verification, only admin can create or modify discounts.
+    match /coupons/{couponId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 10. Full Course (11th & 12th NEET Full Course)
+    // Public read for syllabus and details. Only admin can modify course configuration.
+    match /full_course/{courseId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 11. Admin Data, AI Parsing Data & Raw Answer Keys
+    // Protected strictly for authorized administrators only.
+    match /admin_data/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /parsing_data/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /answer_keys/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /admins/{adminId} {
+      allow read, write: if isAdmin();
+    }
+
+    // 12. Store Products (Physical Books, PDFs)
     match /products/{productId} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // Banners: anyone can read, only admins can modify
+    // 13. Promotional Banners
     match /banners/{bannerId} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // Orders: anyone can place/create order, admins can read and manage all, users can read their own
-    match /orders/{orderId} {
+    // 14. Customer Support Inquiries
+    match /support/{messageId} {
       allow create: if true;
-      allow read: if isAdmin() || (request.auth != null && request.auth.token.email == resource.data.userEmail);
+      allow read: if isAdmin() || (isSignedIn() && isUserEmail(resource.data.email));
       allow update, delete: if isAdmin();
     }
 
-    // Support Inquiries: anyone can submit support messages, admins can read & reply to all
-    match /support/{messageId} {
-      allow create: if true;
-      allow read, update, delete: if isAdmin() || (request.auth != null && request.auth.token.email == resource.data.email);
-    }
-    
     match /support_messages/{messageId} {
       allow create: if true;
-      allow read, update, delete: if isAdmin() || (request.auth != null && request.auth.token.email == resource.data.email);
+      allow read: if isAdmin() || (isSignedIn() && isUserEmail(resource.data.email));
+      allow update, delete: if isAdmin();
     }
 
-    // Users: users can read/write their own profile, admins can read/write all
-    match /users/{userId} {
-      allow read, write: if isAdmin() || (request.auth != null && (request.auth.uid == userId || request.auth.token.email == resource.data.email));
-    }
-
-    // Configuration (R2 domain, Telegram, store settings): public read, admin write
+    // 15. Store Configuration (Cloudflare, Razorpay, Telegram)
     match /config/{configId} {
       allow read: if true;
       allow write: if isAdmin();

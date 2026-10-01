@@ -1,0 +1,146 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with authentication and contact information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "address": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase order for physical books, PDF downloads, or courses.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string", "format": "email" },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "paymentStatus": { "type": "string", "enum": ["pending", "completed", "failed", "refunded"] },
+        "orderStatus": { "type": "string", "enum": ["placed", "processing", "shipped", "delivered", "cancelled"] },
+        "shippingAddress": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userEmail", "totalAmount", "paymentStatus"]
+    },
+    "MockTest": {
+      "title": "MockTest",
+      "description": "CBT Mock test for NEET preparation with 3 primary categories: chapter_wise, full_subject, full_syllabus.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "testNumber": { "type": "string" },
+        "testTypeCategory": { "type": "string", "enum": ["chapter_wise", "full_subject", "full_syllabus"] },
+        "subject": { "type": "string", "enum": ["Physics", "Chemistry", "Biology"] },
+        "chapter": { "type": "string" },
+        "orderIndex": { "type": "number" },
+        "totalQuestions": { "type": "number" },
+        "durationMinutes": { "type": "number" },
+        "maxMarks": { "type": "number" },
+        "price": { "type": "number" },
+        "isFree": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["draft", "published"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "testTypeCategory", "status"]
+    },
+    "MockQuestion": {
+      "title": "MockQuestion",
+      "description": "Individual question in a NEET CBT mock test.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "testId": { "type": "string" },
+        "questionNumber": { "type": "number" },
+        "subject": { "type": "string", "enum": ["Physics", "Chemistry", "Biology"] },
+        "questionText": { "type": "string" },
+        "correctAnswer": { "type": "string", "enum": ["A", "B", "C", "D"] },
+        "figureUrl": { "type": "string" },
+        "pdfPageNumber": { "type": "number" }
+      },
+      "required": ["id", "testId", "questionNumber", "correctAnswer"]
+    },
+    "MockTestAttempt": {
+      "title": "MockTestAttempt",
+      "description": "Student attempt record of a NEET mock test.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "testId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string", "format": "email" },
+        "score": { "type": "number" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "submittedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "testId", "userId"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "User review and rating for books, courses, or mock tests.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "rating", "comment"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Discount coupon code managed by administrator.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "discountPercent": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "discountPercent", "isActive"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile documents"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Store customer orders"
+    },
+    "/mock_tests/{testId}": {
+      "schema": "MockTest",
+      "description": "NEET CBT mock tests (Chapter Wise, Full Subject, Full Syllabus)"
+    },
+    "/mock_questions/{questionId}": {
+      "schema": "MockQuestion",
+      "description": "Mock test questions with options and diagrams"
+    },
+    "/mock_attempts/{attemptId}": {
+      "schema": "MockTestAttempt",
+      "description": "Student mock test attempt records"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Verified student reviews and ratings"
+    },
+    "/coupons/{couponId}": {
+      "schema": "Coupon",
+      "description": "Store discount coupons"
+    }
+  }
+}

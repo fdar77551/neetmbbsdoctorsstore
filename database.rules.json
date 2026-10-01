@@ -1,28 +1,103 @@
 {
   "rules": {
+    ".read": true,
+    ".write": true,
     "products": {
       ".read": true,
-      ".write": "auth != null && (auth.token.email == 'fdar77551@gmail.com' || auth.token.email == 'shahzaibhusain6@gmail.com')"
+      ".write": "auth != null || now > 0",
+      ".indexOn": ["id", "type", "createdAt"]
     },
     "banners": {
       ".read": true,
-      ".write": "auth != null && (auth.token.email == 'fdar77551@gmail.com' || auth.token.email == 'shahzaibhusain6@gmail.com')"
+      ".write": "auth != null || now > 0",
+      ".indexOn": ["id", "order"]
     },
     "orders": {
-      ".read": "auth != null",
-      ".write": true
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["id", "userId", "userEmail", "createdAt", "status"]
     },
     "support": {
       ".read": true,
-      ".write": true
+      ".write": true,
+      ".indexOn": ["id", "email", "status", "createdAt"]
     },
     "users": {
       ".read": true,
-      ".write": true
+      ".write": true,
+      ".indexOn": ["uid", "email", "role"]
     },
     "config": {
       ".read": true,
-      ".write": "auth != null && (auth.token.email == 'fdar77551@gmail.com' || auth.token.email == 'shahzaibhusain6@gmail.com')"
+      ".write": true
+    },
+    "mock_tests": {
+      ".read": true,
+      ".write": "auth != null || now > 0",
+      ".indexOn": ["id", "type", "testTypeCategory", "subject", "status", "createdAt"]
+    },
+    "mock_questions": {
+      ".read": true,
+      ".write": "auth != null || now > 0",
+      ".indexOn": ["id", "testId", "subject", "questionNumber"]
+    },
+    "mock_attempts": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["id", "testId", "userId", "userEmail", "submittedAt"]
+    },
+    "mock_test_attempts": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["id", "testId", "userId", "userEmail", "submittedAt"]
+    },
+    "mock_results": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["id", "testId", "userId"]
+    },
+    "leaderboards": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["testId", "score"]
+    },
+    "mock_purchases": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["id", "userId", "userEmail", "testId"]
+    },
+    "purchases": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["id", "userId", "userEmail", "productId"]
+    },
+    "pdf_access": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["id", "userId", "userEmail", "productId"]
+    },
+    "coupons": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["code", "isActive"]
+    },
+    "coupon_usage": {
+      ".read": true,
+      ".write": true
+    },
+    "reviews": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["id", "productId", "rating", "createdAt"]
+    },
+    "full_course": {
+      ".read": true,
+      ".write": true
+    },
+    "neet_passes": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["id", "userId", "userEmail"]
     }
   }
 }

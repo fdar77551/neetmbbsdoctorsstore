@@ -19,6 +19,8 @@ import {
   Check, 
   HelpCircle, 
   ArrowLeft,
+  ArrowUp,
+  ArrowDown,
   Users,
   Trophy,
   Scissors,
@@ -46,7 +48,10 @@ import {
   Clock,
   Award,
   Table,
-  AlertTriangle
+  AlertTriangle,
+  FlaskConical,
+  Dna,
+  Atom
 } from 'lucide-react';
 import { 
   MockTest, 
@@ -55,7 +60,8 @@ import {
   MockQuestionOption,
   MockTestType,
   MockQuestionDifficulty,
-  MockMatchTable
+  MockMatchTable,
+  MockTestCategory
 } from '../types';
 import { 
   getStoredMockTests, 
@@ -65,7 +71,9 @@ import {
   parseQuestionsFromRawText,
   getStoredMockPurchases,
   getStoredMockAttempts,
-  SCIENTIFIC_SAMPLE_DIAGRAMS
+  SCIENTIFIC_SAMPLE_DIAGRAMS,
+  getTestCategory,
+  getAvailableChaptersForSubject
 } from '../lib/mockTestData';
 import { 
   loadPdfDocument, 
@@ -170,6 +178,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
   const [selectedFolder, setSelectedFolder] = useState<string>('All Tests');
   const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [adminCategoryFilter, setAdminCategoryFilter] = useState<'all' | 'chapter_wise' | 'full_subject' | 'full_syllabus'>('all');
   const [isManageFoldersOpen, setIsManageFoldersOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [customSubjectInput, setCustomSubjectInput] = useState('');
@@ -184,13 +193,16 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     fullDescription: '',
     description: '',
     folderName: 'Full Syllabus Test Series',
-    type: 'full_syllabus',
+    type: 'chapter_test',
+    testTypeCategory: 'chapter_wise',
+    subject: 'Physics',
+    chapter: '',
     difficulty: 'Moderate',
-    subjects: ['Physics', 'Chemistry', 'Biology'],
-    totalQuestions: 180,
-    durationMinutes: 180,
-    totalMarks: 720,
-    maxMarks: 720,
+    subjects: ['Physics'],
+    totalQuestions: 45,
+    durationMinutes: 60,
+    totalMarks: 180,
+    maxMarks: 180,
     correctMarks: 4,
     negativeMarks: 1,
     isFree: true,
@@ -200,7 +212,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     originalPrice: 299,
     razorpayPlanId: '',
     status: 'published',
-    syllabus: 'Full Class 11 & 12 NCERT NEET Syllabus covering Physics, Chemistry, and Biology',
+    syllabus: '',
     instructions: [
       '+4 marks for every correct response',
       '-1 mark for every incorrect response',
@@ -222,6 +234,12 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     setAdminToast(msg);
     setTimeout(() => setAdminToast(null), 3000);
   };
+
+  // Dynamically derive chapters created by admin for the currently active subject in the form
+  const availableChaptersForForm = useMemo(() => {
+    const subj = (testFormData.subject as MockSubject) || 'Physics';
+    return getAvailableChaptersForSubject(tests, subj);
+  }, [tests, testFormData.subject]);
 
   // NTA NEET 720-Mark Template Populator
   const handleInsertNtaNeetTemplate = () => {
@@ -492,6 +510,23 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
       return;
     }
 
+    const effectiveCategory: MockTestCategory = testFormData.testTypeCategory ||
+      (testFormData.type === 'chapter_test' || Boolean(testFormData.chapter?.trim()) ? 'chapter_wise' :
+       testFormData.type === 'subject_test' ? 'full_subject' : 'full_syllabus');
+
+    if (effectiveCategory === 'chapter_wise' && !testFormData.chapter?.trim()) {
+      triggerToast('Please enter or select a Chapter name for this Chapter Wise test.');
+      return;
+    }
+
+    const effectiveType: MockTestType = effectiveCategory === 'chapter_wise' ? 'chapter_test' :
+      effectiveCategory === 'full_subject' ? 'subject_test' : 'full_syllabus';
+
+    const effectiveSubject = effectiveCategory === 'full_syllabus' ? undefined : (testFormData.subject || 'Physics');
+    const effectiveSubjects = effectiveCategory === 'full_syllabus' 
+      ? ['Physics', 'Chemistry', 'Biology'] 
+      : [effectiveSubject || 'Physics'];
+
     const effectiveStatus = statusOverride || testFormData.status || 'published';
     const isFree = testFormData.isFree ?? (Number(testFormData.price) === 0);
     const price = isFree ? 0 : (Number(testFormData.price) || 0);
@@ -505,13 +540,16 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
       fullDescription: testFormData.fullDescription?.trim() || testFormData.description?.trim() || '',
       description: testFormData.shortDescription?.trim() || testFormData.description?.trim() || '',
       folderName: testFormData.folderName || 'Full Syllabus Test Series',
-      type: (testFormData.type as MockTestType) || 'full_syllabus',
+      testTypeCategory: effectiveCategory,
+      type: effectiveType,
+      subject: effectiveSubject,
+      chapter: effectiveCategory === 'chapter_wise' ? (testFormData.chapter?.trim() || '') : '',
       difficulty: testFormData.difficulty || 'Moderate',
-      subjects: testFormData.subjects || ['Physics', 'Chemistry', 'Biology'],
-      totalQuestions: Number(testFormData.totalQuestions) || 180,
-      durationMinutes: Number(testFormData.durationMinutes) || 180,
-      totalMarks: Number(testFormData.totalMarks) || 720,
-      maxMarks: Number(testFormData.maxMarks) || 720,
+      subjects: effectiveSubjects,
+      totalQuestions: Number(testFormData.totalQuestions) || (effectiveCategory === 'full_syllabus' ? 180 : 45),
+      durationMinutes: Number(testFormData.durationMinutes) || (effectiveCategory === 'full_syllabus' ? 180 : 60),
+      totalMarks: Number(testFormData.totalMarks) || (effectiveCategory === 'full_syllabus' ? 720 : 180),
+      maxMarks: Number(testFormData.maxMarks) || (effectiveCategory === 'full_syllabus' ? 720 : 180),
       correctMarks: Number(testFormData.correctMarks) ?? 4,
       negativeMarks: Number(testFormData.negativeMarks) ?? 1,
       isFree,
@@ -521,7 +559,11 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
       originalPrice: Number(testFormData.originalPrice) || (price > 0 ? price + 200 : 299),
       razorpayPlanId: testFormData.razorpayPlanId?.trim() || '',
       status: effectiveStatus,
-      syllabus: testFormData.syllabus || '',
+      syllabus: testFormData.syllabus || (
+        effectiveCategory === 'chapter_wise' ? `${effectiveSubject}: ${testFormData.chapter?.trim()}` :
+        effectiveCategory === 'full_subject' ? `Complete ${effectiveSubject} Syllabus` :
+        'Complete NEET PCB Syllabus (Physics, Chemistry, Biology)'
+      ),
       instructions: testFormData.instructions || [
         '+4 marks for every correct response',
         '-1 mark for every incorrect response',
@@ -611,6 +653,29 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     const updated = tests.map(t => t.id === test.id ? { ...t, status: nextStatus } as MockTest : t);
     handleSaveTestsList(updated);
     if (selectedTest?.id === test.id) setSelectedTest({ ...selectedTest, status: nextStatus });
+  };
+
+  // Reorder Tests (Move Up / Move Down)
+  const handleMoveTestUp = (testId: string) => {
+    const idx = tests.findIndex(t => t.id === testId);
+    if (idx <= 0) return;
+    const updated = [...tests];
+    const temp = updated[idx - 1];
+    updated[idx - 1] = updated[idx];
+    updated[idx] = temp;
+    handleSaveTestsList(updated);
+    triggerToast('✓ Test moved up');
+  };
+
+  const handleMoveTestDown = (testId: string) => {
+    const idx = tests.findIndex(t => t.id === testId);
+    if (idx === -1 || idx >= tests.length - 1) return;
+    const updated = [...tests];
+    const temp = updated[idx + 1];
+    updated[idx + 1] = updated[idx];
+    updated[idx] = temp;
+    handleSaveTestsList(updated);
+    triggerToast('✓ Test moved down');
   };
 
   // Save Questions
@@ -1797,6 +1862,12 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     // 3. Folder Filter
     if (selectedFolder !== 'All Tests' && test.folderName !== selectedFolder) return false;
 
+    // 4. Test Category Filter (Chapter Wise, Full Subject, Full Syllabus)
+    if (adminCategoryFilter !== 'all') {
+      const cat = getTestCategory(test);
+      if (cat !== adminCategoryFilter) return false;
+    }
+
     return true;
   });
 
@@ -1997,6 +2068,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                   type="button"
                   onClick={() => {
                     setEditingTestId(null);
+                    const initialCat = adminCategoryFilter !== 'all' ? adminCategoryFilter : 'chapter_wise';
                     setTestFormData({
                       testNumber: `Test 0${tests.length + 1}`,
                       code: `#0${tests.length + 1}`,
@@ -2004,14 +2076,17 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                       shortDescription: '',
                       fullDescription: '',
                       description: '',
-                      folderName: selectedFolder !== 'All Tests' ? selectedFolder : 'Full Syllabus Test Series',
-                      type: 'full_syllabus',
+                      folderName: selectedFolder !== 'All Tests' ? selectedFolder : (initialCat === 'chapter_wise' ? 'Physics Booster' : 'Full Syllabus Test Series'),
+                      testTypeCategory: initialCat,
+                      type: initialCat === 'chapter_wise' ? 'chapter_test' : initialCat === 'full_subject' ? 'subject_test' : 'full_syllabus',
+                      subject: initialCat === 'full_syllabus' ? undefined : 'Physics',
+                      chapter: '',
                       difficulty: 'Moderate',
-                      subjects: ['Physics', 'Chemistry', 'Biology'],
-                      totalQuestions: 180,
-                      durationMinutes: 180,
-                      totalMarks: 720,
-                      maxMarks: 720,
+                      subjects: initialCat === 'full_syllabus' ? ['Physics', 'Chemistry', 'Biology'] : ['Physics'],
+                      totalQuestions: initialCat === 'full_syllabus' ? 180 : 45,
+                      durationMinutes: initialCat === 'full_syllabus' ? 180 : 60,
+                      totalMarks: initialCat === 'full_syllabus' ? 720 : 180,
+                      maxMarks: initialCat === 'full_syllabus' ? 720 : 180,
                       correctMarks: 4,
                       negativeMarks: 1,
                       isFree: true,
@@ -2021,7 +2096,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                       originalPrice: 299,
                       razorpayPlanId: '',
                       status: 'published',
-                      syllabus: 'Full Class 11 & 12 NCERT NEET Syllabus covering Physics, Chemistry, and Biology',
+                      syllabus: initialCat === 'full_syllabus' ? 'Full Class 11 & 12 NCERT NEET Syllabus covering Physics, Chemistry, and Biology' : '',
                       instructions: [
                         '+4 marks for every correct response',
                         '-1 mark for every incorrect response',
@@ -2105,6 +2180,65 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                     Drafts ({tests.filter(t => t.status === 'draft').length})
                   </button>
                 </div>
+              </div>
+
+              {/* 3 Main Test Types Filter Tabs (Chapter Wise, Full Subject, Full Syllabus) */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pt-2 border-t border-slate-100 scrollbar-none">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider shrink-0 flex items-center gap-1">
+                  <Layers className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Types:</span>
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setAdminCategoryFilter('all')}
+                  className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer shrink-0 ${
+                    adminCategoryFilter === 'all'
+                      ? 'bg-slate-900 text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  All Types ({tests.length})
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAdminCategoryFilter('chapter_wise')}
+                  className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer shrink-0 border ${
+                    adminCategoryFilter === 'chapter_wise'
+                      ? 'bg-orange-600 text-white border-orange-600 shadow-2xs'
+                      : 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100'
+                  }`}
+                >
+                  <BookOpen className="w-3 h-3" />
+                  <span>Chapter Wise ({tests.filter(t => getTestCategory(t) === 'chapter_wise').length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAdminCategoryFilter('full_subject')}
+                  className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer shrink-0 border ${
+                    adminCategoryFilter === 'full_subject'
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                      : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                  }`}
+                >
+                  <FlaskConical className="w-3 h-3" />
+                  <span>Full Subject ({tests.filter(t => getTestCategory(t) === 'full_subject').length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAdminCategoryFilter('full_syllabus')}
+                  className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer shrink-0 border ${
+                    adminCategoryFilter === 'full_syllabus'
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                      : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                  }`}
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>Full Syllabus ({tests.filter(t => getTestCategory(t) === 'full_syllabus').length})</span>
+                </button>
               </div>
 
               {/* Folder Categorization Row: Horizontal scrollable pills */}
@@ -2204,9 +2338,243 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                   </div>
                 </div>
 
+                {/* 1. Primary Test Type Selection (Chapter Wise, Full Subject, Full Syllabus) */}
+                <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-slate-50 via-blue-50/20 to-indigo-50/30 border border-blue-200/90 space-y-4">
+                  <div>
+                    <h4 className="text-sm font-black text-slate-900 font-['Outfit',sans-serif] flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-blue-600" />
+                      <span>1. Test Type &amp; Classification *</span>
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Select which test category this test belongs to in the NEET Mock Tests portal.
+                    </p>
+                  </div>
+
+                  {/* 3 Main Categories Selection Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {/* Chapter Wise */}
+                    <div
+                      onClick={() => {
+                        setTestFormData(prev => ({
+                          ...prev,
+                          type: 'chapter_test',
+                          testTypeCategory: 'chapter_wise',
+                          subject: prev.subject || 'Physics',
+                          subjects: [prev.subject || 'Physics'],
+                          totalQuestions: prev.totalQuestions === 180 ? 45 : (prev.totalQuestions || 45),
+                          totalMarks: prev.totalMarks === 720 ? 180 : (prev.totalMarks || 180),
+                          maxMarks: prev.maxMarks === 720 ? 180 : (prev.maxMarks || 180),
+                          durationMinutes: prev.durationMinutes === 180 ? 60 : (prev.durationMinutes || 60),
+                          folderName: 'Physics Booster'
+                        }));
+                      }}
+                      className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between select-none ${
+                        (testFormData.testTypeCategory === 'chapter_wise' || testFormData.type === 'chapter_test' || Boolean(testFormData.chapter?.trim()))
+                          ? 'bg-amber-50/80 border-orange-500 text-orange-950 shadow-sm ring-2 ring-orange-200'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-orange-300'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black uppercase text-orange-700">1️⃣ Chapter Wise</span>
+                          <BookOpen className="w-4 h-4 text-orange-600" />
+                        </div>
+                        <h5 className="text-xs font-bold text-slate-900">Chapter by Chapter</h5>
+                        <p className="text-[11px] text-slate-500 leading-snug">
+                          Single chapter tests for Physics, Chemistry, or Biology.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Full Subject */}
+                    <div
+                      onClick={() => {
+                        setTestFormData(prev => ({
+                          ...prev,
+                          type: 'subject_test',
+                          testTypeCategory: 'full_subject',
+                          subject: prev.subject || 'Physics',
+                          subjects: [prev.subject || 'Physics'],
+                          chapter: '',
+                          totalQuestions: prev.totalQuestions === 180 ? 50 : (prev.totalQuestions || 50),
+                          totalMarks: prev.totalMarks === 720 ? 180 : (prev.totalMarks || 180),
+                          maxMarks: prev.maxMarks === 720 ? 180 : (prev.maxMarks || 180),
+                          durationMinutes: prev.durationMinutes === 180 ? 60 : (prev.durationMinutes || 60),
+                          folderName: 'Physics Booster'
+                        }));
+                      }}
+                      className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between select-none ${
+                        (testFormData.testTypeCategory === 'full_subject' || testFormData.type === 'subject_test') && !testFormData.chapter?.trim()
+                          ? 'bg-emerald-50/80 border-emerald-500 text-emerald-950 shadow-sm ring-2 ring-emerald-200'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-emerald-300'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black uppercase text-emerald-700">2️⃣ Full Subject</span>
+                          <FlaskConical className="w-4 h-4 text-emerald-600" />
+                        </div>
+                        <h5 className="text-xs font-bold text-slate-900">Complete Subject Test</h5>
+                        <p className="text-[11px] text-slate-500 leading-snug">
+                          Covers 100% syllabus of Physics, Chemistry, or Biology.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Full Syllabus */}
+                    <div
+                      onClick={() => {
+                        setTestFormData(prev => ({
+                          ...prev,
+                          type: 'full_syllabus',
+                          testTypeCategory: 'full_syllabus',
+                          subject: undefined,
+                          chapter: '',
+                          subjects: ['Physics', 'Chemistry', 'Biology'],
+                          totalQuestions: 180,
+                          totalMarks: 720,
+                          maxMarks: 720,
+                          durationMinutes: 180,
+                          folderName: 'Full Syllabus Test Series'
+                        }));
+                      }}
+                      className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between select-none ${
+                        testFormData.testTypeCategory === 'full_syllabus' || testFormData.type === 'full_syllabus'
+                          ? 'bg-blue-50/80 border-blue-600 text-blue-950 shadow-sm ring-2 ring-blue-200'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-blue-300'
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black uppercase text-blue-700">3️⃣ Full Syllabus</span>
+                          <Sparkles className="w-4 h-4 text-blue-600" />
+                        </div>
+                        <h5 className="text-xs font-bold text-slate-900">NEET Grand Mock (PCB)</h5>
+                        <p className="text-[11px] text-slate-500 leading-snug">
+                          Physics + Chemistry + Biology complete NEET syllabus simulation (720M).
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Contextual Options for Chapter Wise & Full Subject */}
+                  {((testFormData.testTypeCategory === 'chapter_wise' || testFormData.type === 'chapter_test' || Boolean(testFormData.chapter?.trim())) ||
+                    (testFormData.testTypeCategory === 'full_subject' || testFormData.type === 'subject_test')) && (
+                    <div className="pt-3 border-t border-slate-200/80 space-y-3 animate-in fade-in duration-150">
+                      {/* Subject Selection */}
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-800 block">
+                          Select Subject *
+                        </label>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {(['Physics', 'Chemistry', 'Biology'] as MockSubject[]).map((subj) => {
+                            const isSelected = (testFormData.subject === subj) || 
+                              (!testFormData.subject && subj === 'Physics');
+                            return (
+                              <button
+                                key={subj}
+                                type="button"
+                                onClick={() => {
+                                  setTestFormData(prev => ({
+                                    ...prev,
+                                    subject: subj,
+                                    subjects: [subj]
+                                  }));
+                                }}
+                                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer border ${
+                                  isSelected
+                                    ? subj === 'Physics'
+                                      ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                                      : subj === 'Chemistry'
+                                      ? 'bg-amber-600 text-white border-amber-600 shadow-2xs'
+                                      : 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                                }`}
+                              >
+                                {subj === 'Physics' && <Atom className="w-3.5 h-3.5" />}
+                                {subj === 'Chemistry' && <FlaskConical className="w-3.5 h-3.5" />}
+                                {subj === 'Biology' && <Dna className="w-3.5 h-3.5" />}
+                                <span>{subj}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Chapter Selection / Creation if Chapter Wise */}
+                      {(testFormData.testTypeCategory === 'chapter_wise' || testFormData.type === 'chapter_test' || Boolean(testFormData.chapter?.trim())) && (
+                        <div className="space-y-2 pt-2 border-t border-slate-100">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-bold text-slate-800">
+                              Chapter Name * (Type new or choose existing)
+                            </label>
+                            <span className="text-[10px] text-orange-600 font-bold">
+                              Only chapters you create will appear to students
+                            </span>
+                          </div>
+
+                          {/* Existing chapters pill suggestions if any exist */}
+                          {availableChaptersForForm.length > 0 && (
+                            <div className="space-y-1">
+                              <span className="text-[10.5px] text-slate-400 font-semibold block">
+                                Existing {testFormData.subject || 'Physics'} Chapters:
+                              </span>
+                              <div className="flex flex-wrap items-center gap-1.5 max-h-24 overflow-y-auto p-1.5 bg-slate-50 rounded-xl border border-slate-200">
+                                {availableChaptersForForm.map(ch => (
+                                  <button
+                                    key={ch}
+                                    type="button"
+                                    onClick={() => setTestFormData(prev => ({ ...prev, chapter: ch }))}
+                                    className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold transition cursor-pointer border ${
+                                      testFormData.chapter === ch
+                                        ? 'bg-orange-600 text-white border-orange-600 shadow-2xs'
+                                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                                    }`}
+                                  >
+                                    {ch}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="relative">
+                            <input
+                              type="text"
+                              value={testFormData.chapter || ''}
+                              onChange={e => setTestFormData({ ...testFormData, chapter: e.target.value })}
+                              placeholder={`e.g. ${
+                                (testFormData.subject || 'Physics') === 'Physics'
+                                  ? 'Units & Measurements, Kinematics, Laws of Motion...'
+                                  : (testFormData.subject || 'Physics') === 'Chemistry'
+                                  ? 'Some Basic Concepts, Atomic Structure, Chemical Bonding...'
+                                  : 'The Living World, Biological Classification, Plant Kingdom...'
+                              }`}
+                              className="w-full text-xs sm:text-sm font-semibold text-slate-900 bg-white border border-orange-300 rounded-xl p-2.5 placeholder:text-slate-400 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 focus:outline-none transition shadow-2xs"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Full Syllabus Note */}
+                  {(testFormData.testTypeCategory === 'full_syllabus' || testFormData.type === 'full_syllabus') && (
+                    <div className="p-3 bg-blue-50/80 rounded-xl border border-blue-200 flex items-center justify-between text-xs text-blue-900">
+                      <span className="flex items-center gap-2 font-bold">
+                        <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+                        <span>Covers Physics + Chemistry + Biology (Complete NEET 720-Mark Exam)</span>
+                      </span>
+                      <span className="text-[10px] font-black uppercase bg-blue-600 text-white px-2 py-0.5 rounded-md">
+                        PCB
+                      </span>
+                    </div>
+                  )}
+                </div>
+
                 {/* 2. Metadata Fields */}
                 <div className="space-y-4">
-                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-400">1. Metadata &amp; Identification</h4>
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-400">2. Metadata &amp; Identification</h4>
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-3.5">
                     <div className="sm:col-span-8">
                       <label className="text-xs font-bold text-slate-700 block mb-1">Test Name / Title *</label>
@@ -2628,6 +2996,36 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                           </div>
                         </div>
 
+                        {/* Type Category Badge */}
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          {(() => {
+                            const cat = getTestCategory(test);
+                            if (cat === 'chapter_wise') {
+                              return (
+                                <span className="inline-flex items-center gap-1 text-[10.5px] font-bold text-orange-700 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-md">
+                                  <BookOpen className="w-3 h-3 text-orange-600" />
+                                  <span>1️⃣ Chapter Wise • {test.subject || 'Physics'}</span>
+                                  {test.chapter && <span className="font-semibold text-slate-700">({test.chapter})</span>}
+                                </span>
+                              );
+                            }
+                            if (cat === 'full_subject') {
+                              return (
+                                <span className="inline-flex items-center gap-1 text-[10.5px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                  <FlaskConical className="w-3 h-3 text-emerald-600" />
+                                  <span>2️⃣ Full Subject • {test.subject || 'Subject'} Full Test</span>
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="inline-flex items-center gap-1 text-[10.5px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+                                <Sparkles className="w-3 h-3 text-blue-600" />
+                                <span>3️⃣ Full Syllabus • Complete PCB Exam (720M)</span>
+                              </span>
+                            );
+                          })()}
+                        </div>
+
                         {/* Title */}
                         <h3 className="text-base font-black text-slate-900 font-['Outfit',sans-serif] line-clamp-1 leading-snug">
                           {test.title}
@@ -2697,6 +3095,27 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                             <span className="hidden sm:inline">Leaderboard</span>
                           </button>
 
+                          {/* Reorder Buttons (Move Up / Down) */}
+                          <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-slate-50">
+                            <button
+                              type="button"
+                              onClick={() => handleMoveTestUp(test.id)}
+                              className="p-1.5 hover:bg-slate-200 text-slate-600 transition cursor-pointer"
+                              title="Move Test Up (Reorder)"
+                            >
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            </button>
+                            <div className="w-[1px] h-3.5 bg-slate-200" />
+                            <button
+                              type="button"
+                              onClick={() => handleMoveTestDown(test.id)}
+                              className="p-1.5 hover:bg-slate-200 text-slate-600 transition cursor-pointer"
+                              title="Move Test Down (Reorder)"
+                            >
+                              <ArrowDown className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
                           {/* Quick Toggle Status */}
                           <button
                             type="button"
@@ -2722,7 +3141,13 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                             type="button"
                             onClick={() => {
                               setSelectedTest(test);
-                              setTestFormData({ ...test });
+                              const cat = getTestCategory(test);
+                              setTestFormData({
+                                ...test,
+                                testTypeCategory: cat,
+                                subject: test.subject || (test.subjects && (test.subjects[0] as MockSubject)) || 'Physics',
+                                chapter: test.chapter || ''
+                              });
                               setEditingTestId(test.id);
                               setIsCreatingTest(true);
                             }}

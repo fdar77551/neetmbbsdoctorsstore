@@ -52,9 +52,48 @@ export function saveStoredMockQuestions(testId: string, questions: MockQuestion[
   try {
     localStorage.setItem(`${MOCK_QUESTIONS_STORAGE_KEY_PREFIX}${testId}`, JSON.stringify(questions));
     window.dispatchEvent(new CustomEvent('neetmbbs_mock_questions_updated', { detail: { testId } }));
+
+    // Sync to backend DB asynchronously
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/db/mock-questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testId, questions })
+      }).catch(err => console.warn('Backend questions sync note:', err));
+    }
   } catch (e) {
     console.error('Error saving mock questions:', e);
   }
+}
+
+/**
+ * Resolves the 3-category classification:
+ * 1. 'chapter_wise'
+ * 2. 'full_subject'
+ * 3. 'full_syllabus'
+ */
+export function getTestCategory(test: MockTest): 'chapter_wise' | 'full_subject' | 'full_syllabus' {
+  if (test.testTypeCategory) return test.testTypeCategory;
+  if (test.type === 'chapter_test' || Boolean(test.chapter && test.chapter.trim())) return 'chapter_wise';
+  if (test.type === 'subject_test' || (test.subjects && test.subjects.length === 1 && test.type !== 'full_syllabus')) return 'full_subject';
+  return 'full_syllabus';
+}
+
+/**
+ * Dynamically extract all chapters for a given subject across uploaded tests.
+ * Never hardcoded — strictly derived from admin-uploaded tests.
+ */
+export function getAvailableChaptersForSubject(tests: MockTest[], subject: MockSubject): string[] {
+  const chapterSet = new Set<string>();
+  tests.forEach(t => {
+    if (getTestCategory(t) === 'chapter_wise') {
+      const matchSubject = t.subject === subject || (t.subjects && t.subjects.includes(subject));
+      if (matchSubject && t.chapter && t.chapter.trim()) {
+        chapterSet.add(t.chapter.trim());
+      }
+    }
+  });
+  return Array.from(chapterSet).sort((a, b) => a.localeCompare(b));
 }
 
 export function getStoredMockTests(): MockTest[] {
@@ -86,6 +125,15 @@ export function saveStoredMockTests(tests: MockTest[]) {
   try {
     localStorage.setItem(MOCK_TESTS_STORAGE_KEY, JSON.stringify(tests));
     window.dispatchEvent(new Event('neetmbbs_mock_tests_updated'));
+
+    // Sync to backend DB asynchronously
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/db/mock-tests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tests)
+      }).catch(err => console.warn('Backend tests sync note:', err));
+    }
   } catch (e) {
     console.error('Error saving mock tests:', e);
   }
