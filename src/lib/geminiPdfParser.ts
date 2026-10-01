@@ -64,7 +64,8 @@ export interface GeminiParseProgress {
 
 /**
  * Cleans up corrupted font encoding, mojibake, and mathematical artifacts commonly
- * found in scanned and vector-extracted NEET PDF papers.
+ * found in scanned and vector-extracted NEET PDF papers. Converts programmer ASCII
+ * formulas into clean scientific Unicode (μ₀, π, ε₀, ω, etc.).
  */
 export function sanitizeExamText(text: string): string {
   if (!text) return '';
@@ -102,6 +103,24 @@ export function sanitizeExamText(text: string): string {
     .replace(/ï¬\x81|ﬁ/g, 'fi')
     .replace(/ï¬\x82|ﬂ/g, 'fl')
     .replace(/ï¬\x80|ﬀ/g, 'ff')
+    // Scientific symbols & programmer ASCII replacement (e.g. mu_0 -> μ₀, pi -> π)
+    .replace(/\\?mu[_\s]?0\b/gi, 'μ₀')
+    .replace(/\\?epsilon[_\s]?0\b/gi, 'ε₀')
+    .replace(/\\?pi\b/gi, 'π')
+    .replace(/\\?omega\b/gi, 'ω')
+    .replace(/\\?theta\b/gi, 'θ')
+    .replace(/\\?lambda\b/gi, 'λ')
+    .replace(/\\?alpha\b/gi, 'α')
+    .replace(/\\?beta\b/gi, 'β')
+    .replace(/\\?gamma\b/gi, 'γ')
+    .replace(/\\?Delta\b/g, 'Δ')
+    .replace(/\\?sqrt\b/gi, '√')
+    .replace(/\\?rightarrow\b/gi, '→')
+    .replace(/\s*\*\s*/g, ' · ')
+    // Strip orphan markdown table delimiter lines (e.g. |||, |:---|:---|)
+    .replace(/^\|?[\s|:\-]+(?:\|[\s|:\-]+)*\|?$/gm, '')
+    .replace(/\|{2,}/g, '')
+    .replace(/\|\s*:\s*-+[\s\-:|]*/g, '')
     // Remove isolated unprintable control characters
     .replace(/[\uFFFD\u0000-\u0008\u000B-\u000C\u000E-\u001F]/g, '')
     // Strip redundant leading numbering e.g. "44. " or "Q.44 " or "(44) "
@@ -112,15 +131,46 @@ export function sanitizeExamText(text: string): string {
 }
 
 /**
- * Strips duplicated table column content from questionText when a matchTable is present,
- * preventing questions like Q44 from repeating column lists both above and inside the table.
+ * Repairs fragmented Devanagari Hindi text commonly caused by PDF font encoding issues,
+ * such as separated matras (क ो -> को, म ें -> में) and phantom spaces between syllables.
+ */
+export function repairDevanagariText(text: string): string {
+  if (!text) return '';
+  let repaired = text;
+
+  // 1. Join isolated vowel signs (matras: ा, ि, ी, ु, ू, ृ, े, ै, ो, ौ, ं, ः, ँ, ्) with preceding base consonant
+  repaired = repaired
+    .replace(/([क-हक़-य़])\s+([ािीुूृेैोौंःँ्])/gu, '$1$2')
+    // Second pass for double diacritics e.g. ो + ं
+    .replace(/([ािीुूृेैोौ्])\s+([ंःँ])/gu, '$1$2')
+    // Remove phantom space in common conjuncts e.g. प ् त -> प्त
+    .replace(/([क-हक़-य़])\s*्\s+([क-हक़-य़])/gu, '$1्$2');
+
+  // 2. Remove isolated single latin letters appearing in Hindi text (e.g. "संयोजी ऊतक d. मोटी")
+  repaired = repaired.replace(/\s+[a-zA-Z]\.\s+/g, ' ');
+
+  // 3. Normalize whitespace
+  return repaired.replace(/[ \t]+/g, ' ').trim();
+}
+
+/**
+ * Strips duplicated table column content and markdown table syntax from questionText when a matchTable is present,
+ * preventing questions like Q44 and Q92 from repeating column lists both above and inside the table.
  * Supports both English (List-I / Column-I) and Hindi (सूची-I / कॉलम-I).
  */
 export function cleanQuestionTextForMatchTable(questionText: string, matchTable?: any): string {
   if (!questionText) return '';
-  const sanitized = sanitizeExamText(questionText);
+  let sanitized = sanitizeExamText(questionText);
+
+  // Strip all markdown table pipes, borders, and empty table syntax
+  sanitized = sanitized
+    .replace(/^\|?[\s|:\-]+(?:\|[\s|:\-]+)*\|?$/gm, '')
+    .replace(/\|{2,}/g, '')
+    .replace(/\|\s*:\s*-+[\s\-:|]*/g, '')
+    .replace(/^\s*\|\s*$/gm, '');
+
   if (!matchTable || !matchTable.rows || matchTable.rows.length === 0) {
-    return sanitized;
+    return sanitized.replace(/\n{3,}/g, '\n\n').trim();
   }
 
   let cleaned = sanitized;
@@ -180,8 +230,8 @@ export function cropDiagramFromCanvas(
   const h = ((ymax - ymin) / 1000) * canvas.height;
   const w = ((xmax - xmin) / 1000) * canvas.width;
 
-  // Add 16px optical margin around diagram to capture labels/subscripts
-  const pad = 16;
+  // Add 24px optical margin around diagram to capture labels/subscripts, wire extensions, and benzene ring bonds
+  const pad = 24;
   const cropX = Math.max(0, x - pad);
   const cropY = Math.max(0, y - pad);
   const cropW = Math.min(canvas.width - cropX, w + pad * 2);
@@ -193,6 +243,228 @@ export function cropDiagramFromCanvas(
     width: cropW,
     height: cropH
   }, 'image/png');
+}
+
+/**
+ * Separates mixed bilingual English and Hindi question text, resolving cases
+ * where Gemini OCR extracted the Hindi column into the English text or merged both columns.
+ */
+export function separateBilingualAndCleanQuestion(
+  rawEnText: string,
+  rawHiText?: string
+): { enText: string; hiText?: string } {
+  if (!rawEnText && !rawHiText) return { enText: '' };
+  const devanagariRegex = /[\u0900-\u097F]/g;
+  const enDevMatches = (rawEnText || '').match(devanagariRegex) || [];
+  const enTotal = (rawEnText || '').replace(/\s+/g, '').length;
+  const enDevRatio = enTotal > 0 ? enDevMatches.length / enTotal : 0;
+
+  // Case 1: If "english" text is predominantly Devanagari Hindi characters (>35%)
+  if (enDevRatio > 0.35) {
+    const hiDevMatches = (rawHiText || '').match(devanagariRegex) || [];
+    // If rawHiText has less Hindi than rawEnText, swap them!
+    if (!rawHiText || hiDevMatches.length < enDevMatches.length) {
+      return {
+        enText: sanitizeExamText(rawHiText || ''),
+        hiText: repairDevanagariText(sanitizeExamText(rawEnText))
+      };
+    }
+  }
+
+  // Case 2: If English text contains both English and Hindi lines merged horizontally
+  if (enDevRatio > 0.08 && enTotal > 30) {
+    const lines = (rawEnText || '').split(/\r?\n/);
+    const enLines: string[] = [];
+    const hiLines: string[] = [];
+
+    for (const line of lines) {
+      const lineDevCount = (line.match(devanagariRegex) || []).length;
+      const lineLen = line.replace(/\s+/g, '').length;
+      if (lineLen > 0 && lineDevCount / lineLen > 0.30) {
+        hiLines.push(line);
+      } else {
+        enLines.push(line);
+      }
+    }
+
+    if (enLines.length > 0 && hiLines.length > 0) {
+      const extractedEn = enLines.join(' ').replace(/\s+/g, ' ').trim();
+      const extractedHi = hiLines.join(' ').replace(/\s+/g, ' ').trim();
+      return {
+        enText: sanitizeExamText(extractedEn),
+        hiText: repairDevanagariText(sanitizeExamText(rawHiText ? `${rawHiText} ${extractedHi}` : extractedHi))
+      };
+    }
+  }
+
+  return {
+    enText: sanitizeExamText(rawEnText || ''),
+    hiText: rawHiText ? repairDevanagariText(sanitizeExamText(rawHiText)) : undefined
+  };
+}
+
+/**
+ * Ensures option texts are properly bilingual-separated, removing Hindi from English options
+ * and ensuring all 4 options (A, B, C, D) are cleanly populated with real text and symbols.
+ */
+export function separateBilingualOptions(
+  rawEnOptions: any[] = [],
+  rawHiOptions: any[] = []
+): { cleanedEnOptions: any[]; cleanedHiOptions: any[] } {
+  const devanagariRegex = /[\u0900-\u097F]/g;
+  const labels: Array<'A' | 'B' | 'C' | 'D'> = ['A', 'B', 'C', 'D'];
+
+  const cleanedEnOptions = labels.map((lbl, idx) => {
+    const optObj = rawEnOptions.find(o => (o.label || '').toUpperCase() === lbl) || rawEnOptions[idx];
+    let val = sanitizeExamText(optObj?.text || optObj?.value || '');
+
+    // Check if this option has Devanagari characters
+    const devMatches = (val.match(devanagariRegex) || []).length;
+    const totalChars = val.replace(/\s+/g, '').length;
+    if (totalChars > 0 && devMatches / totalChars > 0.4) {
+      // Look if the corresponding Hindi option has English text to swap with
+      const hiOpt = rawHiOptions.find(o => (o.label || '').toUpperCase() === lbl) || rawHiOptions[idx];
+      const hiVal = sanitizeExamText(hiOpt?.text || hiOpt?.value || '');
+      const hiDevMatches = (hiVal.match(devanagariRegex) || []).length;
+      if (hiDevMatches === 0 && hiVal.length > 0) {
+        val = hiVal;
+      }
+    }
+
+    return {
+      label: lbl,
+      type: 'text' as const,
+      value: val
+    };
+  });
+
+  const cleanedHiOptions = labels.map((lbl, idx) => {
+    const optObj = rawHiOptions.find(o => (o.label || '').toUpperCase() === lbl) || rawHiOptions[idx];
+    let val = optObj ? repairDevanagariText(sanitizeExamText(optObj?.text || optObj?.value || '')) : '';
+
+    // If Hindi option is empty, but English option was actually in Hindi, use it
+    if (!val) {
+      const enRaw = rawEnOptions.find(o => (o.label || '').toUpperCase() === lbl) || rawEnOptions[idx];
+      const rawVal = enRaw?.text || enRaw?.value || '';
+      if ((rawVal.match(devanagariRegex) || []).length > 2) {
+        val = repairDevanagariText(sanitizeExamText(rawVal));
+      }
+    }
+
+    return {
+      label: lbl,
+      type: 'text' as const,
+      value: val
+    };
+  });
+
+  return { cleanedEnOptions, cleanedHiOptions };
+}
+
+/**
+ * High-speed canvas pixel scanner: Detects the exact bounding box of dark drawing ink / graphics
+ * (benzene rings, circuits, wire bends, square loops, graphs) in a given vertical strip of the PDF page.
+ */
+export function detectDiagramInkBoundingBoxOnCanvas(
+  canvas: HTMLCanvasElement,
+  searchYmin: number, // 0-1000 normalized
+  searchYmax: number, // 0-1000 normalized
+  searchXmin: number = 30,
+  searchXmax: number = 970
+): [number, number, number, number] | null {
+  if (!canvas || canvas.width === 0 || canvas.height === 0) return null;
+
+  try {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    const startY = Math.max(0, Math.floor((searchYmin / 1000) * canvas.height));
+    const endY = Math.min(canvas.height, Math.ceil((searchYmax / 1000) * canvas.height));
+    const startX = Math.max(0, Math.floor((searchXmin / 1000) * canvas.width));
+    const endX = Math.min(canvas.width, Math.ceil((searchXmax / 1000) * canvas.width));
+
+    const regionW = endX - startX;
+    const regionH = endY - startY;
+    if (regionW <= 10 || regionH <= 10) return null;
+
+    const imgData = ctx.getImageData(startX, startY, regionW, regionH);
+    const data = imgData.data;
+
+    let minX = regionW;
+    let maxX = 0;
+    let minY = regionH;
+    let maxY = 0;
+    let darkPixelCount = 0;
+
+    // Scan pixels with a step of 2 for high performance (<5ms)
+    for (let py = 0; py < regionH; py += 2) {
+      for (let px = 0; px < regionW; px += 2) {
+        const offset = (py * regionW + px) * 4;
+        const r = data[offset];
+        const g = data[offset + 1];
+        const b = data[offset + 2];
+        const a = data[offset + 3];
+
+        // Dark/ink pixel condition (not white/gray background)
+        if (a > 100 && (r < 210 || g < 210 || b < 210)) {
+          darkPixelCount++;
+          if (px < minX) minX = px;
+          if (px > maxX) maxX = px;
+          if (py < minY) minY = py;
+          if (py > maxY) maxY = py;
+        }
+      }
+    }
+
+    // A real diagram contains a substantial cluster of ink pixels (at least 60 non-white pixels)
+    if (darkPixelCount > 60 && maxX > minX && maxY > minY) {
+      const absMinX = startX + minX;
+      const absMaxX = startX + maxX;
+      const absMinY = startY + minY;
+      const absMaxY = startY + maxY;
+
+      // Convert back to 0-1000 normalized coordinates
+      const normYmin = Math.max(0, Math.round((absMinY / canvas.height) * 1000) - 15);
+      const normXmin = Math.max(0, Math.round((absMinX / canvas.width) * 1000) - 15);
+      const normYmax = Math.min(1000, Math.round((absMaxY / canvas.height) * 1000) + 15);
+      const normXmax = Math.min(1000, Math.round((absMaxX / canvas.width) * 1000) + 15);
+
+      if (normYmax - normYmin > 20 && normXmax - normXmin > 20) {
+        return [normYmin, normXmin, normYmax, normXmax];
+      }
+    }
+  } catch (e) {
+    console.warn('Canvas ink detection note:', e);
+  }
+
+  return null;
+}
+
+/**
+ * Intelligent fallback: Estimates the diagram bounding box [ymin, xmin, ymax, xmax]
+ * on a NEET two-column page if Gemini detected that a question references a diagram
+ * (e.g. "shown in figure", "circular bend", "square loop", "benzene ring") but omitted the bounding box.
+ */
+export function estimateDiagramBoundingBox(
+  questionIndexOnPage: number,
+  totalQuestionsOnPage: number = 4,
+  isRightColumn: boolean = false
+): [number, number, number, number] {
+  const safeTotal = Math.max(1, Math.min(totalQuestionsOnPage, 6));
+  const safeIdx = Math.max(0, Math.min(questionIndexOnPage, safeTotal - 1));
+  const slotHeight = 900 / safeTotal; // top 50 to 950
+  const yStart = 60 + safeIdx * slotHeight;
+  
+  // Diagram is typically in the middle of the question slot (between question text and options)
+  const ymin = Math.round(yStart + slotHeight * 0.25);
+  const ymax = Math.round(Math.min(970, yStart + slotHeight * 0.85));
+
+  // If two column layout: Left column = 40 to 490, Right column = 510 to 960
+  // If spanning both columns or unknown, cover width generously [40, 960]
+  const xmin = isRightColumn ? 510 : 40;
+  const xmax = isRightColumn ? 960 : 490;
+
+  return [ymin, xmin, ymax, xmax];
 }
 
 /**

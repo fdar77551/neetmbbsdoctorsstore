@@ -369,8 +369,13 @@ export default function App() {
   useEffect(() => {
     const syncRouteFromLocation = () => {
       const path = window.location.pathname.replace(/^\/+|\/+$/g, '');
-      if (path === 'mock-tests' || path === 'mock-test') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const testParam = urlParams.get('testId') || urlParams.get('mockTest');
+
+      if (testParam || path === 'mock-tests' || path === 'mock-test') {
         setCurrentScreen('mock-tests');
+      } else if (path === 'neet-full-course' || path === 'course' || path === 'courses' || path.startsWith('course/')) {
+        setCurrentScreen('neet-full-course');
       } else if (path === 'neet-pass' || path === 'pass') {
         setSelectedFormat('pdf');
         setCurrentScreen('neet-pass');
@@ -897,6 +902,9 @@ export default function App() {
         {/* Product Detail Modal */}
         <ProductDetailModal
           product={selectedProduct}
+          currentUser={userProfile}
+          userProfile={userProfile}
+          onRequireAuth={() => setIsAuthOpen(true)}
           onClose={() => {
             setSelectedProduct(null);
             if (window.history.replaceState) {

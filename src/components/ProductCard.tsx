@@ -153,7 +153,20 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             className="w-full h-40 sm:h-44 object-contain rounded-lg transition-transform duration-200 group-hover:scale-103"
             referrerPolicy="no-referrer"
             loading="lazy"
-            onError={() => setImgError(true)}
+            onError={(e) => {
+              const target = e.currentTarget;
+              const currentSrc = target.src;
+              // If it failed on direct r2.dev (e.g. ISP blocked on mobile), try our reliable server proxy
+              if (currentSrc.includes('.r2.dev/') && !currentSrc.includes('/api/r2/file/')) {
+                const key = currentSrc.split('.r2.dev/')[1];
+                if (key) {
+                  target.src = `/api/r2/file/${key.replace(/^\/+/, '')}`;
+                  return;
+                }
+              }
+              // If proxy or other source also fails, show the handsome fallback card
+              setImgError(true);
+            }}
           />
         ) : (
           <div className="w-full h-40 sm:h-44 bg-gradient-to-br from-blue-700 via-indigo-800 to-slate-900 rounded-lg flex flex-col items-center justify-between p-3 text-white text-center shadow-xs border border-blue-500/30 relative overflow-hidden">

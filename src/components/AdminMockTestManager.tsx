@@ -75,6 +75,8 @@ import {
 } from '../lib/pdfFigureExtractor';
 import { 
   cropDiagramFromCanvas, 
+  estimateDiagramBoundingBox,
+  repairDevanagariText,
   sendPageToGeminiParser, 
   parseAnswerKeyText, 
   createAndSaveCompleteNeetTest,
@@ -84,12 +86,16 @@ import {
   GeminiParseProgress,
   sanitizeExamText,
   cleanQuestionTextForMatchTable,
+  separateBilingualAndCleanQuestion,
+  separateBilingualOptions,
+  detectDiagramInkBoundingBoxOnCanvas,
   parseSolutionsAndKeyFromPdf,
   SolutionParseResult
 } from '../lib/geminiPdfParser';
 import { QuestionCanvasBuilder } from './QuestionCanvasBuilder';
 import { MockTestLeaderboardModal } from './MockTestLeaderboardModal';
 import { MockQuestionReviewModal } from './MockQuestionReviewModal';
+import { AdminDeleteConfirmModal } from './AdminDeleteConfirmModal';
 
 interface AdminMockTestManagerProps {
   onBack?: () => void;
@@ -209,6 +215,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
   const [isCreatingTest, setIsCreatingTest] = useState(false);
   const [editingTestId, setEditingTestId] = useState<string | null>(null);
   const [deleteConfirmTest, setDeleteConfirmTest] = useState<MockTest | null>(null);
+  const [deleteConfirmQuestion, setDeleteConfirmQuestion] = useState<MockQuestion | null>(null);
   const [adminToast, setAdminToast] = useState<string | null>(null);
 
   const triggerToast = (msg: string) => {
@@ -1244,11 +1251,62 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
           const optionFigures: Record<string, string> = {};
 
           if (autoCropDiagrams) {
+            // 1. If Gemini returned a precise bounding box, crop it directly
             if (rawQ.hasFigure && rawQ.figureBoundingBox && rawQ.figureBoundingBox.length === 4) {
               const cropped = cropDiagramFromCanvas(processingCanvas, rawQ.figureBoundingBox);
               if (cropped) {
                 figureDataUrl = cropped;
                 totalFiguresCount++;
+              }
+            }
+
+            // 2. High-precision diagram detection fallback:
+            // If raw question mentions a diagram, graph, circuit, reaction scheme, benzene ring, wire loop,
+            // or if it's Physics Q1/Q2 or an organic chemistry question without an attached figure
+            if (!figureDataUrl) {
+              const textToCheck = `${rawQ.english?.questionText || ''} ${rawQ.hindi?.questionText || ''}`.toLowerCase();
+              const hasVisualRef = [
+                'shown in figure', 'shown in the figure', 'as shown in figure', 'as shown',
+                'in the given figure', 'in given figure', 'given diagram', 'in the circuit',
+                'given circuit', 'in the graph', 'following scheme', 'reaction scheme',
+                'benzene', 'structure of', 'following curve', 'circular bend', 'square loop',
+                'magnitude of magnetic field at the origin', 'loop pqrs', 'wire cd', 'chitra', 'चित्र में',
+                'radius a', 'current i', 'velocity v', 'diagram', 'figure', 'circuit', 'graph'
+              ].some(kw => textToCheck.includes(kw));
+
+              if (hasVisualRef) {
+                const qIndexOnPage = pageQuestions.indexOf(rawQ);
+                const safeTotal = Math.max(1, pageQuestions.length);
+                const slotHeight = 900 / safeTotal;
+                const searchYmin = Math.max(40, Math.round(50 + qIndexOnPage * slotHeight));
+                const searchYmax = Math.min(970, Math.round(50 + (qIndexOnPage + 1) * slotHeight));
+
+                // A. Run high-speed canvas pixel ink scanner to detect the visual drawing boundary
+                const detectedInkBox = detectDiagramInkBoundingBoxOnCanvas(
+                  processingCanvas,
+                  searchYmin,
+                  searchYmax,
+                  30,
+                  970
+                );
+
+                if (detectedInkBox) {
+                  const detectedCrop = cropDiagramFromCanvas(processingCanvas, detectedInkBox);
+                  if (detectedCrop) {
+                    figureDataUrl = detectedCrop;
+                    totalFiguresCount++;
+                  }
+                }
+
+                // B. If ink scan didn't find a clustered drawing, fallback to estimated slot crop
+                if (!figureDataUrl) {
+                  const estimatedBox = estimateDiagramBoundingBox(qIndexOnPage, pageQuestions.length, false);
+                  const fallbackCrop = cropDiagramFromCanvas(processingCanvas, estimatedBox);
+                  if (fallbackCrop) {
+                    figureDataUrl = fallbackCrop;
+                    totalFiguresCount++;
+                  }
+                }
               }
             }
 
@@ -1304,23 +1362,38 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             };
           }
 
-          // Clean verbatim question texts and strip duplicate table rows
+          // Clean verbatim question texts, strictly separate bilingual columns, and strip duplicate table rows
           const rawEnText = rawQ.english?.questionText || `Question ${qNum}`;
-          const cleanedEnText = cleanQuestionTextForMatchTable(rawEnText, parsedMatchTable);
           const rawHiText = rawQ.hindi && rawQ.hindi.questionText ? rawQ.hindi.questionText : undefined;
-          const cleanedHiText = rawHiText ? cleanQuestionTextForMatchTable(rawHiText, parsedMatchTable) : undefined;
+          
+          // Separate languages and eliminate Hindi from English question text
+          const separatedTexts = separateBilingualAndCleanQuestion(rawEnText, rawHiText);
+          const cleanedEnText = cleanQuestionTextForMatchTable(separatedTexts.enText, parsedMatchTable);
+          const cleanedHiText = separatedTexts.hiText 
+            ? repairDevanagariText(cleanQuestionTextForMatchTable(separatedTexts.hiText, parsedMatchTable)) 
+            : undefined;
 
-          const cleanedOptions = (rawQ.english?.options || []).map(opt => ({
-            label: (opt.label?.toUpperCase() as any) || 'A',
-            type: optionFigures[opt.label] ? 'image' : 'text',
-            value: sanitizeExamText(opt.text || ''),
+          // Parse and separate options safely
+          const rawEnOpts = (rawQ.english?.options && rawQ.english.options.length > 0) 
+            ? rawQ.english.options 
+            : (rawQ.options || []);
+          const rawHiOpts = (rawQ.hindi?.options && rawQ.hindi.options.length > 0)
+            ? rawQ.hindi.options
+            : [];
+
+          const { cleanedEnOptions: baseEnOpts, cleanedHiOptions: baseHiOpts } = separateBilingualOptions(rawEnOpts, rawHiOpts);
+
+          const cleanedOptions = baseEnOpts.map((opt) => ({
+            label: opt.label,
+            type: (optionFigures[opt.label]) ? 'image' as const : 'text' as const,
+            value: opt.value || `Option (${opt.label})`,
             imageUrl: optionFigures[opt.label]
           }));
 
-          const cleanedHiOptions = (rawQ.hindi?.options || []).map(opt => ({
-            label: (opt.label?.toUpperCase() as any) || 'A',
-            type: optionFigures[opt.label] ? 'image' : 'text',
-            value: sanitizeExamText(opt.text || ''),
+          const cleanedHiOptions = baseHiOpts.map((opt) => ({
+            label: opt.label,
+            type: (optionFigures[opt.label]) ? 'image' as const : 'text' as const,
+            value: opt.value || `विकल्प (${opt.label})`,
             imageUrl: optionFigures[opt.label]
           }));
 
@@ -3136,12 +3209,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                                       </button>
                                       <button
                                         type="button"
-                                        onClick={() => {
-                                          const updated = questions.filter(item => item.questionNumber !== q.questionNumber)
-                                            .map((item, idx) => ({ ...item, questionNumber: idx + 1 }));
-                                          handleSaveQuestionsList(updated);
-                                          triggerToast('Question removed and numbers re-indexed');
-                                        }}
+                                        onClick={() => setDeleteConfirmQuestion(q)}
                                         className="p-1.5 hover:bg-rose-50 text-rose-500 rounded-lg transition cursor-pointer"
                                         title="Delete Question"
                                       >
@@ -5583,40 +5651,35 @@ or continuous: A B C D A B C D...`}
 
       </div>
 
-      {/* Delete Test Confirmation Dialog */}
-      {deleteConfirmTest && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 text-center space-y-4">
-            <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center mx-auto">
-              <Trash2 className="w-6 h-6" />
-            </div>
-            <div className="space-y-1.5">
-              <h3 className="text-base font-black text-slate-900 font-['Outfit',sans-serif]">
-                Delete this test?
-              </h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                This will remove <span className="font-bold text-slate-800">"{deleteConfirmTest.title || deleteConfirmTest.testNumber}"</span> from the mock test catalogue and erase its questions.
-              </p>
-            </div>
-            <div className="flex items-center gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setDeleteConfirmTest(null)}
-                className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDelete}
-                className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-sm transition cursor-pointer"
-              >
-                Delete Test
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Delete Test Confirmation Dialog (Requires typing "delete") */}
+      <AdminDeleteConfirmModal
+        isOpen={Boolean(deleteConfirmTest)}
+        onClose={() => setDeleteConfirmTest(null)}
+        onConfirm={handleConfirmDelete}
+        itemName={deleteConfirmTest ? (deleteConfirmTest.title || deleteConfirmTest.testNumber) : ''}
+        itemType="test"
+        title="Delete this test?"
+        warningText="This will permanently remove this mock test from the catalogue and erase all its questions and student attempts."
+      />
+
+      {/* Delete Question Confirmation Dialog (Requires typing "delete") */}
+      <AdminDeleteConfirmModal
+        isOpen={Boolean(deleteConfirmQuestion)}
+        onClose={() => setDeleteConfirmQuestion(null)}
+        onConfirm={() => {
+          if (!deleteConfirmQuestion) return;
+          const updated = questions
+            .filter(item => item.questionNumber !== deleteConfirmQuestion.questionNumber)
+            .map((item, idx) => ({ ...item, questionNumber: idx + 1 }));
+          handleSaveQuestionsList(updated);
+          triggerToast('Question removed and numbers re-indexed');
+          setDeleteConfirmQuestion(null);
+        }}
+        itemName={deleteConfirmQuestion ? `Question #${deleteConfirmQuestion.questionNumber}` : ''}
+        itemType="question"
+        title="Delete this question?"
+        warningText="This will permanently delete this question and its diagram from the test. Subsequent questions will be renumbered automatically."
+      />
 
       {/* Toast Notification */}
       {adminToast && (

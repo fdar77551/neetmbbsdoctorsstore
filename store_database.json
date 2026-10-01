@@ -3,8 +3,8 @@
     {
       "author": "Fywsvv",
       "category": "Biology",
-      "coverImage": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/book-covers/1787227288297-1000083413.jpg",
-      "createdAt": "2026-08-23T08:17:16.806Z",
+      "coverImage": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/book-covers/1788968385106-1000009757.png",
+      "createdAt": "2026-09-09T15:39:48.593Z",
       "description": "For testing purpose ",
       "edition": "2026 Latest Edition",
       "features": [
@@ -23,7 +23,9 @@
       "title": "Bugsg",
       "type": "book",
       "isFreeShipping": true,
-      "shippingCost": 0
+      "shippingCost": 0,
+      "includedInPass": false,
+      "isFreeResource": false
     },
     {
       "author": "Test author ",
@@ -176,6 +178,32 @@
       "shippingCost": 0,
       "title": "Pdf for shahzaib",
       "type": "pdf"
+    },
+    {
+      "author": "Sh sir ",
+      "category": "Biology",
+      "coverImage": "https://images.unsplash.com/photo-1455390582262-044cdead277a?auto=format&fit=crop&q=80&w=600",
+      "createdAt": "2026-08-25T12:28:20.152Z",
+      "description": "Pdf for checking ",
+      "edition": "2026 Latest Edition",
+      "features": [
+        "Complete line-by-line NCERT syllabus coverage",
+        "Verified solutions and high-yield concept pointers",
+        "Direct access in student dashboard"
+      ],
+      "id": "pdf-1787640379461",
+      "inStock": true,
+      "isFreeShipping": true,
+      "language": "English",
+      "originalPrice": 5,
+      "pages": 350,
+      "pdfUrl": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/NCERTify_Premium_Mock_Test_Organic_Chemistry_Perfected.pdf",
+      "price": 1,
+      "rating": 4.8,
+      "reviewsCount": 850,
+      "shippingCost": 0,
+      "title": "Pdf for checking ",
+      "type": "pdf"
     }
   ],
   "users": [
@@ -185,8 +213,22 @@
       "displayName": "Faisal Fayaz",
       "role": "admin",
       "createdAt": "2026-08-23T11:53:38.611Z",
-      "totalOrders": 2,
-      "totalSpent": 300
+      "totalOrders": 4,
+      "totalSpent": 302,
+      "neetPasses": [
+        {
+          "active": true,
+          "expiryDate": "2027-09-12T03:11:08.446Z",
+          "id": "grant-1789182668446-pcb",
+          "orderId": "ADMIN_GRANT_1789182668446",
+          "plan": "yearly",
+          "planName": "1 Year All PCB",
+          "price": 1099,
+          "startDate": "2026-09-12T03:11:08.446Z",
+          "subjectKey": "pcb",
+          "subjectName": "Complete PCB Pass"
+        }
+      ]
     },
     {
       "uid": "lidRgnI2Bce66neeV9pKVIGO5Xh1",
@@ -220,8 +262,8 @@
       "displayName": "Shahzaib",
       "email": "h33434214@gmail.com",
       "role": "user",
-      "totalOrders": 4,
-      "totalSpent": 302,
+      "totalOrders": 8,
+      "totalSpent": 306,
       "uid": "X0fVKeugWqVJfQ2cesYmUEf8tsa2"
     },
     {
@@ -231,16 +273,25 @@
       "role": "user",
       "totalOrders": 0,
       "totalSpent": 0,
-      "uid": "user-1787313452046-hffloa"
+      "uid": "MTSZXJaAqKWG0TGqqyQSKXcCme43"
     },
     {
       "createdAt": "2026-08-24T15:39:19.711Z",
       "displayName": "Husain",
       "email": "78692shm@gmail.com",
       "role": "user",
+      "totalOrders": 2,
+      "totalSpent": 598,
+      "uid": "iSXEL1HJWggE8U8oYkOwbSK90qf1"
+    },
+    {
+      "createdAt": "2026-08-26T15:56:57.064Z",
+      "displayName": "Ashiq mama",
+      "email": "furkansoub224@gmail.com",
+      "role": "user",
       "totalOrders": 1,
       "totalSpent": 299,
-      "uid": "iSXEL1HJWggE8U8oYkOwbSK90qf1"
+      "uid": "y2RGqyTkpMNLvuBq966KVAhLTY13"
     }
   ],
   "orders": [
@@ -789,6 +840,112 @@
       "userEmail": "78692shm@gmail.com",
       "userId": "78692shm@gmail.com",
       "userName": "Husain"
+    },
+    {
+      "discountAmount": 0,
+      "estimatedDelivery": "2026-08-30",
+      "id": "NMD-20260826-0002",
+      "invoiceNumber": "INV-20260826-0002",
+      "items": [
+        {
+          "author": "Fywsvv",
+          "coverImage": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/book-covers/1787227288297-1000083413.jpg",
+          "price": 299,
+          "productId": "book-1787227306954",
+          "quantity": 1,
+          "title": "Bugsg",
+          "type": "book"
+        }
+      ],
+      "orderDate": "2026-08-26T15:57:29.970Z",
+      "paymentId": "COD_1787759849970",
+      "paymentStatus": "cod",
+      "razorpayOrderId": "N/A (Cash on Delivery)",
+      "shippingAddress": {
+        "addressLine1": "Afshsv",
+        "addressLine2": "Vahzvc",
+        "district": "Srinagar ",
+        "fullName": "Ashiq mama",
+        "landmark": "Bsbs. ",
+        "phoneNumber": "7051548130",
+        "pincode": "123456",
+        "state": "Himachal Pradesh"
+      },
+      "shippingCost": 0,
+      "status": "cancelled",
+      "subtotal": 299,
+      "totalAmount": 299,
+      "userEmail": "furkansoub224@gmail.com",
+      "userId": "furkansoub224@gmail.com",
+      "userName": "Ashiq mama"
+    },
+    {
+      "discountAmount": 0,
+      "estimatedDelivery": "2026-08-30",
+      "id": "NMD-20260826-0001",
+      "invoiceNumber": "INV-20260826-0001",
+      "items": [
+        {
+          "author": "Test author ",
+          "coverImage": "/api/r2/file/book-covers/1787225793891-1000082936.jpg",
+          "price": 299,
+          "productId": "book-1787225806665",
+          "quantity": 1,
+          "title": "Test product ",
+          "type": "book"
+        }
+      ],
+      "orderDate": "2026-08-26T09:30:53.171Z",
+      "paymentId": "COD_1787736653171",
+      "paymentStatus": "cod",
+      "razorpayOrderId": "N/A (Cash on Delivery)",
+      "shippingAddress": {
+        "addressLine1": "Dogripora Bijbehara DIST Pulwama",
+        "addressLine2": "Near Jamia Masjid Dogripora pulwama",
+        "district": "Ananthnag",
+        "fullName": "Faisal Fayaz",
+        "landmark": "Near City hospital ",
+        "phoneNumber": "6005894110",
+        "pincode": "192124",
+        "state": "Jammu and Kashmir"
+      },
+      "shippingCost": 0,
+      "status": "accepted",
+      "subtotal": 299,
+      "totalAmount": 299,
+      "userEmail": "fdar77551@gmail.com",
+      "userId": "fdar77551@gmail.com",
+      "userName": "Faisal Fayaz"
+    },
+    {
+      "deliveredDate": "2026-08-25T18:44:14.657Z",
+      "discountAmount": 0,
+      "estimatedDelivery": "2026-08-29",
+      "id": "NMD-20260825-0005",
+      "invoiceNumber": "INV-20260825-0005",
+      "items": [
+        {
+          "author": "Sh sir ",
+          "coverImage": "https://images.unsplash.com/photo-1455390582262-044cdead277a?auto=format&fit=crop&q=80&w=600",
+          "pdfUrl": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/NCERTify_Premium_Mock_Test_Organic_Chemistry_Perfected.pdf",
+          "price": 1,
+          "productId": "pdf-1787640379461",
+          "quantity": 1,
+          "title": "Pdf for checking ",
+          "type": "pdf"
+        }
+      ],
+      "orderDate": "2026-08-25T14:20:29.195Z",
+      "paymentId": "pay_TU27f9HnjYzuDD",
+      "paymentStatus": "paid",
+      "razorpayOrderId": "order_1787667628771",
+      "shippingCost": 0,
+      "status": "delivered",
+      "subtotal": 1,
+      "totalAmount": 1,
+      "userEmail": "h33434214@gmail.com",
+      "userId": "h33434214@gmail.com",
+      "userName": "Shahzaib"
     }
   ],
   "banners": [
@@ -809,7 +966,7 @@
       "badge": "",
       "buttonText": "Explore Store →",
       "id": "banner-1787382623744",
-      "imageUrl": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/banners/1787304530583-1000083596.png",
+      "imageUrl": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/banners/1787736741677-1000083598.png",
       "subtitle": "",
       "titleLine1": "NEET UG 2026",
       "titleLine2": "",
@@ -848,5 +1005,17 @@
   ],
   "reviews": [],
   "pdf_access": [],
-  "payment_records": []
+  "payment_records": [],
+  "settings": {
+    "cloudflare": {
+      "accessKeyId": "887e302ecc7e249de5f16198ddfb7bd4",
+      "accountId": "d715d090a75efd8790b9a6da1e2f42d4",
+      "bucketName": "ncertify",
+      "customCdnDomain": "",
+      "publicDevUrl": "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev",
+      "s3Endpoint": "https://d715d090a75efd8790b9a6da1e2f42d4.r2.cloudflarestorage.com",
+      "secretAccessKey": "20ddb02f48c59b9e1ae64dd1a164290e63396632633f0b49e2b5f310ba7fb79e",
+      "storageMode": "proxy"
+    }
+  }
 }

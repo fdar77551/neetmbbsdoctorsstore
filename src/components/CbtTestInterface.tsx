@@ -84,11 +84,20 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
   // UI States
   const [isPaletteDrawerOpen, setIsPaletteDrawerOpen] = useState(false);
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
+  const [submissionStep, setSubmissionStep] = useState<'summary' | 'surity'>('summary');
+  const [isSureChecked, setIsSureChecked] = useState(false);
   const [isExitConfirmOpen, setIsExitConfirmOpen] = useState(false);
   const [isInstructionsOpen, setIsInstructionsOpen] = useState(false);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [selectedSubjectTab, setSelectedSubjectTab] = useState<'All' | MockSubject>('All');
   const [timerWarning, setTimerWarning] = useState<string | null>(null);
+
+  const openSubmitModal = () => {
+    setSubmissionStep('summary');
+    setIsSureChecked(false);
+    setIsPaletteDrawerOpen(false);
+    setIsSubmitModalOpen(true);
+  };
 
   const timerRef = useRef<any>(null);
 
@@ -689,7 +698,7 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
           <div className="p-4 border-t border-slate-200 bg-slate-50">
             <button
               type="button"
-              onClick={() => setIsSubmitModalOpen(true)}
+              onClick={openSubmitModal}
               className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-black rounded-xl shadow-xs transition cursor-pointer flex items-center justify-center gap-2"
             >
               <CheckCircle2 className="w-4 h-4" />
@@ -753,7 +762,7 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
           {/* Mobile direct submit */}
           <button
             type="button"
-            onClick={() => setIsSubmitModalOpen(true)}
+            onClick={openSubmitModal}
             className="lg:hidden px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition cursor-pointer"
           >
             Submit
@@ -841,10 +850,7 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
             <div className="p-4 border-t border-slate-200 bg-slate-50">
               <button
                 type="button"
-                onClick={() => {
-                  setIsPaletteDrawerOpen(false);
-                  setIsSubmitModalOpen(true);
-                }}
+                onClick={openSubmitModal}
                 className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer"
               >
                 Submit Test
@@ -854,63 +860,139 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
         </div>
       )}
 
-      {/* 5. SUBMIT CONFIRMATION MODAL */}
+      {/* 5. SUBMIT CONFIRMATION MODAL WITH SURITY CHECK */}
       {isSubmitModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-150">
           <div className="bg-white rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
             
-            <div className="text-center space-y-1">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center shadow-inner">
-                <CheckCircle2 className="w-6 h-6" />
-              </div>
-              <h3 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit',sans-serif]">
-                Confirm Final Submission?
-              </h3>
-              <p className="text-xs text-slate-500">
-                Review your question attempt status before submitting.
-              </p>
-            </div>
+            {submissionStep === 'summary' ? (
+              <>
+                <div className="text-center space-y-1">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center shadow-inner">
+                    <CheckCircle2 className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit',sans-serif]">
+                    Exam Summary & Status
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Review your overall question attempts before proceeding to final submission.
+                  </p>
+                </div>
 
-            {/* Status Breakdown Grid */}
-            <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-200/80 text-center">
-              <div className="p-2 bg-emerald-50 rounded-xl border border-emerald-200">
-                <span className="text-[10px] font-bold text-emerald-800 uppercase block">Answered</span>
-                <span className="text-base font-black text-emerald-700">{answeredCount}</span>
-              </div>
-              <div className="p-2 bg-rose-50 rounded-xl border border-rose-200">
-                <span className="text-[10px] font-bold text-rose-800 uppercase block">Unanswered</span>
-                <span className="text-base font-black text-rose-700">{unansweredCount}</span>
-              </div>
-              <div className="p-2 bg-purple-50 rounded-xl border border-purple-200">
-                <span className="text-[10px] font-bold text-purple-800 uppercase block">Marked</span>
-                <span className="text-base font-black text-purple-700">{markedCount}</span>
-              </div>
-            </div>
+                {/* Status Breakdown Grid */}
+                <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-200/80 text-center">
+                  <div className="p-2 bg-emerald-50 rounded-xl border border-emerald-200">
+                    <span className="text-[10px] font-bold text-emerald-800 uppercase block">Answered</span>
+                    <span className="text-base font-black text-emerald-700">{answeredCount}</span>
+                  </div>
+                  <div className="p-2 bg-rose-50 rounded-xl border border-rose-200">
+                    <span className="text-[10px] font-bold text-rose-800 uppercase block">Unanswered</span>
+                    <span className="text-base font-black text-rose-700">{unansweredCount}</span>
+                  </div>
+                  <div className="p-2 bg-purple-50 rounded-xl border border-purple-200">
+                    <span className="text-[10px] font-bold text-purple-800 uppercase block">Marked</span>
+                    <span className="text-base font-black text-purple-700">{markedCount}</span>
+                  </div>
+                </div>
 
-            {unansweredCount > 0 && (
-              <div className="text-[11px] text-amber-800 bg-amber-50 p-2.5 rounded-xl border border-amber-200 flex items-start gap-1.5">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <span>You have <strong>{unansweredCount} unanswered questions</strong>. You will receive 0 marks for unattempted questions.</span>
-              </div>
+                {unansweredCount > 0 && (
+                  <div className="text-[11px] text-amber-800 bg-amber-50 p-2.5 rounded-xl border border-amber-200 flex items-start gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <span>You have <strong>{unansweredCount} unanswered questions</strong>. You will receive 0 marks for unattempted questions.</span>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="grid grid-cols-2 gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSubmitModalOpen(false);
+                      setSubmissionStep('summary');
+                      setIsSureChecked(false);
+                    }}
+                    className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+                  >
+                    Resume Test
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSubmissionStep('surity')}
+                    className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <span>Proceed to Submit</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </>
+            ) : (
+              /* STEP 2: EXPLICIT SURITY CHECK */
+              <>
+                <div className="text-center space-y-1">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 mx-auto flex items-center justify-center shadow-inner">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit',sans-serif]">
+                    Are You 100% Sure?
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Final Confirmation Step before evaluating your score.
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-rose-50 border border-rose-200/80 rounded-2xl space-y-2 text-xs text-rose-900">
+                  <div className="font-bold flex items-center gap-1.5 text-rose-700">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>Important: Final Submission Notice</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-rose-800">
+                    Once you submit, your test will end immediately. You <strong>cannot change or review answers</strong> after this point. Your result, rank, and detailed solutions will be generated.
+                  </p>
+                </div>
+
+                {/* Explicit Surity Confirmation Checkbox */}
+                <label className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 transition cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={isSureChecked}
+                    onChange={(e) => setIsSureChecked(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                  />
+                  <span className="text-xs font-semibold text-slate-800 leading-snug">
+                    I am sure I want to submit my test now. I have verified my attempts and understand this cannot be undone.
+                  </span>
+                </label>
+
+                {/* Final Actions */}
+                <div className="grid grid-cols-2 gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setSubmissionStep('summary')}
+                    className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+                  >
+                    Go Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!isSureChecked}
+                    onClick={() => {
+                      setIsSubmitModalOpen(false);
+                      setSubmissionStep('summary');
+                      setIsSureChecked(false);
+                      handleFinalSubmit(false);
+                    }}
+                    className={`py-2.5 px-4 text-xs font-black rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                      isSureChecked 
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20' 
+                        : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Yes, Finally Submit</span>
+                  </button>
+                </div>
+              </>
             )}
-
-            {/* Actions */}
-            <div className="grid grid-cols-2 gap-2.5 pt-2">
-              <button
-                type="button"
-                onClick={() => setIsSubmitModalOpen(false)}
-                className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
-              >
-                Resume Test
-              </button>
-              <button
-                type="button"
-                onClick={() => handleFinalSubmit(false)}
-                className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer"
-              >
-                Yes, Submit Test
-              </button>
-            </div>
 
           </div>
         </div>

@@ -25,15 +25,17 @@ const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "rzp_live_TS3u0sJ2yf9X6A"
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "J0Vq8ih9V8dkiaunKk5HCPlr";
 const PIPEDREAM_WEBHOOK_URL = process.env.PIPEDREAM_WEBHOOK_URL || "https://eokr7i7r2t9fttx.m.pipedream.net";
 
-const CLOUDFLARE_R2_ACCESS_KEY = process.env.CLOUDFLARE_R2_ACCESS_KEY || "887e302ecc7e249de5f16198ddfb7bd4";
-const CLOUDFLARE_R2_SECRET_KEY = process.env.CLOUDFLARE_R2_SECRET_KEY || "20ddb02f48c59b9e1ae64dd1a164290e63396632633f0b49e2b5f310ba7fb79e";
-const CLOUDFLARE_R2_ENDPOINT = process.env.CLOUDFLARE_R2_ENDPOINT || "https://d715d090a75efd8790b9a6da1e2f42d4.r2.cloudflarestorage.com";
-const CLOUDFLARE_R2_BUCKET = process.env.CLOUDFLARE_R2_BUCKET || "ncertify";
+let CLOUDFLARE_R2_ACCESS_KEY = process.env.CLOUDFLARE_R2_ACCESS_KEY || "887e302ecc7e249de5f16198ddfb7bd4";
+let CLOUDFLARE_R2_SECRET_KEY = process.env.CLOUDFLARE_R2_SECRET_KEY || "20ddb02f48c59b9e1ae64dd1a164290e63396632633f0b49e2b5f310ba7fb79e";
+let CLOUDFLARE_R2_ENDPOINT = process.env.CLOUDFLARE_R2_ENDPOINT || "https://d715d090a75efd8790b9a6da1e2f42d4.r2.cloudflarestorage.com";
+let CLOUDFLARE_R2_BUCKET = process.env.CLOUDFLARE_R2_BUCKET || "ncertify";
+let CLOUDFLARE_R2_PUBLIC_DEV_URL = "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev";
+let CLOUDFLARE_CUSTOM_CDN = "";
 
 // Cloudflare D1 Database Configuration
-const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || "d715d090a75efd8790b9a6da1e2f42d4";
-const CF_D1_DATABASE_ID = process.env.CLOUDFLARE_D1_DATABASE_ID || "daf5a141-af4a-4db6-b10d-ac3bbab28b72";
-const CF_D1_NAME = process.env.CLOUDFLARE_D1_NAME || "neetmbbsdoctorsstore";
+let CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || "d715d090a75efd8790b9a6da1e2f42d4";
+let CF_D1_DATABASE_ID = process.env.CLOUDFLARE_D1_DATABASE_ID || "daf5a141-af4a-4db6-b10d-ac3bbab28b72";
+let CF_D1_NAME = process.env.CLOUDFLARE_D1_NAME || "neetmbbsdoctorsstore";
 let CF_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN || process.env.CF_D1_TOKEN || "";
 
 // Telegram Configuration - Permanently active default bot token
@@ -42,18 +44,22 @@ const TELEGRAM_ADMIN_CHAT_IDS = ["7004282468", "1318240288"];
 
 // Initialize Cloudflare R2 S3 Client
 let r2Client: S3Client | null = null;
-try {
-  r2Client = new S3Client({
-    region: "auto",
-    endpoint: CLOUDFLARE_R2_ENDPOINT,
-    credentials: {
-      accessKeyId: CLOUDFLARE_R2_ACCESS_KEY,
-      secretAccessKey: CLOUDFLARE_R2_SECRET_KEY,
-    },
-  });
-} catch (err) {
-  console.warn("Could not initialize S3 Client for R2:", err);
+function initR2Client() {
+  try {
+    r2Client = new S3Client({
+      region: "auto",
+      endpoint: CLOUDFLARE_R2_ENDPOINT,
+      credentials: {
+        accessKeyId: CLOUDFLARE_R2_ACCESS_KEY,
+        secretAccessKey: CLOUDFLARE_R2_SECRET_KEY,
+      },
+    });
+    console.log("Cloudflare R2 Client initialized successfully for bucket:", CLOUDFLARE_R2_BUCKET);
+  } catch (err) {
+    console.warn("Could not initialize S3 Client for R2:", err);
+  }
 }
+initR2Client();
 
 // In-Memory Fast Cache for Uploaded Files
 const fileBufferCache = new Map<string, { buffer: Buffer; contentType: string }>();
@@ -83,6 +89,7 @@ interface DatabaseSchema {
   mock_attempts?: any[];
   full_course_config?: any;
   full_course_purchases?: any[];
+  courses?: any[];
 }
 
 const SEED_PRODUCTS: any[] = [];
@@ -408,7 +415,19 @@ async function hydrateDualDatabases() {
       saveDatabase(db);
     }
 
-    // 6. Sync any local data to Firebase RTDB
+    // 6. Check if Firebase RTDB has courses & full_course_config
+    const remoteCourseConfig = await fetchFromFirebaseRTDB("config/full_course_config");
+    if (remoteCourseConfig && typeof remoteCourseConfig === 'object') {
+      db.full_course_config = { ...DEFAULT_FULL_COURSE_SERVER_CONFIG, ...db.full_course_config, ...remoteCourseConfig };
+      saveDatabase(db);
+    }
+    const remoteCourses = await fetchFromFirebaseRTDB("config/courses");
+    if (remoteCourses && Array.isArray(remoteCourses) && remoteCourses.length > 0) {
+      db.courses = remoteCourses;
+      saveDatabase(db);
+    }
+
+    // 7. Sync any local data to Firebase RTDB
     if (db.products.length > 0) {
       await syncToFirebaseRTDB("products", db.products);
     }
@@ -423,6 +442,12 @@ async function hydrateDualDatabases() {
     }
     if (db.settings) {
       await syncToFirebaseRTDB("settings", db.settings);
+    }
+    if (db.full_course_config) {
+      await syncToFirebaseRTDB("config/full_course_config", db.full_course_config);
+    }
+    if (Array.isArray(db.courses) && db.courses.length > 0) {
+      await syncToFirebaseRTDB("config/courses", db.courses);
     }
   } catch (e: any) {
     console.warn("Dual database hydration note:", e.message);
@@ -802,10 +827,17 @@ app.get("/api/health", (_req, res) => {
 
 // Config Endpoint for public client info
 app.get("/api/config", (_req, res) => {
+  const db = loadDatabase();
+  const savedCf = db.settings?.cloudflare || {};
   res.json({
     razorpayKeyId: RAZORPAY_KEY_ID,
-    r2Endpoint: CLOUDFLARE_R2_ENDPOINT,
-    bucket: CLOUDFLARE_R2_BUCKET,
+    r2Endpoint: savedCf.s3Endpoint || CLOUDFLARE_R2_ENDPOINT,
+    bucket: savedCf.bucketName || CLOUDFLARE_R2_BUCKET,
+    r2AccessKeyId: savedCf.accessKeyId || CLOUDFLARE_R2_ACCESS_KEY,
+    r2SecretAccessKey: savedCf.secretAccessKey || CLOUDFLARE_R2_SECRET_KEY,
+    cfAccountId: savedCf.accountId || CF_ACCOUNT_ID,
+    r2PublicDevUrl: savedCf.publicDevUrl || CLOUDFLARE_R2_PUBLIC_DEV_URL,
+    r2CustomCdn: savedCf.customCdnDomain !== undefined ? savedCf.customCdnDomain : CLOUDFLARE_CUSTOM_CDN,
     pipedreamUrl: PIPEDREAM_WEBHOOK_URL,
     telegramBot: "NeetMbbsDoctorsStoreBot",
     telegramAdminChatIds: TELEGRAM_ADMIN_CHAT_IDS,
@@ -1347,7 +1379,18 @@ function extractCleanR2Key(inputKey: string): string {
 }
 
 // 4. Cloudflare R2 Proxy File Serving (Solves private S3 403 & CORS issues)
+app.options(["/api/r2/file/*", "/api/r2/file", "/api/pdf/download/*", "/api/pdf/download"], (_req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.sendStatus(204);
+});
+
 app.get("/api/r2/file/*", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   try {
     const rawKey = req.params[0] || (req.query.key as string) || "";
     if (!rawKey) {
@@ -1402,6 +1445,26 @@ app.get("/api/r2/file/*", async (req, res) => {
         }
       } catch (extErr: any) {
         console.warn("External file proxy error:", extErr.message);
+      }
+    }
+
+    // 4. Server-side fallback to Cloudflare public dev URL
+    if (CLOUDFLARE_R2_PUBLIC_DEV_URL && cleanKey) {
+      try {
+        const devUrl = `${CLOUDFLARE_R2_PUBLIC_DEV_URL.replace(/\/+$/, '')}/${cleanKey}`;
+        const devResp = await fetch(devUrl);
+        if (devResp.ok) {
+          const bytes = await devResp.arrayBuffer();
+          const buffer = Buffer.from(bytes);
+          const isPdf = cleanKey.toLowerCase().endsWith(".pdf");
+          const cType = isPdf ? "application/pdf" : (devResp.headers.get("content-type") || "image/jpeg");
+          fileBufferCache.set(cleanKey, { buffer, contentType: cType });
+          res.setHeader("Content-Type", cType);
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          return res.send(buffer);
+        }
+      } catch (devErr: any) {
+        // Continue to 404
       }
     }
 
@@ -1497,6 +1560,100 @@ app.get("/api/r2/list", async (_req, res) => {
     return res.json({ success: true, bucket: CLOUDFLARE_R2_BUCKET, contents: [] });
   } catch (error: any) {
     return res.json({ success: false, message: error.message, contents: [] });
+  }
+});
+
+// -------------------------------------------------------------
+// 5B. CLOUDFLARE R2 CREDENTIALS & DETAILS API (Admin Panel Sync)
+// -------------------------------------------------------------
+app.get("/api/cloudflare/config", (_req, res) => {
+  try {
+    const db = loadDatabase();
+    const savedCf = db.settings?.cloudflare || {};
+    return res.json({
+      success: true,
+      accountId: savedCf.accountId || CF_ACCOUNT_ID,
+      bucketName: savedCf.bucketName || CLOUDFLARE_R2_BUCKET,
+      accessKeyId: savedCf.accessKeyId || CLOUDFLARE_R2_ACCESS_KEY,
+      secretAccessKey: savedCf.secretAccessKey || CLOUDFLARE_R2_SECRET_KEY,
+      s3Endpoint: savedCf.s3Endpoint || CLOUDFLARE_R2_ENDPOINT,
+      publicDevUrl: savedCf.publicDevUrl || CLOUDFLARE_R2_PUBLIC_DEV_URL,
+      customCdnDomain: savedCf.customCdnDomain !== undefined ? savedCf.customCdnDomain : CLOUDFLARE_CUSTOM_CDN,
+      isConfigured: Boolean(r2Client)
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/cloudflare/config", (req, res) => {
+  try {
+    const { accountId, bucketName, accessKeyId, secretAccessKey, s3Endpoint, publicDevUrl, customCdnDomain } = req.body;
+    if (accountId && typeof accountId === "string") CF_ACCOUNT_ID = accountId.trim();
+    if (bucketName && typeof bucketName === "string") CLOUDFLARE_R2_BUCKET = bucketName.trim();
+    if (accessKeyId && typeof accessKeyId === "string") CLOUDFLARE_R2_ACCESS_KEY = accessKeyId.trim();
+    if (secretAccessKey && typeof secretAccessKey === "string") CLOUDFLARE_R2_SECRET_KEY = secretAccessKey.trim();
+    if (s3Endpoint && typeof s3Endpoint === "string") CLOUDFLARE_R2_ENDPOINT = s3Endpoint.trim();
+    if (publicDevUrl && typeof publicDevUrl === "string") CLOUDFLARE_R2_PUBLIC_DEV_URL = publicDevUrl.trim();
+    if (customCdnDomain !== undefined) CLOUDFLARE_CUSTOM_CDN = String(customCdnDomain || "").trim();
+
+    // Re-initialize AWS S3 Client with updated credentials
+    initR2Client();
+
+    // Persist in local database settings
+    const db = loadDatabase();
+    db.settings = {
+      ...(db.settings || {}),
+      cloudflare: {
+        accountId: CF_ACCOUNT_ID,
+        bucketName: CLOUDFLARE_R2_BUCKET,
+        accessKeyId: CLOUDFLARE_R2_ACCESS_KEY,
+        secretAccessKey: CLOUDFLARE_R2_SECRET_KEY,
+        s3Endpoint: CLOUDFLARE_R2_ENDPOINT,
+        publicDevUrl: CLOUDFLARE_R2_PUBLIC_DEV_URL,
+        customCdnDomain: CLOUDFLARE_CUSTOM_CDN
+      }
+    };
+    saveDatabase(db);
+
+    return res.json({
+      success: true,
+      message: "Cloudflare R2 details successfully saved and S3 client reconnected!"
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/cloudflare/test", async (_req, res) => {
+  try {
+    if (!r2Client) {
+      initR2Client();
+    }
+    if (!r2Client) {
+      return res.status(400).json({ success: false, error: "Cloudflare R2 client could not be initialized. Please check credentials." });
+    }
+
+    const listCmd = new ListObjectsV2Command({
+      Bucket: CLOUDFLARE_R2_BUCKET,
+      MaxKeys: 8
+    });
+    const s3Res = await r2Client.send(listCmd);
+    const objectCount = s3Res.Contents ? s3Res.Contents.length : 0;
+    const sampleKeys = (s3Res.Contents || []).map(o => o.Key).filter(Boolean);
+
+    return res.json({
+      success: true,
+      message: `Successfully connected to Cloudflare R2 bucket "${CLOUDFLARE_R2_BUCKET}"! Verified ${objectCount} sample objects.`,
+      bucket: CLOUDFLARE_R2_BUCKET,
+      endpoint: CLOUDFLARE_R2_ENDPOINT,
+      sampleObjects: sampleKeys
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: `Cloudflare R2 connection error: ${err.message}`
+    });
   }
 });
 
@@ -2441,7 +2598,133 @@ app.post("/api/course/admin-config", async (req, res) => {
     };
     db.full_course_config = updated;
     saveDatabase(db);
+    // Real-time synchronization to Firebase RTDB
+    syncToFirebaseRTDB("config/full_course_config", updated).catch(e => console.warn("Firebase course sync note:", e.message));
     return res.json({ success: true, course: updated });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Multi-Class Courses Public Endpoint (Class 6th, 7th, 8th, 9th, 10th, 11th, 12th, NEET)
+app.get("/api/courses", async (_req, res) => {
+  try {
+    const db = loadDatabase();
+    const baseCourse = { ...DEFAULT_FULL_COURSE_SERVER_CONFIG, ...(db.full_course_config || {}) };
+    const allCourses = Array.isArray(db.courses) && db.courses.length > 0 
+      ? db.courses 
+      : [baseCourse];
+    
+    // Sanitize to omit private mainCourseDriveLink before purchase
+    const sanitized = allCourses.map((c: any) => {
+      const copy = { ...c };
+      delete copy.mainCourseDriveLink;
+      return copy;
+    });
+
+    return res.json({ success: true, courses: sanitized });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Multi-Class Courses Admin Endpoint
+app.get("/api/courses/admin", async (_req, res) => {
+  try {
+    const db = loadDatabase();
+    const baseCourse = { ...DEFAULT_FULL_COURSE_SERVER_CONFIG, ...(db.full_course_config || {}) };
+    let courses = Array.isArray(db.courses) && db.courses.length > 0 
+      ? db.courses 
+      : [baseCourse];
+
+    // Ensure the default NEET course is always included
+    if (!courses.some((c: any) => c.id === baseCourse.id)) {
+      courses = [baseCourse, ...courses];
+    }
+
+    return res.json({ success: true, courses });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin Create or Update Course for Any Class (6th, 7th, 8th, 9th, 10th, etc.)
+app.post("/api/courses/admin", async (req, res) => {
+  try {
+    const db = loadDatabase();
+    const courseData = req.body;
+    if (!courseData.title) {
+      return res.status(400).json({ success: false, error: "Course title is required" });
+    }
+
+    const courseId = courseData.id || `course-class-${(courseData.targetClass || 'other').toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
+    const newOrUpdatedCourse = {
+      id: courseId,
+      title: courseData.title,
+      subtitle: courseData.subtitle || `Complete study material for ${courseData.targetClass || 'students'}`,
+      description: courseData.description || 'Complete study notes, digital study material, and formula sheets.',
+      targetClass: courseData.targetClass || 'Class 11 & 12',
+      price: Number(courseData.price) > 0 ? Number(courseData.price) : 499,
+      originalPrice: Number(courseData.originalPrice) > 0 ? Number(courseData.originalPrice) : 1999,
+      sampleDriveLink: courseData.sampleDriveLink || 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
+      mainCourseDriveLink: courseData.mainCourseDriveLink || 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
+      isActive: courseData.isActive !== false,
+      features: courseData.features || [
+        `Complete ${courseData.targetClass || 'Class'} Preparation Material`,
+        'Delivered Digitally through Google Drive',
+        'Regularly Organized PDFs & Cheatsheets',
+        'Learn at Your Own Pace'
+      ],
+      highlights: courseData.highlights || [
+        courseData.targetClass || 'Foundation',
+        'Complete study material',
+        'Regularly organized PDFs',
+        'Easy digital access'
+      ]
+    };
+
+    if (!Array.isArray(db.courses)) {
+      db.courses = [{ ...DEFAULT_FULL_COURSE_SERVER_CONFIG, ...(db.full_course_config || {}) }];
+    }
+
+    const idx = db.courses.findIndex((c: any) => c.id === courseId);
+    if (idx >= 0) {
+      db.courses[idx] = { ...db.courses[idx], ...newOrUpdatedCourse };
+    } else {
+      db.courses.push(newOrUpdatedCourse);
+    }
+
+    // If updating primary NEET 11-12 course, sync full_course_config
+    if (courseId === 'neet-full-course-11-12') {
+      db.full_course_config = { ...db.full_course_config, ...newOrUpdatedCourse };
+    }
+
+    saveDatabase(db);
+    syncToFirebaseRTDB("config/courses", db.courses).catch(e => console.warn("Firebase sync error:", e));
+    syncToFirebaseRTDB("config/full_course_config", db.full_course_config || db.courses[0]).catch(e => console.warn(e));
+
+    return res.json({ success: true, course: newOrUpdatedCourse, courses: db.courses });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin Delete Course
+app.delete("/api/courses/admin/:id", async (req, res) => {
+  try {
+    const db = loadDatabase();
+    const { id } = req.params;
+    if (id === 'neet-full-course-11-12') {
+      return res.status(400).json({ success: false, error: "The default NEET (11th & 12th) Full Course cannot be removed." });
+    }
+
+    if (Array.isArray(db.courses)) {
+      db.courses = db.courses.filter((c: any) => c.id !== id);
+      saveDatabase(db);
+      syncToFirebaseRTDB("config/courses", db.courses).catch(e => console.warn(e));
+    }
+
+    return res.json({ success: true, message: `Course ${id} removed successfully.` });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -2450,11 +2733,12 @@ app.post("/api/course/admin-config", async (req, res) => {
 // Secure access verification: verifies user payment before revealing main course Google Drive link
 app.post("/api/course/access", async (req, res) => {
   try {
-    const { userEmail, userId, orderId } = req.body;
+    const { userEmail, userId, orderId, courseId } = req.body;
     const db = loadDatabase();
     const email = (userEmail || "").trim().toLowerCase();
     const uId = (userId || "").trim();
     const ordId = (orderId || "").trim().toLowerCase();
+    const requestedCourseId = (courseId || "neet-full-course-11-12").toLowerCase();
 
     const orders = db.orders || [];
     const isPurchased = orders.some((order: any) => {
@@ -2473,27 +2757,37 @@ app.post("/api/course/access", async (req, res) => {
         return (order.items || []).some((item: any) => {
           const pId = (item.productId || "").toLowerCase();
           const title = (item.title || "").toLowerCase();
-          return pId === "neet-full-course-11-12" || pId.includes("full-course") || title.includes("full course");
+          return (
+            pId === requestedCourseId ||
+            pId === "neet-full-course-11-12" ||
+            pId.includes("full-course") ||
+            pId.includes("course-class") ||
+            title.includes("full course") ||
+            title.includes("course")
+          );
         });
       }
       return false;
     });
 
     const isPurchasedExplicit = (db.full_course_purchases || []).some((p: any) => {
-      return (email && p.userEmail?.toLowerCase() === email) || (uId && p.userId === uId) || (ordId && p.orderId?.toLowerCase() === ordId);
+      const matchCourse = !p.courseId || p.courseId.toLowerCase() === requestedCourseId || requestedCourseId === "neet-full-course-11-12";
+      return matchCourse && ((email && p.userEmail?.toLowerCase() === email) || (uId && p.userId === uId) || (ordId && p.orderId?.toLowerCase() === ordId));
     });
 
     if (isPurchased || isPurchasedExplicit) {
-      const cfg = { ...DEFAULT_FULL_COURSE_SERVER_CONFIG, ...(db.full_course_config || {}) };
+      // Find matching course or fall back to default
+      const allCourses = Array.isArray(db.courses) ? db.courses : [];
+      const matchedCourse = allCourses.find((c: any) => c.id === requestedCourseId) || { ...DEFAULT_FULL_COURSE_SERVER_CONFIG, ...(db.full_course_config || {}) };
       return res.json({
         success: true,
-        accessUrl: cfg.mainCourseDriveLink || cfg.sampleDriveLink
+        accessUrl: matchedCourse.mainCourseDriveLink || matchedCourse.sampleDriveLink
       });
     }
 
     return res.status(403).json({
       success: false,
-      message: "Please complete your enrollment to access the NEET (11th & 12th) Full Course folder."
+      message: "Please complete your enrollment to access the course Google Drive folder."
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -2547,6 +2841,384 @@ app.get("/api/course/admin-stats", async (_req, res) => {
       stats: { totalPurchases, successfulPurchases, revenue },
       purchases
     });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// 8. COUPONS & DISCOUNT ENGINE
+// ==========================================
+
+const DEFAULT_SERVER_COUPONS = [
+  {
+    id: 'coupon-neet50',
+    code: 'NEET50',
+    discountType: 'flat',
+    discountValue: 50,
+    minAmount: 199,
+    active: true,
+    applicableProductTypes: ['all', 'book', 'pdf', 'mock_test', 'course'],
+    totalUsageLimit: 1000,
+    perUserUsageLimit: 3,
+    currentUsageCount: 42,
+    createdAt: '2026-01-01T00:00:00.000Z'
+  },
+  {
+    id: 'coupon-doctor10',
+    code: 'DOCTOR10',
+    discountType: 'percentage',
+    discountValue: 10,
+    minAmount: 399,
+    maxDiscount: 150,
+    active: true,
+    applicableProductTypes: ['all', 'book', 'pdf', 'mock_test', 'course'],
+    totalUsageLimit: 500,
+    perUserUsageLimit: 2,
+    currentUsageCount: 18,
+    createdAt: '2026-01-01T00:00:00.000Z'
+  },
+  {
+    id: 'coupon-mock25',
+    code: 'MOCK25',
+    discountType: 'percentage',
+    discountValue: 25,
+    minAmount: 99,
+    maxDiscount: 100,
+    active: true,
+    applicableProductTypes: ['mock_test'],
+    totalUsageLimit: 300,
+    perUserUsageLimit: 1,
+    currentUsageCount: 9,
+    createdAt: '2026-01-01T00:00:00.000Z'
+  },
+  {
+    id: 'coupon-course100',
+    code: 'COURSE100',
+    discountType: 'flat',
+    discountValue: 100,
+    minAmount: 499,
+    active: true,
+    applicableProductTypes: ['course'],
+    totalUsageLimit: 200,
+    perUserUsageLimit: 1,
+    currentUsageCount: 14,
+    createdAt: '2026-01-01T00:00:00.000Z'
+  }
+];
+
+// GET all coupons
+app.get("/api/coupons", (_req, res) => {
+  try {
+    const db = loadDatabase();
+    if (!Array.isArray(db.coupons) || db.coupons.length === 0) {
+      db.coupons = DEFAULT_SERVER_COUPONS;
+      saveDatabase(db);
+    }
+    return res.json({ success: true, coupons: db.coupons });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin Create or Update Coupon
+app.post("/api/coupons", (req, res) => {
+  try {
+    const couponData = req.body;
+    if (!couponData.code) {
+      return res.status(400).json({ success: false, error: "Coupon code is required" });
+    }
+
+    const db = loadDatabase();
+    if (!Array.isArray(db.coupons)) db.coupons = [];
+
+    const cleanCode = couponData.code.trim().toUpperCase();
+    const existingIndex = db.coupons.findIndex((c: any) => c.code.toUpperCase() === cleanCode || (couponData.id && c.id === couponData.id));
+
+    const couponRecord = {
+      id: couponData.id || `coupon-${cleanCode.toLowerCase()}-${Date.now()}`,
+      code: cleanCode,
+      discountType: couponData.discountType === 'percentage' ? 'percentage' : 'flat',
+      discountValue: Number(couponData.discountValue) || 0,
+      minAmount: Number(couponData.minAmount) || 0,
+      maxDiscount: couponData.maxDiscount ? Number(couponData.maxDiscount) : undefined,
+      startDate: couponData.startDate || undefined,
+      expiryDate: couponData.expiryDate || undefined,
+      totalUsageLimit: couponData.totalUsageLimit ? Number(couponData.totalUsageLimit) : undefined,
+      perUserUsageLimit: couponData.perUserUsageLimit ? Number(couponData.perUserUsageLimit) : 1,
+      currentUsageCount: Number(couponData.currentUsageCount) || 0,
+      active: couponData.active !== false,
+      applicableProductTypes: Array.isArray(couponData.applicableProductTypes) && couponData.applicableProductTypes.length > 0 
+        ? couponData.applicableProductTypes 
+        : ['all'],
+      applicableProductIds: Array.isArray(couponData.applicableProductIds) ? couponData.applicableProductIds : [],
+      createdAt: couponData.createdAt || new Date().toISOString()
+    };
+
+    if (existingIndex !== -1) {
+      db.coupons[existingIndex] = { ...db.coupons[existingIndex], ...couponRecord };
+    } else {
+      db.coupons.push(couponRecord);
+    }
+
+    saveDatabase(db);
+    syncToFirebaseRTDB("coupons", db.coupons).catch(() => {});
+
+    return res.json({ success: true, coupon: couponRecord });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin Delete Coupon
+app.delete("/api/coupons/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = loadDatabase();
+    if (Array.isArray(db.coupons)) {
+      db.coupons = db.coupons.filter((c: any) => c.id !== id && c.code !== id);
+      saveDatabase(db);
+      syncToFirebaseRTDB("coupons", db.coupons).catch(() => {});
+    }
+    return res.json({ success: true, message: "Coupon deleted successfully" });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Server-Side Coupon Validation Endpoint
+app.post("/api/coupons/validate", (req, res) => {
+  try {
+    const { code, amount, productType, userId, userEmail } = req.body;
+    const cleanCode = (code || "").trim().toUpperCase();
+    const cartAmount = Number(amount) || 0;
+
+    if (!cleanCode) {
+      return res.status(400).json({
+        success: false,
+        result: { valid: false, discountAmount: 0, finalAmount: cartAmount, originalAmount: cartAmount, error: "Please provide a coupon code" }
+      });
+    }
+
+    const db = loadDatabase();
+    const coupons = Array.isArray(db.coupons) && db.coupons.length > 0 ? db.coupons : DEFAULT_SERVER_COUPONS;
+    const coupon = coupons.find((c: any) => c.code.toUpperCase() === cleanCode);
+
+    if (!coupon) {
+      return res.json({
+        success: true,
+        result: { valid: false, discountAmount: 0, finalAmount: cartAmount, originalAmount: cartAmount, error: `Coupon "${cleanCode}" is not recognized` }
+      });
+    }
+
+    if (!coupon.active) {
+      return res.json({
+        success: true,
+        result: { valid: false, discountAmount: 0, finalAmount: cartAmount, originalAmount: cartAmount, error: `Coupon "${cleanCode}" is inactive` }
+      });
+    }
+
+    // Check dates
+    if (coupon.startDate && new Date(coupon.startDate).getTime() > Date.now()) {
+      return res.json({
+        success: true,
+        result: { valid: false, discountAmount: 0, finalAmount: cartAmount, originalAmount: cartAmount, error: `Coupon "${cleanCode}" is not yet active` }
+      });
+    }
+
+    if (coupon.expiryDate && new Date(coupon.expiryDate).getTime() < Date.now()) {
+      return res.json({
+        success: true,
+        result: { valid: false, discountAmount: 0, finalAmount: cartAmount, originalAmount: cartAmount, error: `Coupon "${cleanCode}" has expired` }
+      });
+    }
+
+    // Check min order amount
+    if (coupon.minAmount && cartAmount < coupon.minAmount) {
+      return res.json({
+        success: true,
+        result: {
+          valid: false,
+          discountAmount: 0,
+          finalAmount: cartAmount,
+          originalAmount: cartAmount,
+          error: `Minimum order amount of ₹${coupon.minAmount} required to apply coupon "${cleanCode}"`
+        }
+      });
+    }
+
+    // Check total usage limit
+    if (coupon.totalUsageLimit && (coupon.currentUsageCount || 0) >= coupon.totalUsageLimit) {
+      return res.json({
+        success: true,
+        result: { valid: false, discountAmount: 0, finalAmount: cartAmount, originalAmount: cartAmount, error: `Coupon "${cleanCode}" usage limit reached` }
+      });
+    }
+
+    // Check applicable product types
+    const applicableTypes = coupon.applicableProductTypes || ['all'];
+    if (!applicableTypes.includes('all')) {
+      if (productType && productType !== 'all' && productType !== 'mixed' && !applicableTypes.includes(productType)) {
+        return res.json({
+          success: true,
+          result: {
+            valid: false,
+            discountAmount: 0,
+            finalAmount: cartAmount,
+            originalAmount: cartAmount,
+            error: `Coupon "${cleanCode}" is only applicable to ${applicableTypes.join(', ')}`
+          }
+        });
+      }
+    }
+
+    // Calculate verified discount
+    let discount = 0;
+    if (coupon.discountType === 'percentage') {
+      discount = Math.round((cartAmount * coupon.discountValue) / 100);
+      if (coupon.maxDiscount && discount > coupon.maxDiscount) {
+        discount = coupon.maxDiscount;
+      }
+    } else {
+      discount = Math.min(coupon.discountValue, cartAmount);
+    }
+
+    const finalAmount = Math.max(1, cartAmount - discount);
+
+    return res.json({
+      success: true,
+      result: {
+        valid: true,
+        coupon,
+        discountAmount: discount,
+        finalAmount,
+        originalAmount: cartAmount
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Record Coupon Usage
+app.post("/api/coupons/record-usage", (req, res) => {
+  try {
+    const record = req.body;
+    if (!record.couponCode) {
+      return res.status(400).json({ success: false, error: "Missing coupon code" });
+    }
+
+    const db = loadDatabase();
+    if (!Array.isArray((db as any).coupon_usage)) (db as any).coupon_usage = [];
+    (db as any).coupon_usage.push({
+      ...record,
+      id: record.id || `usage-${Date.now()}`,
+      usedAt: record.usedAt || new Date().toISOString()
+    });
+
+    // Increment coupon count
+    if (Array.isArray(db.coupons)) {
+      const cIdx = db.coupons.findIndex((c: any) => c.code.toUpperCase() === record.couponCode.toUpperCase());
+      if (cIdx !== -1) {
+        db.coupons[cIdx].currentUsageCount = (db.coupons[cIdx].currentUsageCount || 0) + 1;
+      }
+    }
+
+    saveDatabase(db);
+    return res.json({ success: true, message: "Coupon usage recorded" });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// 9. REVIEWS & RATINGS ENGINE
+// ==========================================
+
+// GET reviews
+app.get("/api/reviews", (req, res) => {
+  try {
+    const { productId } = req.query;
+    const db = loadDatabase();
+    let reviews = Array.isArray(db.reviews) ? db.reviews : [];
+    if (productId) {
+      reviews = reviews.filter((r: any) => r.productId === productId);
+    }
+    return res.json({ success: true, reviews });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST review
+app.post("/api/reviews", (req, res) => {
+  try {
+    const reviewData = req.body;
+    if (!reviewData.productId || !reviewData.comment) {
+      return res.status(400).json({ success: false, error: "Product ID and comment are required" });
+    }
+
+    const db = loadDatabase();
+    if (!Array.isArray(db.reviews)) db.reviews = [];
+
+    const newReview = {
+      id: reviewData.id || `rev-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      productId: reviewData.productId,
+      productType: reviewData.productType || 'general',
+      productTitle: reviewData.productTitle || '',
+      userId: reviewData.userId || '',
+      userEmail: reviewData.userEmail || '',
+      userName: reviewData.userName || 'Verified Student',
+      userAvatar: reviewData.userAvatar || '',
+      rating: Number(reviewData.rating) || 5,
+      comment: reviewData.comment,
+      isVerifiedPurchase: reviewData.isVerifiedPurchase !== false,
+      isHidden: reviewData.isHidden === true,
+      createdAt: reviewData.createdAt || new Date().toISOString()
+    };
+
+    db.reviews.unshift(newReview);
+    saveDatabase(db);
+    syncToFirebaseRTDB("reviews", db.reviews).catch(() => {});
+
+    return res.json({ success: true, review: newReview });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT review (moderation hide/unhide)
+app.put("/api/reviews/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isHidden } = req.body;
+    const db = loadDatabase();
+    if (Array.isArray(db.reviews)) {
+      const idx = db.reviews.findIndex((r: any) => r.id === id);
+      if (idx !== -1) {
+        db.reviews[idx].isHidden = Boolean(isHidden);
+        saveDatabase(db);
+        syncToFirebaseRTDB("reviews", db.reviews).catch(() => {});
+        return res.json({ success: true, review: db.reviews[idx] });
+      }
+    }
+    return res.status(404).json({ success: false, error: "Review not found" });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE review
+app.delete("/api/reviews/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = loadDatabase();
+    if (Array.isArray(db.reviews)) {
+      db.reviews = db.reviews.filter((r: any) => r.id !== id);
+      saveDatabase(db);
+      syncToFirebaseRTDB("reviews", db.reviews).catch(() => {});
+    }
+    return res.json({ success: true, message: "Review deleted successfully" });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -2640,11 +3312,10 @@ function getGeminiClient(): GoogleGenAI {
 }
 
 // Resilient multi-model fallback chain to handle transient 503 (high demand) and 429 surges
-// gemini-3.1-flash-lite has a higher 15 RPM quota limit on free tier, paired with gemini-2.5-flash
 const GEMINI_MODELS_FALLBACK_CHAIN = [
+  "gemini-2.5-flash",
   "gemini-3.1-flash-lite",
-  "gemini-3.8-flash",
-  "gemini-flash-latest"
+  "gemini-2.5-pro"
 ];
 
 function extractRetryDelaySeconds(err: any): number {
@@ -2683,7 +3354,7 @@ const NEET_QUESTION_SCHEMA = {
           figureBoundingBox: {
             type: Type.ARRAY,
             items: { type: Type.INTEGER },
-            description: "[ymin, xmin, ymax, xmax] normalized 0-1000",
+            description: "[ymin, xmin, ymax, xmax] normalized 0-1000 containing the visual drawing/diagram/circuit/chemical structure",
           },
           matchTable: {
             type: Type.OBJECT,
@@ -2717,7 +3388,7 @@ const NEET_QUESTION_SCHEMA = {
                     label: { type: Type.STRING },
                     text: { type: Type.STRING },
                   },
-                  required: ["label"],
+                  required: ["label", "text"],
                 },
               },
             },
@@ -2735,7 +3406,7 @@ const NEET_QUESTION_SCHEMA = {
                     label: { type: Type.STRING },
                     text: { type: Type.STRING },
                   },
-                  required: ["label"],
+                  required: ["label", "text"],
                 },
               },
             },
@@ -2971,26 +3642,40 @@ CRITICAL RULES:
    - DO NOT extract answer key matrices or solution derivations as new questions!
    - If this page only contains "Answer Key", "Hints & Solutions", "Explanations", or "Answers", return: {"questions": []}.
    - NEVER create a question whose text is just "Answer: 1", "Ans: 4", "Sol:", or formula derivations without a question statement.
-   - NEVER output dummy options like "N/A", "n/a", or invent fake options like "Calculate the ratio of velocities", "Application of...", "None of the above" when no options exist.
-   - Every valid question MUST have a real question prompt and 4 real options (A, B, C, D) printed on the exam paper. If a block lacks 4 real options, it is NOT a question—do NOT output it!
+   - NEVER output dummy options like "N/A", "Option A", "Option B", or invent fake options.
+   - Every question MUST have all 4 real options (A, B, C, D) printed on the exam paper. If printed as (1), (2), (3), (4), map them to A, B, C, D. NEVER drop the first two options or output only 2 options.
 
-2. Question Numbering & Layout:
-   - NEET papers often have a 2-column layout: Left column is English, right column is Hindi for the EXACT SAME question number!
-   - Associate both English and Hindi versions to the same questionNumber.
-   - Extract the exact question number as printed (1 to 200). Never skip, merge, or re-order questions.
+2. CRITICAL Question Numbering & Layout (2-Column Bilingual Support):
+   - NEET papers have a TWO-COLUMN layout separated by a central line:
+     * The LEFT COLUMN is 100% ENGLISH.
+     * The RIGHT COLUMN is 100% HINDI (Devanagari) for the exact same questions!
+   - NEVER READ HORIZONTALLY ACROSS BOTH COLUMNS! Reading across columns scrambles English and Hindi words together into corrupted gibberish.
+   - Read the LEFT column first to extract the pure English questionText and all 4 English options (A, B, C, D).
+   - Read the corresponding RIGHT column to extract the pure Hindi questionText and all 4 Hindi options (A, B, C, D).
+   - NEVER place Hindi/Devanagari characters inside the "english" object!
+   - NEVER place English sentences inside the "hindi" object!
 
-3. Complete Verbatim Text (Zero Paraphrasing):
-   - Never summarize, rewrite, or paraphrase. Extract the exact words, symbols, and units.
-   - All 4 options (A, B, C, D) must be captured with their exact printed text. If printed as (1), (2), (3), (4), map them to A, B, C, D.
+3. MANDATORY Figures, Diagrams, Circuits, Graphs, and Chemical Structures (Bounding Boxes):
+   - Physics, Chemistry, and Biology questions frequently feature diagrams.
+   - ANY question that contains a drawing, schematic, circuit, graph, sketch, reaction scheme, or visual apparatus MUST be detected:
+     * PHYSICS: circular wire bends (e.g. wire with circular arc of radius a and origin O), moving square/rectangular loops near long conductors (e.g. loop PQRS near wire CD with velocity v), electric circuits, pulleys, spring-mass systems, graphs, ray optics/lenses.
+     * CHEMISTRY: organic reaction mechanisms, benzene rings, aromatic structures, cyclohexanes, skeletal chemical formulas, apparatus sketches (e.g. Clemmensen, Wolff-Kishner, Rosenmund, Etard, Williamson ether).
+     * BIOLOGY: anatomical diagrams, flowcharts, plant/cell structures, cycles, pedigree charts.
+   - If a question references ANY visual ("shown in figure", "as shown", "given diagram", "in the circuit", "in the graph", "structure of", "reaction scheme", "loop PQRS", "radius a", "magnitude of magnetic field") or has ANY drawing:
+     * MUST set "hasFigure": true
+     * "figureDescription": a concise label (e.g. "Magnetic field wire circular bend", "Square loop PQRS near current wire", "Benzene ring reaction mechanism", "RC circuit diagram")
+     * "figureBoundingBox": [ymin, xmin, ymax, xmax] as 4 integers normalized between 0 and 1000 representing the PRECISE bounding box of ONLY the diagram. Include the entire diagram clearly including all labels (P, Q, R, S, I, v, r, a, O) without clipping, and without including the question text.
+   - If individual options (A, B, C, D) contain diagrams or chemical structures:
+     * Include in "optionsWithFigures": [ { "label": "A", "boundingBox": [ymin, xmin, ymax, xmax] }, ... ]
 
-4. Strict Bilingual Separation & Scientific Symbols (Clean Text):
-   - english.questionText and english.options: Full verbatim English text and all options.
-     * MUST contain ONLY clean English text and standard scientific symbols (e.g. Ω, μ, °, √, →, ⇌, Δ, α, β, γ, π, ×, ±, Å).
-     * NEVER include Hindi or Devanagari script inside the english fields!
-   - hindi.questionText and hindi.options: Full verbatim Hindi text in clean Devanagari script and all options.
-   - NEVER output corrupted unicode, mojibake (like âˆ−, â€", Ã—, Â°C), or garbled characters.
+4. Strict Mathematical & Scientific Symbols (Clean Greek & Math):
+   - NEVER output raw programmer ASCII like "mu_0/4*pi*a [3*pi/2 + 1]" or "sqrt(x)"!
+   - Use standard scientific Unicode characters:
+     * Greek letters: μ₀ (not mu_0), π (not pi), ε₀ (not epsilon_0), ω (not omega), θ (not theta), λ (not lambda), α, β, γ, Δ, Ω (ohm), ρ (rho), σ (sigma).
+     * Math notation: √ (not sqrt), · or × (not *), / (not raw division code), ±, °, → (for reactions), ⇌ (for equilibrium), ↑, ↓.
+     * Example: "(μ₀I / 4πa) [3π/2 + 1]" or "μ₀I / (4πa) · [3π/2 + 1]", "I = I_A sin ωt + I_B cos ωt", "I_rms = √(I_A² + I_B²)/√2".
 
-5. Match-the-Column Questions & Tables (Zero Duplication):
+5. Match-the-Column Questions & Tables (Zero Duplication & No Markdown Pipe Garbage):
    - When a question has Column-I & Column-II (or List-I & List-II):
      * Put ALL column names, labels, keys, and row contents EXCLUSIVELY into the structured "matchTable" object:
        "matchTable": {
@@ -3000,17 +3685,16 @@ CRITICAL RULES:
            { "leftKey": "(i)", "leftText": "...", "rightKey": "(a)", "rightText": "..." }
          ]
        }
-     * CRITICAL: DO NOT repeat or duplicate the table rows, column lists, or items inside "english.questionText"!
-     * "english.questionText" must ONLY contain the introductory premise sentence (e.g. "Match List-I with List-II:") and if present, the closing instruction (e.g. "Choose the correct answer from the options given below:").
+     * CRITICAL: NEVER include markdown table delimiters, table pipes like "|||", "|:---|:---|", or duplicate rows inside "english.questionText" or "hindi.questionText"!
+     * "questionText" must ONLY contain the introductory premise sentence (e.g. "Match the following and mark correct option:") and the closing question line.
 
-6. MANDATORY Figures, Diagrams, Graphs, and Circuits (High Precision Bounding Boxes):
-   - NEET Physics, Chemistry, and Biology questions frequently feature diagrams (circuits, mechanics setups, pulleys, graphs, ray optics sketches, potential energy curves, mutarotation curves, reaction schemes, apparatus sketches, plant/animal biological anatomy).
-   - If a question contains ANY diagram, figure, chart, schematic, circuit, graph, sketch, reaction scheme, or visual apparatus:
-     * Set "hasFigure": true
-     * "figureDescription": a concise 3-5 word label (e.g. "Magnetic field wire circular bend", "Square loop near wire", "Blocks on smooth surface", "Chromatography plate")
-     * "figureBoundingBox": [ymin, xmin, ymax, xmax] as 4 integers normalized between 0 and 1000 representing the PRECISE bounding box of ONLY the diagram. Do not clip the diagram edges, and do not include the question text above or neighboring question text.
-   - If individual options (A, B, C, D) contain diagrams or chemical structures:
-     * Include in "optionsWithFigures": [ { "label": "A", "boundingBox": [ymin, xmin, ymax, xmax] }, ... ]
+6. Strict Bilingual Separation & Clean Devanagari Hindi:
+   - english.questionText and english.options: Full verbatim English text and all options.
+     * MUST contain ONLY clean English text and standard scientific symbols.
+     * NEVER include Hindi or Devanagari script inside the english fields!
+   - hindi.questionText and hindi.options: Full verbatim Hindi text in clean, contiguous Devanagari script.
+     * Ensure correct Hindi spellings without spaces between syllables or matras.
+     * NEVER include English labels or English text inside Hindi fields.
 
 7. Correct Answer:
    - If clearly marked on this question paper page, set correctAnswer ('A'|'B'|'C'|'D'). Otherwise default to 'A'.`;

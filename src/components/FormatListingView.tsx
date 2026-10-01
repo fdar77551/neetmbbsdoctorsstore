@@ -43,6 +43,7 @@ export const FormatListingView: React.FC<FormatListingViewProps> = ({
   onOpenPdfReader,
 }) => {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [failedImageIds, setFailedImageIds] = useState<Record<string, boolean>>({});
 
   // Filter products strictly by format
   const formatProducts = useMemo(() => {
@@ -284,25 +285,47 @@ export const FormatListingView: React.FC<FormatListingViewProps> = ({
 
                 {/* ================= RIGHT PRODUCT COVER IMAGE (INCREASED PROPORTIONS) ================= */}
                 <div className="w-32 sm:w-40 h-36 sm:h-42 shrink-0 flex items-center justify-center relative rounded-2xl bg-slate-50 border border-slate-200/70 overflow-hidden shadow-2xs p-1">
-                  {product.coverImage ? (
+                  {product.coverImage && !failedImageIds[product.id] ? (
                     <img
                       src={resolveImageUrl(product.coverImage)}
                       alt={product.title}
                       className="w-full h-full object-contain group-hover:scale-103 transition-transform duration-300 rounded-xl"
                       loading="lazy"
                       referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        const currentSrc = target.src;
+                        // If it failed on direct r2.dev (e.g. ISP blocked on mobile), try our reliable server proxy
+                        if (currentSrc.includes('.r2.dev/') && !currentSrc.includes('/api/r2/file/')) {
+                          const key = currentSrc.split('.r2.dev/')[1];
+                          if (key) {
+                            target.src = `/api/r2/file/${key.replace(/^\/+/, '')}`;
+                            return;
+                          }
+                        }
+                        // If proxy or other source also fails, show the fallback card
+                        setFailedImageIds(prev => ({ ...prev, [product.id]: true }));
+                      }}
                     />
                   ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-between p-2 text-center bg-gradient-to-br from-blue-900 to-slate-900 text-white rounded-xl">
-                      {product.type === 'book' ? (
-                        <BookOpen className="w-5 h-5 text-yellow-400 mb-0.5" />
-                      ) : (
-                        <FileText className="w-5 h-5 text-blue-300 mb-0.5" />
-                      )}
-                      <span className="text-[8px] font-black line-clamp-2">
-                        {product.title}
+                    <div className="w-full h-full flex flex-col items-center justify-between p-2.5 text-center bg-gradient-to-br from-blue-900 via-indigo-950 to-slate-900 text-white rounded-xl shadow-inner border border-blue-500/20">
+                      <div className="w-full flex items-center justify-between text-[7px] font-black uppercase text-yellow-400">
+                        <span>NEET MBBS</span>
+                        <span>{product.type === 'book' ? 'BOOK' : 'PDF'}</span>
+                      </div>
+                      <div className="my-auto px-1">
+                        {product.type === 'book' ? (
+                          <BookOpen className="w-5 h-5 text-yellow-400 mx-auto mb-1 opacity-90" />
+                        ) : (
+                          <FileText className="w-5 h-5 text-blue-300 mx-auto mb-1 opacity-90" />
+                        )}
+                        <span className="text-[8.5px] font-black line-clamp-2 leading-tight block">
+                          {product.title}
+                        </span>
+                      </div>
+                      <span className="text-[6.5px] bg-white/15 px-1.5 py-0.5 rounded-full text-blue-100 font-bold">
+                        100% NCERT Verified
                       </span>
-                      <span className="text-[7px] text-blue-300 font-bold">Verified</span>
                     </div>
                   )}
 

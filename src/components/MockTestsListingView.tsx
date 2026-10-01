@@ -23,7 +23,9 @@ import {
   ChevronRight,
   Languages,
   FlaskConical,
-  X
+  X,
+  Share2,
+  Star
 } from 'lucide-react';
 import { MockTest, MockTestAttempt, MockSubject, MockTestType } from '../types';
 import { 
@@ -35,6 +37,9 @@ import {
   canStudentAttemptTest
 } from '../lib/mockTestData';
 import { MockTestLeaderboardModal } from './MockTestLeaderboardModal';
+import { MockTestShareModal } from './MockTestShareModal';
+import { MockTestDetailModal } from './MockTestDetailModal';
+import { getProductRatingStats } from '../lib/reviewData';
 
 interface MockTestsListingViewProps {
   currentUser?: { uid?: string; email?: string | null; displayName?: string | null } | null;
@@ -69,6 +74,22 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
   const [activeLeaderboardTest, setActiveLeaderboardTest] = useState<MockTest | null>(null);
   const [attemptsUpdateTrigger, setAttemptsUpdateTrigger] = useState(0);
   const [languageSelectModalTest, setLanguageSelectModalTest] = useState<MockTest | null>(null);
+  const [sharedTestModal, setSharedTestModal] = useState<MockTest | null>(null);
+  const [shareModalTest, setShareModalTest] = useState<MockTest | null>(null);
+
+  // Automatically open shared test when opened via unique link (?testId=...)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const testId = params.get('testId') || params.get('mockTest');
+      if (testId) {
+        const found = tests.find(t => t.id === testId);
+        if (found) {
+          setSharedTestModal(found);
+        }
+      }
+    }
+  }, [tests]);
 
   const isTestBilingual = (test: MockTest): boolean => {
     if (test.languages && test.languages.includes('hi')) return true;
@@ -178,8 +199,8 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight font-['Outfit',sans-serif]">
               NEET Mock Tests
             </h1>
-            <p className="text-xs text-slate-500 font-medium">
-              Practice NEET-style tests and track your performance.
+            <p className="text-xs sm:text-sm text-blue-600 font-bold tracking-wide">
+              Practice. Analyze. Improve.
             </p>
           </div>
 
@@ -451,6 +472,7 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
                 const storedQuestions = getStoredMockQuestions(test.id);
                 const hasFigures = storedQuestions.some(q => Boolean(q.figureUrl || q.questionImageUrl || (q.figures && q.figures.length > 0)));
                 const attemptCount = userAttempt ? (userAttempt.status === 'submitted' ? 1 : 0) : 0;
+                const ratingStats = getProductRatingStats(test.id, 4.9, 84);
 
                 // Color accent theme based on subject / type
                 const primarySubject = test.subjects?.[0] || 'Full';
@@ -502,10 +524,33 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
                         </div>
                       </div>
 
-                      {/* Test Title */}
-                      <h3 className="text-sm sm:text-base font-black text-slate-900 font-['Outfit',sans-serif] leading-snug line-clamp-2 group-hover:text-blue-600 transition-colors">
+                      {/* Test Title (Clickable to open test details modal) */}
+                      <h3 
+                        onClick={() => setSharedTestModal(test)}
+                        className="text-sm sm:text-base font-black text-slate-900 font-['Outfit',sans-serif] leading-snug line-clamp-2 group-hover:text-blue-600 transition-colors cursor-pointer"
+                        title="Click to view test syllabus, details and reviews"
+                      >
                         {test.title}
                       </h3>
+
+                      {/* Rating & Attempt Info */}
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <div 
+                          onClick={() => setSharedTestModal(test)}
+                          className="flex items-center gap-1 font-bold text-amber-700 bg-amber-50/80 px-2 py-0.5 rounded-lg border border-amber-200/80 cursor-pointer hover:bg-amber-100 transition"
+                          title="View reviews and star ratings"
+                        >
+                          <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                          <span>{ratingStats.averageRating}</span>
+                          <span className="text-slate-400 font-normal">({ratingStats.totalReviews})</span>
+                        </div>
+
+                        {attemptCount > 0 && (
+                          <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                            Attempted ({attemptCount})
+                          </span>
+                        )}
+                      </div>
 
                       {/* Description */}
                       <p className="text-[11px] sm:text-xs text-slate-500 leading-relaxed line-clamp-2">
@@ -567,11 +612,21 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
 
                       {/* Action Buttons */}
                       <div className="flex items-center gap-1.5">
+                        {/* Share Button (Prompt Requirement 1) */}
+                        <button
+                          type="button"
+                          onClick={() => setShareModalTest(test)}
+                          className="p-2 bg-white hover:bg-slate-100 text-blue-600 border border-slate-200 rounded-xl transition cursor-pointer shadow-2xs"
+                          title="Share Mock Test"
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                        </button>
+
                         {test.showLeaderboard && (
                           <button
                             type="button"
                             onClick={() => handleOpenLeaderboardModal(test)}
-                            className="p-2 bg-white hover:bg-slate-100 text-amber-600 border border-slate-200 rounded-xl transition cursor-pointer"
+                            className="p-2 bg-white hover:bg-slate-100 text-amber-600 border border-slate-200 rounded-xl transition cursor-pointer shadow-2xs"
                             title="All India Leaderboard"
                           >
                             <Trophy className="w-3.5 h-3.5" />
@@ -724,6 +779,26 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
           currentUserEmail={effectiveUser?.email}
         />
       )}
+
+      {/* Mock Test Share Modal */}
+      <MockTestShareModal
+        test={shareModalTest}
+        isOpen={Boolean(shareModalTest)}
+        onClose={() => setShareModalTest(null)}
+      />
+
+      {/* Shared Mock Test Details & Review Modal */}
+      <MockTestDetailModal
+        test={sharedTestModal}
+        isOpen={Boolean(sharedTestModal)}
+        onClose={() => setSharedTestModal(null)}
+        currentUser={currentUser}
+        userProfile={userProfile}
+        onStartTest={onStartTest}
+        onBuyTest={onBuyTest}
+        onRequireAuth={handleAuth}
+        onOpenLeaderboard={handleOpenLeaderboardModal}
+      />
     </div>
   );
 };

@@ -7,7 +7,8 @@ import {
   SupportMessage, 
   StoreConfig,
   UserNeetPass,
-  DownloadHistoryItem
+  DownloadHistoryItem,
+  CloudflareR2Config
 } from '../types';
 import { INITIAL_PRODUCTS, INITIAL_ORDERS, INITIAL_REGISTERED_USERS, DEFAULT_BANNERS } from './data';
 import { 
@@ -210,6 +211,24 @@ export function selfHealLocalStorage(): void {
         }
       }
     } catch (e) {}
+
+    try {
+      const cfRaw = localStorage.getItem(CLOUDFLARE_CONFIG_KEY);
+      if (cfRaw) {
+        const cfParsed = JSON.parse(cfRaw);
+        if (!cfParsed.publicDevUrl || cfParsed.publicDevUrl.includes('pub-8faec') || !cfParsed.secretAccessKey || cfParsed.secretAccessKey.length !== 64) {
+          safeSetLocalStorage(CLOUDFLARE_CONFIG_KEY, JSON.stringify({
+            ...DEFAULT_CLOUDFLARE_CONFIG,
+            ...cfParsed,
+            publicDevUrl: DEFAULT_CLOUDFLARE_CONFIG.publicDevUrl,
+            secretAccessKey: DEFAULT_CLOUDFLARE_CONFIG.secretAccessKey,
+            accessKeyId: DEFAULT_CLOUDFLARE_CONFIG.accessKeyId,
+            accountId: DEFAULT_CLOUDFLARE_CONFIG.accountId,
+            bucketName: DEFAULT_CLOUDFLARE_CONFIG.bucketName
+          }));
+        }
+      }
+    } catch (e) {}
   } catch (err) {
     console.warn('LocalStorage self-heal notice:', err);
   }
@@ -220,14 +239,94 @@ if (typeof window !== 'undefined') {
   selfHealLocalStorage();
 }
 
-// Default Cloudflare R2 Public development URL
+// Cloudflare R2 Full Configuration Constants & Storage Keys
+export const CLOUDFLARE_CONFIG_KEY = 'neetmbbs_cloudflare_r2_config_v1';
 export const DEFAULT_R2_PUBLIC_DOMAIN = "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev";
+
+export const DEFAULT_CLOUDFLARE_CONFIG: CloudflareR2Config = {
+  accountId: "d715d090a75efd8790b9a6da1e2f42d4",
+  bucketName: "ncertify",
+  accessKeyId: "887e302ecc7e249de5f16198ddfb7bd4",
+  secretAccessKey: "20ddb02f48c59b9e1ae64dd1a164290e63396632633f0b49e2b5f310ba7fb79e", // 64-char hex
+  s3Endpoint: "https://d715d090a75efd8790b9a6da1e2f42d4.r2.cloudflarestorage.com",
+  publicDevUrl: "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev",
+  customCdnDomain: "",
+  storageMode: "proxy" // 'proxy' serves through Express backend with S3 credentials (solves CORS & Jio/Airtel blocking)
+};
+
+export function getStoredCloudflareConfig(): CloudflareR2Config {
+  try {
+    const raw = localStorage.getItem(CLOUDFLARE_CONFIG_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const isBadPubDev = !parsed.publicDevUrl || parsed.publicDevUrl.includes('pub-8faec');
+      return {
+        ...DEFAULT_CLOUDFLARE_CONFIG,
+        ...parsed,
+        accountId: (parsed.accountId && parsed.accountId.length === 32) ? parsed.accountId : DEFAULT_CLOUDFLARE_CONFIG.accountId,
+        bucketName: (parsed.bucketName && parsed.bucketName.trim()) ? parsed.bucketName.trim() : DEFAULT_CLOUDFLARE_CONFIG.bucketName,
+        accessKeyId: (parsed.accessKeyId && parsed.accessKeyId.length === 32) ? parsed.accessKeyId : DEFAULT_CLOUDFLARE_CONFIG.accessKeyId,
+        secretAccessKey: (parsed.secretAccessKey && parsed.secretAccessKey.length === 64) ? parsed.secretAccessKey : DEFAULT_CLOUDFLARE_CONFIG.secretAccessKey,
+        s3Endpoint: parsed.s3Endpoint || DEFAULT_CLOUDFLARE_CONFIG.s3Endpoint,
+        publicDevUrl: isBadPubDev ? DEFAULT_CLOUDFLARE_CONFIG.publicDevUrl : parsed.publicDevUrl,
+        storageMode: parsed.storageMode || DEFAULT_CLOUDFLARE_CONFIG.storageMode
+      };
+    }
+  } catch (e) {}
+  return { ...DEFAULT_CLOUDFLARE_CONFIG };
+}
+
+export function saveStoredCloudflareConfig(cfg: Partial<CloudflareR2Config>): void {
+  try {
+    const current = getStoredCloudflareConfig();
+    const updated: CloudflareR2Config = {
+      ...current,
+      ...cfg
+    };
+    safeSetLocalStorage(CLOUDFLARE_CONFIG_KEY, JSON.stringify(updated));
+    if (updated.customCdnDomain) {
+      safeSetLocalStorage(R2_PUBLIC_DOMAIN_KEY, updated.customCdnDomain);
+    } else if (updated.publicDevUrl) {
+      safeSetLocalStorage(R2_PUBLIC_DOMAIN_KEY, updated.publicDevUrl);
+    }
+    window.dispatchEvent(new Event('neetmbbs_r2_config_updated'));
+
+    // Sync to backend server
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/cloudflare/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      }).catch(() => {});
+    }
+
+    // Sync to Firebase RTDB
+    syncToFirebaseRTDBRest('config/cloudflare_r2', updated);
+  } catch (e) {
+    console.error('Error saving Cloudflare R2 config:', e);
+  }
+}
 
 export function getR2PublicDomain(): string {
   try {
+    const cf = getStoredCloudflareConfig();
+    if (cf.customCdnDomain && cf.customCdnDomain.trim()) {
+      return cf.customCdnDomain.trim().replace(/\/+$/, '');
+    }
+    const runtimeConfig = typeof window !== 'undefined' ? (window as any).__NEETMBBS_RUNTIME_CONFIG__ : undefined;
+    if (runtimeConfig?.R2_PUBLIC_DOMAIN && typeof runtimeConfig.R2_PUBLIC_DOMAIN === 'string' && runtimeConfig.R2_PUBLIC_DOMAIN.trim()) {
+      return runtimeConfig.R2_PUBLIC_DOMAIN.trim().replace(/\/+$/, '');
+    }
+    const envDomain = (import.meta as any).env?.VITE_R2_PUBLIC_DOMAIN;
+    if (envDomain && typeof envDomain === 'string' && envDomain.trim()) {
+      return envDomain.trim().replace(/\/+$/, '');
+    }
     const custom = localStorage.getItem(R2_PUBLIC_DOMAIN_KEY);
     if (custom && custom.trim()) {
       return custom.trim().replace(/\/+$/, '');
+    }
+    if (cf.publicDevUrl && cf.publicDevUrl.trim()) {
+      return cf.publicDevUrl.trim().replace(/\/+$/, '');
     }
   } catch (e) {}
   return DEFAULT_R2_PUBLIC_DOMAIN;
@@ -241,9 +340,7 @@ export function saveR2PublicDomain(domain: string): void {
     } else {
       localStorage.removeItem(R2_PUBLIC_DOMAIN_KEY);
     }
-    window.dispatchEvent(new Event('neetmbbs_r2_config_updated'));
-    // Sync to Firebase RTDB so all client browsers/Netlify visitors receive the updated public CDN domain automatically
-    syncToFirebaseRTDBRest('config/r2_public_domain', clean || DEFAULT_R2_PUBLIC_DOMAIN);
+    saveStoredCloudflareConfig({ customCdnDomain: clean });
   } catch (e) {
     console.error('Error saving R2 public domain:', e);
   }
@@ -260,46 +357,56 @@ export function resolveImageUrl(url?: string): string {
     return trimmed;
   }
 
-  const publicDomain = getR2PublicDomain() || DEFAULT_R2_PUBLIC_DOMAIN;
+  const cfConfig = getStoredCloudflareConfig();
+  const customCdn = cfConfig.customCdnDomain ? cfConfig.customCdnDomain.trim().replace(/\/+$/, '') : '';
+  const isDirectMode = cfConfig.storageMode === 'direct_r2';
 
-  // 2. If it's an old or different Cloudflare R2 .r2.dev URL (e.g. https://pub-d715d090a75efd8790b9a6da1e2f42d4.r2.dev/<key>)
-  if (trimmed.includes('.r2.dev/')) {
-    const key = trimmed.split('.r2.dev/')[1];
-    if (key) {
-      return `${publicDomain}/${key}`;
-    }
-  }
-
-  // 3. If it's a private Cloudflare R2 S3 endpoint (e.g. https://...r2.cloudflarestorage.com/ncertify/<key>)
-  if (trimmed.includes('.r2.cloudflarestorage.com/')) {
+  // 2. Extract clean key if it's already an R2 URL or internal proxy URL
+  let cleanKey = '';
+  if (trimmed.startsWith('/api/r2/file/')) {
+    cleanKey = trimmed.replace('/api/r2/file/', '');
+  } else if (trimmed.startsWith('api/r2/file/')) {
+    cleanKey = trimmed.replace('api/r2/file/', '');
+  } else if (trimmed.includes('.r2.dev/')) {
+    cleanKey = trimmed.split('.r2.dev/')[1] || '';
+  } else if (trimmed.includes('.r2.cloudflarestorage.com/')) {
     const afterHost = trimmed.split('.r2.cloudflarestorage.com/')[1] || '';
     const parts = afterHost.split('/');
-    const key = (parts.length > 1 && (parts[0] === 'ncertify' || parts[0] === 'bucket')) 
+    cleanKey = (parts.length > 1 && (parts[0] === 'ncertify' || parts[0] === 'bucket')) 
       ? parts.slice(1).join('/') 
       : afterHost;
-    if (key) {
-      return `${publicDomain}/${key}`;
-    }
   }
 
-  // 4. If it's an internal proxy URL like /api/r2/file/<key>
-  if (trimmed.startsWith('/api/r2/file/')) {
-    const key = trimmed.replace('/api/r2/file/', '');
-    // In local dev with backend running we can use proxy, but direct CDN is always fast and universal
-    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
-      return trimmed;
+  if (cleanKey) {
+    cleanKey = cleanKey.replace(/^\/+/, '');
+    // If Custom CDN domain configured (e.g. cdn.neetmbbsdoctors.store), prefer it
+    if (customCdn) {
+      return `${customCdn}/${cleanKey}`;
     }
-    return `${publicDomain}/${key}`;
+    // If user explicitly chose direct R2.dev
+    if (isDirectMode) {
+      const pubDev = cfConfig.publicDevUrl || DEFAULT_R2_PUBLIC_DOMAIN;
+      return `${pubDev.replace(/\/+$/, '')}/${cleanKey}`;
+    }
+    // Default smart proxy: always reliable, resolves ISP/CORS/iframe issues on mobile & Jio/Airtel
+    return `/api/r2/file/${cleanKey}`;
   }
 
-  // 5. If it's an absolute HTTP/HTTPS URL
+  // 3. Absolute External URL (Unsplash, external CDNs, etc.)
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     return trimmed;
   }
 
-  // 6. Object key or filename without protocol (e.g. products/xxx.jpg or NCERTify_Mock_Test.pdf)
-  const cleanKey = trimmed.replace(/^\/+/, '');
-  return `${publicDomain}/${cleanKey}`;
+  // 4. Relative bare key (e.g. "book-covers/xxx.png")
+  const bareKey = trimmed.replace(/^\/+/, '');
+  if (customCdn) {
+    return `${customCdn}/${bareKey}`;
+  }
+  if (isDirectMode) {
+    const pubDev = cfConfig.publicDevUrl || DEFAULT_R2_PUBLIC_DOMAIN;
+    return `${pubDev.replace(/\/+$/, '')}/${bareKey}`;
+  }
+  return `/api/r2/file/${bareKey}`;
 }
 
 // Dedicated PDF Direct Download URL resolver for Cloudflare R2
@@ -309,33 +416,46 @@ export function resolvePdfUrl(url?: string): string {
   if (!trimmed) return '';
   if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return trimmed;
 
-  const publicDomain = getR2PublicDomain() || DEFAULT_R2_PUBLIC_DOMAIN;
+  const cfConfig = getStoredCloudflareConfig();
+  const customCdn = cfConfig.customCdnDomain ? cfConfig.customCdnDomain.trim().replace(/\/+$/, '') : '';
+  const isDirectMode = cfConfig.storageMode === 'direct_r2';
 
-  if (trimmed.includes('.r2.dev/')) {
-    const key = trimmed.split('.r2.dev/')[1];
-    return `${publicDomain}/${key}`;
-  }
-
-  if (trimmed.includes('.r2.cloudflarestorage.com/')) {
+  let cleanKey = '';
+  if (trimmed.startsWith('/api/r2/file/')) {
+    cleanKey = trimmed.replace('/api/r2/file/', '');
+  } else if (trimmed.startsWith('/api/pdf/download/')) {
+    cleanKey = trimmed.replace('/api/pdf/download/', '');
+  } else if (trimmed.includes('.r2.dev/')) {
+    cleanKey = trimmed.split('.r2.dev/')[1] || '';
+  } else if (trimmed.includes('.r2.cloudflarestorage.com/')) {
     const afterHost = trimmed.split('.r2.cloudflarestorage.com/')[1] || '';
     const parts = afterHost.split('/');
-    const key = (parts.length > 1 && (parts[0] === 'ncertify' || parts[0] === 'bucket')) 
+    cleanKey = (parts.length > 1 && (parts[0] === 'ncertify' || parts[0] === 'bucket')) 
       ? parts.slice(1).join('/') 
       : afterHost;
-    return `${publicDomain}/${key}`;
   }
 
-  if (trimmed.startsWith('/api/r2/file/')) {
-    const key = trimmed.replace('/api/r2/file/', '');
-    return `${publicDomain}/${key}`;
+  if (cleanKey) {
+    cleanKey = cleanKey.replace(/^\/+/, '');
+    if (customCdn) return `${customCdn}/${cleanKey}`;
+    if (isDirectMode) {
+      const pubDev = cfConfig.publicDevUrl || DEFAULT_R2_PUBLIC_DOMAIN;
+      return `${pubDev.replace(/\/+$/, '')}/${cleanKey}`;
+    }
+    return `/api/r2/file/${cleanKey}`;
   }
 
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     return trimmed;
   }
 
-  const cleanKey = trimmed.replace(/^\/+/, '');
-  return `${publicDomain}/${cleanKey}`;
+  const bareKey = trimmed.replace(/^\/+/, '');
+  if (customCdn) return `${customCdn}/${bareKey}`;
+  if (isDirectMode) {
+    const pubDev = cfConfig.publicDevUrl || DEFAULT_R2_PUBLIC_DOMAIN;
+    return `${pubDev.replace(/\/+$/, '')}/${bareKey}`;
+  }
+  return `/api/r2/file/${bareKey}`;
 }
 
 // Normalize any R2 asset URL directly to the current public R2 CDN link
@@ -698,6 +818,29 @@ export function initRealtimeFirebaseSync(): void {
           window.dispatchEvent(new Event('neetmbbs_store_config_updated'));
         }
       }, (err) => console.warn('Firebase RTDB store config listener notice:', err));
+
+      // 8. Live NEET Full Course Config Listener (Persistent Realtime Sync)
+      const fullCourseRef = ref(rtdb, 'config/full_course_config');
+      onValue(fullCourseRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val && typeof val === 'object') {
+          safeSetLocalStorage('neetmbbs_full_course_config_v1', JSON.stringify(val));
+          window.dispatchEvent(new CustomEvent('neetmbbs_course_config_updated', { detail: val }));
+        }
+      }, (err) => console.warn('Firebase RTDB full course listener notice:', err));
+
+      // 9. Live Multi-Class Courses Listener (Class 6th, 7th, 8th, 9th, 10th, 11th, 12th, NEET)
+      const coursesRef = ref(rtdb, 'config/courses');
+      onValue(coursesRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val) {
+          const list = Array.isArray(val) ? val.filter(Boolean) : Object.values(val);
+          if (list.length > 0) {
+            safeSetLocalStorage('neetmbbs_all_courses_list_v1', JSON.stringify(list));
+            window.dispatchEvent(new CustomEvent('neetmbbs_all_courses_updated', { detail: list }));
+          }
+        }
+      }, (err) => console.warn('Firebase RTDB courses listener notice:', err));
     }
   } catch (err) {
     console.warn('Realtime database sync setup notice:', err);
@@ -722,6 +865,23 @@ export async function syncDataFromDatabase(): Promise<void> {
       const merged = { ...DEFAULT_STORE_CONFIG, ...remoteStoreConfig };
       safeSetLocalStorage(STORE_CONFIG_KEY, JSON.stringify(merged));
       window.dispatchEvent(new Event('neetmbbs_store_config_updated'));
+    }
+
+    // 0.2 Sync NEET Full Course Config from Firebase RTDB
+    const remoteFullCourse = await fetchFromFirebaseRTDBRest('config/full_course_config');
+    if (remoteFullCourse && typeof remoteFullCourse === 'object') {
+      safeSetLocalStorage('neetmbbs_full_course_config_v1', JSON.stringify(remoteFullCourse));
+      window.dispatchEvent(new CustomEvent('neetmbbs_course_config_updated', { detail: remoteFullCourse }));
+    }
+
+    // 0.3 Sync All Multi-Class Courses (Class 6th to 12th + NEET) from Firebase RTDB
+    const remoteCourses = await fetchFromFirebaseRTDBRest('config/courses');
+    if (remoteCourses && (Array.isArray(remoteCourses) || typeof remoteCourses === 'object')) {
+      const list = Array.isArray(remoteCourses) ? remoteCourses.filter(Boolean) : Object.values(remoteCourses);
+      if (list.length > 0) {
+        safeSetLocalStorage('neetmbbs_all_courses_list_v1', JSON.stringify(list));
+        window.dispatchEvent(new CustomEvent('neetmbbs_all_courses_updated', { detail: list }));
+      }
     }
 
     // 1. Direct fetch from Firebase Realtime Database (Primary source of truth for Netlify & everywhere)

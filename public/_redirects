@@ -1,0 +1,3 @@
+# Cloudflare Pages SPA Client-Side Routing
+# Ensures all route paths (e.g. /mock-tests, /course, /course/class-10, /login, etc.) route to /index.html
+/*    /index.html   200

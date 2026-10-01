@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, X, ShieldCheck, Lock, MapPin, Truck, CheckCircle2, AlertCircle, Loader2, Zap, CreditCard, RefreshCw, Sparkles, Banknote } from 'lucide-react';
+import { ArrowLeft, X, ShieldCheck, Lock, MapPin, Truck, CheckCircle2, AlertCircle, Loader2, Zap, CreditCard, RefreshCw, Sparkles, Banknote, Tag } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { CartItem, ShippingAddress, Order, Product, NeetPassSubjectKey, NeetPassPlan } from '../types';
+import { CartItem, ShippingAddress, Order, Product, NeetPassSubjectKey, NeetPassPlan, Coupon } from '../types';
 import { INDIAN_STATES_AND_UTS } from '../lib/data';
 import { addOrder, generateNextOrderId, generateNextInvoiceNumber, activateNeetPass } from '../lib/storage';
 import { calculatePassExpiry } from '../lib/neetPassData';
 import { generateInvoicePdfBlob, downloadInvoicePdf } from '../lib/pdfInvoice';
+import { validateCoupon, saveCouponUsageRecord } from '../lib/couponData';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -48,6 +49,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [razorpayLoaded, setRazorpayLoaded] = useState(false);
+
+  // Coupon state
+  const [couponInput, setCouponInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
+  const [couponDiscount, setCouponDiscount] = useState<number>(0);
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [couponSuccess, setCouponSuccess] = useState<string | null>(null);
 
   // Helper to dispatch Telegram Order Alerts to both Admins automatically (strictly once per order)
   const dispatchedOrdersRef = useRef<Set<string>>(new Set());
@@ -127,8 +136,50 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   }, 0);
   const onlineDiscountPercent = 6; // 6% discount for online prepaid (e.g. ₹250 -> ₹235)
   const onlineDiscount = Math.round(rawSubtotal * (onlineDiscountPercent / 100));
-  const effectiveDiscount = paymentMethod === 'online' ? onlineDiscount : 0;
+  const effectiveOnlineDiscount = paymentMethod === 'online' ? onlineDiscount : 0;
+  const effectiveDiscount = effectiveOnlineDiscount + couponDiscount;
   const totalAmount = Math.max(1, rawSubtotal - effectiveDiscount) + totalShipping;
+
+  const handleApplyCoupon = async () => {
+    const cleanCode = couponInput.trim().toUpperCase();
+    if (!cleanCode) return;
+    setCouponLoading(true);
+    setCouponError(null);
+    setCouponSuccess(null);
+    try {
+      const productType = hasBooks && hasOnlyPdfs ? 'mixed' : hasBooks ? 'book' : 'pdf';
+      const userIdent = (userEmail || emailInput || '').trim();
+      const res = await validateCoupon(
+        cleanCode,
+        rawSubtotal,
+        productType,
+        userIdent,
+        userIdent
+      );
+      if (res.valid && res.coupon) {
+        setAppliedCoupon(res.coupon);
+        setCouponDiscount(res.discountAmount);
+        setCouponSuccess(`Coupon "${res.coupon.code}" applied! Saved ₹${res.discountAmount}`);
+        setCouponError(null);
+      } else {
+        setAppliedCoupon(null);
+        setCouponDiscount(0);
+        setCouponError(res.error || 'Invalid or expired coupon code');
+      }
+    } catch (e: any) {
+      setCouponError(e.message || 'Error validating coupon code');
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponDiscount(0);
+    setCouponInput('');
+    setCouponError(null);
+    setCouponSuccess(null);
+  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -403,7 +454,7 @@ Best wishes for your NEET UG Preparation! 🩺✨`
         totalAmount,
         subtotal: rawSubtotal,
         shippingCost: totalShipping,
-        discountAmount: 0,
+        discountAmount: couponDiscount,
         paymentId: `COD_${Date.now()}`,
         razorpayOrderId: 'N/A (Cash on Delivery)',
         paymentStatus: 'cod',
@@ -415,6 +466,22 @@ Best wishes for your NEET UG Preparation! 🩺✨`
       };
 
       addOrder(newOrder);
+
+      // Record coupon usage if applied
+      if (appliedCoupon && couponDiscount > 0) {
+        saveCouponUsageRecord({
+          id: `usage-${newOrder.id}`,
+          couponCode: appliedCoupon.code,
+          discountAmount: couponDiscount,
+          originalAmount: rawSubtotal,
+          finalAmount: totalAmount,
+          userId: userEmail || emailInput || 'guest',
+          userEmail: newOrder.userEmail,
+          orderId: newOrder.id,
+          productType: hasBooks ? 'book' : 'pdf',
+          usedAt: new Date().toISOString()
+        });
+      }
 
       // Auto-activate NEET Success Pass for all pass items in order
       try {
@@ -704,7 +771,7 @@ Best wishes for your NEET UG Preparation! 🩺✨`
         totalAmount,
         subtotal: rawSubtotal,
         shippingCost: totalShipping,
-        discountAmount: onlineDiscount,
+        discountAmount: effectiveDiscount,
         paymentId: razorpayResponse.razorpay_payment_id || `pay_${Date.now()}`,
         razorpayOrderId: orderId,
         paymentStatus: 'paid',
@@ -716,6 +783,22 @@ Best wishes for your NEET UG Preparation! 🩺✨`
       };
 
       addOrder(newOrder);
+
+      // Record coupon usage if applied
+      if (appliedCoupon && couponDiscount > 0) {
+        saveCouponUsageRecord({
+          id: `usage-${newOrder.id}`,
+          couponCode: appliedCoupon.code,
+          discountAmount: couponDiscount,
+          originalAmount: rawSubtotal,
+          finalAmount: totalAmount,
+          userId: userEmail || emailInput || 'guest',
+          userEmail: newOrder.userEmail,
+          orderId: newOrder.id,
+          productType: hasBooks ? 'book' : 'pdf',
+          usedAt: new Date().toISOString()
+        });
+      }
 
       // Auto-activate NEET Success Pass for all pass items in order
       try {
@@ -947,6 +1030,12 @@ Best wishes for your NEET UG Preparation! 🩺✨`
                   <span>-₹{onlineDiscount}</span>
                 </div>
               )}
+              {appliedCoupon && couponDiscount > 0 && (
+                <div className="flex justify-between text-amber-900 font-bold bg-amber-100/80 px-2 py-1 rounded-lg border border-amber-300">
+                  <span>🏷️ Coupon Discount ({appliedCoupon.code}):</span>
+                  <span>-₹{couponDiscount}</span>
+                </div>
+              )}
               {paymentMethod === 'cod' && (
                 <div className="flex justify-between text-amber-800 font-medium bg-amber-50/70 px-2 py-1 rounded-lg border border-amber-200">
                   <span>Payment Mode:</span>
@@ -954,6 +1043,91 @@ Best wishes for your NEET UG Preparation! 🩺✨`
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Have a Coupon Section */}
+          <div className="bg-amber-50/60 border border-amber-200/90 rounded-2xl p-3.5 space-y-2 shadow-2xs">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5 font-['Outfit',sans-serif]">
+                <Tag className="w-3.5 h-3.5 text-amber-700" />
+                <span>Have a coupon?</span>
+              </span>
+              {appliedCoupon && (
+                <span className="text-[10px] font-black text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-300">
+                  {appliedCoupon.code} Applied
+                </span>
+              )}
+            </div>
+
+            {!appliedCoupon ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={couponInput}
+                  onChange={(e) => {
+                    setCouponInput(e.target.value.toUpperCase());
+                    setCouponError(null);
+                  }}
+                  placeholder="Enter Coupon Code (e.g. NEET50)"
+                  className="flex-1 px-3 py-2 bg-white text-xs font-mono font-bold rounded-xl border border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500 uppercase tracking-wider"
+                />
+                <button
+                  type="button"
+                  disabled={!couponInput.trim() || couponLoading}
+                  onClick={handleApplyCoupon}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-black rounded-xl transition cursor-pointer shrink-0 font-['Outfit',sans-serif]"
+                >
+                  {couponLoading ? 'Checking...' : 'Apply'}
+                </button>
+              </div>
+            ) : (
+              <div className="bg-white p-3 rounded-xl border border-emerald-300 text-xs space-y-2">
+                <div className="flex items-center justify-between border-b border-emerald-100 pb-2">
+                  <div className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span className="font-mono font-black text-emerald-800 tracking-wider">Coupon: {appliedCoupon.code}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemoveCoupon}
+                    className="text-xs text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
+                  >
+                    Remove
+                  </button>
+                </div>
+                <div className="space-y-1 text-slate-600 font-medium">
+                  <div className="flex justify-between">
+                    <span>Original Price:</span>
+                    <span>₹{rawSubtotal}</span>
+                  </div>
+                  <div className="flex justify-between text-emerald-700 font-bold">
+                    <span>Discount:</span>
+                    <span>-₹{couponDiscount}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Coupon:</span>
+                    <span className="font-mono font-bold text-emerald-800">{appliedCoupon.code}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-900 font-black pt-1 border-t border-slate-100">
+                    <span>Final Price:</span>
+                    <span className="text-blue-700">₹{Math.max(1, rawSubtotal - couponDiscount)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {couponError && (
+              <div className="text-[11px] text-rose-700 font-medium flex items-center gap-1 bg-rose-50 p-2 rounded-xl border border-rose-200">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-600" />
+                <span>{couponError}</span>
+              </div>
+            )}
+            {couponSuccess && (
+              <div className="text-[11px] text-emerald-800 font-medium flex items-center gap-1 bg-emerald-50 p-2 rounded-xl border border-emerald-200">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
+                <span>{couponSuccess}</span>
+              </div>
+            )}
           </div>
 
           {/* Error Message Notification Card */}

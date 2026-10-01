@@ -1,7 +1,43 @@
-User-agent: *
+# Robots.txt for NEET MBBS Doctors Store
+# Configured for Google Search Console, Googlebot, Bingbot & High-Yield Indexing
+
+User-agent: Googlebot
 Allow: /
+Allow: /mock-tests
+Allow: /neet-pass
+Allow: /course
+Allow: /course/class-10
+Allow: /course/class-9
+Allow: /course/class-8
+Allow: /course/class-7
+Allow: /course/class-6
 Allow: /api/invoice/
 Allow: /api/pdf/download/
 
-# Sitemap location for Google Search Console
+User-agent: Googlebot-Image
+Allow: /
+Allow: /sample_diagrams/
+Allow: /favicon.svg
+Allow: /logo.svg
+
+User-agent: Bingbot
+Allow: /
+Allow: /mock-tests
+Allow: /neet-pass
+Allow: /course
+
+User-agent: *
+Allow: /
+Allow: /mock-tests
+Allow: /neet-pass
+Allow: /course
+Allow: /course/class-10
+Allow: /course/class-9
+Allow: /course/class-8
+Allow: /course/class-7
+Allow: /course/class-6
+Allow: /api/invoice/
+Allow: /api/pdf/download/
+
+# Sitemap location for Google Search Console & Bing Webmaster Tools
 Sitemap: https://neetmbbsdoctorsstore.com/sitemap.xml

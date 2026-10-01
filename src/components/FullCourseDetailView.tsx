@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { NeetFullCourseConfig, UserProfile, Order } from '../types';
 import { hasUserPurchasedFullCourse, fetchVerifiedCourseAccess } from '../lib/fullCourseData';
+import { ReviewSection } from './ReviewSection';
 
 interface FullCourseDetailViewProps {
   config: NeetFullCourseConfig;
@@ -468,6 +469,17 @@ export const FullCourseDetailView: React.FC<FullCourseDetailViewProps> = ({
             </details>
           </div>
         </div>
+
+        {/* ================= STUDENT REVIEWS & STAR RATINGS ================= */}
+        <ReviewSection
+          productId={config.id}
+          productType="course"
+          productTitle={config.title}
+          userProfile={userProfile}
+          onRequireAuth={onOpenAuth}
+          baseRating={4.9}
+          baseCount={142}
+        />
       </div>
 
       {/* ================= STICKY BOTTOM BAR (MOBILE & DESKTOP) ================= */}

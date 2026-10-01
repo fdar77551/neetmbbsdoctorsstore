@@ -3,6 +3,7 @@ import { ArrowLeft, X, Star, ShoppingBag, Zap, ShieldCheck, Truck, Download, Sha
 import { Product } from '../types';
 import { resolveImageUrl } from './ProductCard';
 import { downloadNotesPdf } from '../lib/pdfDownloader';
+import { ReviewSection } from './ReviewSection';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -11,6 +12,9 @@ interface ProductDetailModalProps {
   onQuickBuy: (product: Product) => void;
   onOpenPdfReader?: (pdfUrl: string, title: string) => void;
   isPurchased?: boolean;
+  currentUser?: { uid?: string; email?: string | null; displayName?: string | null } | null;
+  userProfile?: { uid?: string; email?: string | null; displayName?: string | null } | null;
+  onRequireAuth?: () => void;
 }
 
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
@@ -19,7 +23,10 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   onAddToCart,
   onQuickBuy,
   onOpenPdfReader,
-  isPurchased = false
+  isPurchased = false,
+  currentUser,
+  userProfile,
+  onRequireAuth
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
@@ -139,7 +146,18 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   onClick={() => setLightboxImage(allImages[activeImageIndex] || product.coverImage)}
                   className="max-h-64 max-w-full object-contain rounded-xl shadow-md cursor-zoom-in hover:scale-101 transition duration-150"
                   referrerPolicy="no-referrer"
-                  onError={() => setImageErrors(prev => ({ ...prev, [activeImageIndex]: true }))}
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    const currentSrc = target.src;
+                    if (currentSrc.includes('.r2.dev/') && !currentSrc.includes('/api/r2/file/')) {
+                      const key = currentSrc.split('.r2.dev/')[1];
+                      if (key) {
+                        target.src = `/api/r2/file/${key.replace(/^\/+/, '')}`;
+                        return;
+                      }
+                    }
+                    setImageErrors(prev => ({ ...prev, [activeImageIndex]: true }));
+                  }}
                 />
               ) : (
                 <div className="w-48 h-64 bg-gradient-to-br from-blue-700 via-indigo-800 to-slate-900 rounded-xl flex flex-col items-center justify-between p-4 text-white text-center shadow-md border border-blue-500/30">
@@ -309,6 +327,20 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               <Truck className="w-4 h-4 text-emerald-600 shrink-0" />
               <span className="text-[11px] font-bold">{product.type === 'pdf' ? 'Instant Download' : 'Pan-India Express'}</span>
             </div>
+          </div>
+
+          {/* Student Reviews & Star Rating Section */}
+          <div className="pt-2">
+            <ReviewSection
+              productId={product.id}
+              productType={product.type === 'pdf' ? 'pdf' : 'book'}
+              productTitle={product.title}
+              currentUser={currentUser}
+              userProfile={userProfile}
+              onRequireAuth={onRequireAuth}
+              baseRating={product.rating || 4.8}
+              baseCount={product.reviewsCount || 126}
+            />
           </div>
         </div>
 

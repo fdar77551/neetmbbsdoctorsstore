@@ -38,11 +38,39 @@
           "@id": "https://neetmbbsdoctorsstore.com/#website",
           "url": "https://neetmbbsdoctorsstore.com/",
           "name": "NEET MBBS Doctors Store",
-          "description": "Store for NEET Modules, Previous Year Papers, Medical Books & Downloadable PDFs",
+          "description": "Store for NEET Modules, Previous Year Papers, Medical Books, CBT Mock Tests & Full Foundation Courses",
           "potentialAction": {
             "@type": "SearchAction",
             "target": "https://neetmbbsdoctorsstore.com/?search={search_term_string}",
             "query-input": "required name=search_term_string"
+          }
+        },
+        {
+          "@type": "EducationalOrganization",
+          "@id": "https://neetmbbsdoctorsstore.com/#organization",
+          "name": "NEET MBBS Doctors Board",
+          "url": "https://neetmbbsdoctorsstore.com/",
+          "logo": "https://neetmbbsdoctorsstore.com/logo.svg",
+          "sameAs": [
+            "https://t.me/neetmbbsdoctors",
+            "https://youtube.com/@neetmbbsdoctors"
+          ]
+        },
+        {
+          "@type": "Course",
+          "@id": "https://neetmbbsdoctorsstore.com/#course-neet",
+          "name": "NEET (11th & 12th) Full Course & Foundation",
+          "description": "Comprehensive Class 11 and Class 12 NEET preparation program with Physics, Chemistry, Biology study notes, formula sheets, and Google Drive access.",
+          "provider": {
+            "@type": "EducationalOrganization",
+            "name": "NEET MBBS Doctors Board"
+          },
+          "offers": {
+            "@type": "Offer",
+            "price": "499",
+            "priceCurrency": "INR",
+            "category": "Educational Material",
+            "availability": "https://schema.org/InStock"
           }
         },
         {
@@ -53,7 +81,7 @@
           "logo": "https://neetmbbsdoctorsstore.com/logo.svg",
           "description": "Verified high-yield NEET books, formula sheets, modules, previous year question papers, and downloadable digital PDFs for medical aspirants.",
           "telephone": "+917004282468",
-          "priceRange": "₹49 - ₹1499",
+          "priceRange": "₹49 - ₹1999",
           "paymentAccepted": "Cash on Delivery, UPI, Credit Card, Net Banking",
           "currenciesAccepted": "INR"
         }
@@ -64,6 +92,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Runtime configuration helper for Cloudflare Pages / Static Hosting -->
+    <script src="/config.js"></script>
     <!-- Razorpay Checkout Script -->
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
   </head>

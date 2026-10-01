@@ -1,14 +1,17 @@
 import { NeetFullCourseConfig, Order, UserProfile, Product } from '../types';
-import { getStoredOrders, getMyDeviceOrderIds } from './storage';
+import { getStoredOrders, getMyDeviceOrderIds, syncToFirebaseRTDBRest } from './storage';
 
 export const COURSE_ID = 'neet-full-course-11-12';
 export const COURSE_LOCAL_KEY = 'neetmbbs_full_course_config_v1';
+export const ALL_COURSES_LOCAL_KEY = 'neetmbbs_all_courses_list_v1';
 
 export const DEFAULT_FULL_COURSE_CONFIG: NeetFullCourseConfig = {
   id: COURSE_ID,
   title: 'NEET (11th & 12th) Full Course',
   subtitle: 'Complete study material for your NEET preparation — Class 11 + Class 12.',
   description: 'Complete Class 11 + Class 12 preparation material for NEET aspirants. Master Physics, Chemistry & Biology with comprehensive digital study material delivered directly via Google Drive. Organized by experienced faculty, regularly updated with new high-yield resources, and designed so you can learn at your own pace.',
+  targetClass: 'Class 11 & 12 (NEET)',
+  badgeText: 'Most Popular',
   price: 499,
   originalPrice: 1999,
   sampleDriveLink: 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
@@ -33,6 +36,134 @@ export const DEFAULT_FULL_COURSE_CONFIG: NeetFullCourseConfig = {
     'Learn at your own pace'
   ]
 };
+
+export const INITIAL_MULTI_CLASS_COURSES: NeetFullCourseConfig[] = [
+  DEFAULT_FULL_COURSE_CONFIG,
+  {
+    id: 'course-class-10',
+    title: 'Class 10th Board + Foundation Course',
+    subtitle: 'Complete Science & Mathematics foundation material for Class 10 Board exam & early NEET preparation.',
+    description: 'Master Class 10 Science (Physics, Chemistry, Biology) and Mathematics with structured digital notes, exemplar solutions, and board cheatsheets delivered via Google Drive.',
+    targetClass: 'Class 10th',
+    badgeText: 'Board Special',
+    price: 399,
+    originalPrice: 1499,
+    sampleDriveLink: 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
+    mainCourseDriveLink: 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
+    isActive: true,
+    features: [
+      'Complete Class 10 NCERT Science & Maths Notes',
+      'Board Exam High-Yield Revision Cheatsheets',
+      'Previous 10-Year Solved Board Questions',
+      'Early Medical / NEET Foundation Concepts',
+      'Delivered Digitally through Google Drive'
+    ],
+    highlights: [
+      'Class 10th Complete',
+      'Science + Maths',
+      'Board Exam Focus',
+      'Full Drive Access'
+    ]
+  },
+  {
+    id: 'course-class-9',
+    title: 'Class 9th Foundation Course',
+    subtitle: 'Build strong conceptual fundamentals in Science & Mathematics for Class 9.',
+    description: 'Comprehensive digital notes and formula sheets for Class 9 Science and Mathematics to build rock-solid concepts for upcoming competitive exams.',
+    targetClass: 'Class 9th',
+    badgeText: 'Foundation',
+    price: 349,
+    originalPrice: 1299,
+    sampleDriveLink: 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
+    mainCourseDriveLink: 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
+    isActive: true,
+    features: [
+      'Class 9 Physics, Chemistry & Biology Notes',
+      'Complete Mathematics Problem Sets',
+      'Conceptual Diagrams & Flowcharts',
+      'Regular Drive Updates & Organized PDFs'
+    ],
+    highlights: [
+      'Class 9th Complete',
+      'Science & Maths',
+      'Foundation Base',
+      'Instant Drive Access'
+    ]
+  },
+  {
+    id: 'course-class-8',
+    title: 'Class 8th Foundation Course',
+    subtitle: 'Early foundation concepts and Olympiad-level study notes for Class 8 students.',
+    description: 'Engaging, colorful digital notes for Class 8 Science and Mathematics. Great for Olympiad preparation and building an early interest in science and medicine.',
+    targetClass: 'Class 8th',
+    badgeText: 'Junior Base',
+    price: 299,
+    originalPrice: 999,
+    sampleDriveLink: 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
+    mainCourseDriveLink: 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
+    isActive: true,
+    features: [
+      'Class 8 Science (Physics, Chemistry, Biology) Notes',
+      'Mathematics Foundation & Short Tricks',
+      'Olympiad & NTSE Junior Preparation Material',
+      'Unlimited Digital Access via Google Drive'
+    ],
+    highlights: [
+      'Class 8th Junior',
+      'Science & Maths',
+      'Olympiad Material',
+      'Google Drive Access'
+    ]
+  },
+  {
+    id: 'course-class-7',
+    title: 'Class 7th Foundation Course',
+    subtitle: 'Fundamental Science & Mathematics study notes for Class 7 students.',
+    description: 'Fun, structured digital study materials for Class 7 students to excel in school exams and develop strong analytical thinking early.',
+    targetClass: 'Class 7th',
+    badgeText: 'Early Learner',
+    price: 249,
+    originalPrice: 899,
+    sampleDriveLink: 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
+    mainCourseDriveLink: 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
+    isActive: true,
+    features: [
+      'Class 7 Science Conceptual Summaries',
+      'Mathematics Step-by-Step Solved Guides',
+      'Regularly Updated Drive Folder'
+    ],
+    highlights: [
+      'Class 7th',
+      'Science & Maths',
+      'Structured PDFs',
+      'Easy Drive Access'
+    ]
+  },
+  {
+    id: 'course-class-6',
+    title: 'Class 6th Foundation Course',
+    subtitle: 'Gentle, high-retention foundation study notes for Class 6 school exams.',
+    description: 'Illustrated digital study notes covering Class 6 Science and Mathematics fundamentals to spark a lifelong love for learning and discovery.',
+    targetClass: 'Class 6th',
+    badgeText: 'Starter',
+    price: 199,
+    originalPrice: 799,
+    sampleDriveLink: 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
+    mainCourseDriveLink: 'https://drive.google.com/drive/folders/1Mdq8czw42v-QaSegmWnWjq9Vmb5qAWZH',
+    isActive: true,
+    features: [
+      'Class 6 Science Illustrated Chapter Notes',
+      'Mathematics Foundation Worksheets',
+      'Instant Google Drive Access'
+    ],
+    highlights: [
+      'Class 6th',
+      'Science & Maths',
+      'Beginner Friendly',
+      'Google Drive Access'
+    ]
+  }
+];
 
 /**
  * Retrieves cached or saved course config
@@ -101,6 +232,9 @@ export async function saveFullCourseConfig(config: Partial<NeetFullCourseConfig>
     window.dispatchEvent(new CustomEvent('neetmbbs_course_config_updated', { detail: updated }));
   } catch (e) {}
 
+  // Direct sync to Firebase Realtime Database
+  syncToFirebaseRTDBRest('config/full_course_config', updated);
+
   // Sync to backend API
   try {
     const res = await fetch('/api/course/admin-config', {
@@ -119,6 +253,107 @@ export async function saveFullCourseConfig(config: Partial<NeetFullCourseConfig>
   }
 
   return updated;
+}
+
+/**
+ * Retrieves all multi-class courses (Class 6th to 12th + NEET)
+ */
+export function getAllCourses(): NeetFullCourseConfig[] {
+  try {
+    const raw = localStorage.getItem(ALL_COURSES_LOCAL_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {}
+  return INITIAL_MULTI_CLASS_COURSES;
+}
+
+/**
+ * Saves all courses to local cache and syncs with backend and Firebase RTDB
+ */
+export async function saveAllCourses(courses: NeetFullCourseConfig[]): Promise<NeetFullCourseConfig[]> {
+  try {
+    localStorage.setItem(ALL_COURSES_LOCAL_KEY, JSON.stringify(courses));
+    window.dispatchEvent(new CustomEvent('neetmbbs_all_courses_updated', { detail: courses }));
+  } catch (e) {}
+
+  // Realtime persistence to Firebase RTDB
+  syncToFirebaseRTDBRest('config/courses', courses);
+
+  return courses;
+}
+
+/**
+ * Fetches all courses from backend server
+ */
+export async function syncAllCoursesFromBackend(isAdmin = false): Promise<NeetFullCourseConfig[]> {
+  try {
+    const endpoint = isAdmin ? '/api/courses/admin' : '/api/courses';
+    const res = await fetch(endpoint);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.courses) && data.courses.length > 0) {
+        localStorage.setItem(ALL_COURSES_LOCAL_KEY, JSON.stringify(data.courses));
+        window.dispatchEvent(new CustomEvent('neetmbbs_all_courses_updated', { detail: data.courses }));
+        return data.courses;
+      }
+    }
+  } catch (e) {
+    console.warn('Could not sync all courses from backend:', e);
+  }
+  return getAllCourses();
+}
+
+/**
+ * Checks if the user or this device has verified purchase of a specific course (or full bundle)
+ */
+export function hasUserPurchasedCourse(
+  courseId: string,
+  user?: UserProfile | null,
+  ordersList?: Order[]
+): boolean {
+  const allOrders = (ordersList && ordersList.length > 0) ? ordersList : getStoredOrders();
+  const userEmail = (user?.email || '').trim().toLowerCase();
+  const userId = user?.uid || '';
+  const deviceOrderIds = new Set(getMyDeviceOrderIds().map(id => id.trim().toLowerCase()));
+  const targetCId = (courseId || COURSE_ID).toLowerCase().trim();
+
+  return allOrders.some(order => {
+    const isPaid = (order.paymentStatus === 'paid' || order.paymentStatus === 'paid_sandbox' || (order as any).paymentStatus === 'cod') && order.status !== 'cancelled';
+    if (!isPaid) return false;
+
+    const cleanOrderId = (order.id || '').trim().toLowerCase();
+    const isDeviceMatch = deviceOrderIds.has(cleanOrderId) || 
+                          deviceOrderIds.has(cleanOrderId.replace(/^ord-/, '')) ||
+                          deviceOrderIds.has(cleanOrderId.replace(/^#/, ''));
+
+    const orderEmail = (order.userEmail || '').trim().toLowerCase();
+    const isUserMatch = Boolean(
+      (userEmail && orderEmail === userEmail) || 
+      (userId && order.userId === userId) ||
+      (userEmail && String((order.shippingAddress as any)?.email || '').trim().toLowerCase() === userEmail)
+    );
+
+    if (isDeviceMatch || isUserMatch) {
+      return (order.items || []).some(item => {
+        const pId = (item.productId || '').trim().toLowerCase();
+        const title = (item.title || '').trim().toLowerCase();
+        return (
+          pId === targetCId ||
+          pId === COURSE_ID ||
+          pId.includes(targetCId) ||
+          (targetCId.includes('11') && pId.includes('neet-full-course')) ||
+          title.includes(targetCId) ||
+          title.includes('full course')
+        );
+      });
+    }
+
+    return false;
+  });
 }
 
 /**

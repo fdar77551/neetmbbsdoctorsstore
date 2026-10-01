@@ -149,6 +149,17 @@ export interface UserProfile {
   neetPasses?: UserNeetPass[];
 }
 
+export interface CloudflareR2Config {
+  accountId: string;
+  bucketName: string;
+  accessKeyId: string;
+  secretAccessKey: string; // 64-character hex
+  s3Endpoint: string;
+  publicDevUrl: string;
+  customCdnDomain?: string;
+  storageMode?: 'proxy' | 'direct_r2' | 'custom_cdn';
+}
+
 export interface StoreConfig {
   storeName: string;
   tagline: string;
@@ -187,21 +198,53 @@ export interface SupportMessage {
   status: 'unread' | 'read' | 'replied';
 }
 
+export type ReviewProductType = 'book' | 'pdf' | 'mock_test' | 'course' | 'all' | 'general';
+
 export interface Coupon {
+  id: string;
   code: string;
-  discountType: 'percentage' | 'flat';
+  discountType: 'percentage' | 'flat'; // 'percentage' (%) or 'flat' (₹)
   discountValue: number;
   minAmount?: number;
+  maxDiscount?: number; // Cap for percentage discount
+  startDate?: string;
+  expiryDate?: string;
+  totalUsageLimit?: number;
+  perUserUsageLimit?: number;
+  currentUsageCount?: number;
   active: boolean;
+  applicableProductTypes: ('book' | 'pdf' | 'mock_test' | 'course' | 'all')[];
+  applicableProductIds?: string[];
+  createdAt: string;
+}
+
+export interface CouponUsageRecord {
+  id: string;
+  couponCode: string;
+  discountAmount: number;
+  originalAmount: number;
+  finalAmount: number;
+  userId: string;
+  userEmail: string;
+  orderId: string;
+  productType?: string;
+  productId?: string;
+  usedAt: string;
 }
 
 export interface ProductReview {
   id: string;
   productId: string;
+  productType: ReviewProductType;
+  productTitle?: string;
+  userId: string;
   userEmail: string;
   userName: string;
-  rating: number;
+  userAvatar?: string;
+  rating: number; // 1 to 5 stars
   comment: string;
+  isVerifiedPurchase?: boolean;
+  isHidden?: boolean;
   createdAt: string;
 }
 
@@ -450,10 +493,12 @@ export interface CombinedLeaderboardUser {
 // ==========================================
 
 export interface NeetFullCourseConfig {
-  id: string; // 'neet-full-course-11-12'
+  id: string; // 'neet-full-course-11-12' or 'course-class-6', 'course-class-7', etc.
   title: string;
   subtitle: string;
   description: string;
+  targetClass?: string; // 'Class 6th', 'Class 7th', 'Class 8th', 'Class 9th', 'Class 10th', 'Class 11th', 'Class 12th', 'NEET (11th & 12th)', 'Dropper'
+  badgeText?: string;
   price: number;
   originalPrice: number;
   sampleDriveLink: string;
