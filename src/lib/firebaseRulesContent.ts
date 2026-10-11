@@ -220,32 +220,25 @@ service cloud.firestore {
 // Official Firebase Realtime Database (JSON) Rules for NEET MBBS Doctors Store
 export const FULL_REALTIME_DATABASE_RULES = `{
   "rules": {
-    ".read": true,
-    ".write": true,
     "products": {
       ".read": true,
-      ".write": "auth != null || now > 0",
-      ".indexOn": ["id", "type", "createdAt"]
+      ".write": "auth != null || now > 0"
     },
     "banners": {
       ".read": true,
-      ".write": "auth != null || now > 0",
-      ".indexOn": ["id", "order"]
+      ".write": "auth != null || now > 0"
     },
     "orders": {
       ".read": true,
-      ".write": true,
-      ".indexOn": ["id", "userId", "userEmail", "createdAt", "status"]
+      ".write": true
     },
     "support": {
       ".read": true,
-      ".write": true,
-      ".indexOn": ["id", "email", "status", "createdAt"]
+      ".write": true
     },
     "users": {
       ".read": true,
-      ".write": true,
-      ".indexOn": ["uid", "email", "role"]
+      ".write": true
     },
     "config": {
       ".read": true,
@@ -253,62 +246,35 @@ export const FULL_REALTIME_DATABASE_RULES = `{
     },
     "mock_tests": {
       ".read": true,
-      ".write": "auth != null || now > 0",
-      ".indexOn": ["id", "type", "testTypeCategory", "subject", "status", "createdAt"]
+      ".write": "auth != null || now > 0"
     },
     "mock_questions": {
       ".read": true,
-      ".write": "auth != null || now > 0",
-      ".indexOn": ["id", "testId", "subject", "questionNumber"]
+      ".write": "auth != null || now > 0"
     },
     "mock_attempts": {
       ".read": true,
-      ".write": true,
-      ".indexOn": ["id", "testId", "userId", "userEmail", "submittedAt"]
+      ".write": true
     },
     "mock_test_attempts": {
       ".read": true,
-      ".write": true,
-      ".indexOn": ["id", "testId", "userId", "userEmail", "submittedAt"]
-    },
-    "mock_results": {
-      ".read": true,
-      ".write": true,
-      ".indexOn": ["id", "testId", "userId"]
-    },
-    "leaderboards": {
-      ".read": true,
-      ".write": true,
-      ".indexOn": ["testId", "score"]
+      ".write": true
     },
     "mock_purchases": {
       ".read": true,
-      ".write": true,
-      ".indexOn": ["id", "userId", "userEmail", "testId"]
+      ".write": true
     },
-    "purchases": {
-      ".read": true,
-      ".write": true,
-      ".indexOn": ["id", "userId", "userEmail", "productId"]
-    },
-    "pdf_access": {
-      ".read": true,
-      ".write": true,
-      ".indexOn": ["id", "userId", "userEmail", "productId"]
-    },
-    "coupons": {
-      ".read": true,
-      ".write": true,
-      ".indexOn": ["code", "isActive"]
-    },
-    "coupon_usage": {
+    "mock_results": {
       ".read": true,
       ".write": true
     },
-    "reviews": {
+    "leaderboards": {
       ".read": true,
-      ".write": true,
-      ".indexOn": ["id", "productId", "rating", "createdAt"]
+      ".write": true
+    },
+    "courses": {
+      ".read": true,
+      ".write": true
     },
     "full_course": {
       ".read": true,
@@ -316,9 +282,26 @@ export const FULL_REALTIME_DATABASE_RULES = `{
     },
     "neet_passes": {
       ".read": true,
-      ".write": true,
-      ".indexOn": ["id", "userId", "userEmail"]
-    }
+      ".write": true
+    },
+    "purchases": {
+      ".read": true,
+      ".write": true
+    },
+    "pdf_access": {
+      ".read": true,
+      ".write": true
+    },
+    "reviews": {
+      ".read": true,
+      ".write": true
+    },
+    "coupons": {
+      ".read": true,
+      ".write": true
+    },
+    ".read": true,
+    ".write": true
   }
 }`;
 

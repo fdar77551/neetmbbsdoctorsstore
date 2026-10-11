@@ -1,5 +1,6 @@
 import { NeetFullCourseConfig, Order, UserProfile, Product } from '../types';
-import { getStoredOrders, getMyDeviceOrderIds, syncToFirebaseRTDBRest } from './storage';
+import { getStoredOrders, getMyDeviceOrderIds, syncToFirebaseRTDBRest, fetchFromFirebaseRTDBRest, safeSetLocalStorage } from './storage';
+import { rtdb, ref, set as rtdbSet, get as rtdbGet } from './firebase';
 
 export const COURSE_ID = 'neet-full-course-11-12';
 export const COURSE_LOCAL_KEY = 'neetmbbs_full_course_config_v1';
@@ -189,9 +190,45 @@ export function getFullCourseConfig(): NeetFullCourseConfig {
 }
 
 /**
- * Fetches latest course configuration from backend
+ * Fetches latest course configuration from backend & Firebase RTDB
  */
 export async function syncFullCourseConfigFromBackend(isAdmin = false): Promise<NeetFullCourseConfig> {
+  // 1. First priority: Direct fetch from Firebase Realtime Database
+  try {
+    if (rtdb) {
+      const snap = await rtdbGet(ref(rtdb, 'config/full_course_config'));
+      if (snap.exists()) {
+        const val = snap.val();
+        if (val && typeof val.price === 'number') {
+          const merged: NeetFullCourseConfig = {
+            ...DEFAULT_FULL_COURSE_CONFIG,
+            ...val,
+            price: Number(val.price) > 0 ? Number(val.price) : DEFAULT_FULL_COURSE_CONFIG.price
+          };
+          safeSetLocalStorage(COURSE_LOCAL_KEY, JSON.stringify(merged));
+          window.dispatchEvent(new CustomEvent('neetmbbs_course_config_updated', { detail: merged }));
+          return merged;
+        }
+      }
+    }
+  } catch (fbErr) {
+    // Fallback to REST
+    try {
+      const restData = await fetchFromFirebaseRTDBRest('config/full_course_config');
+      if (restData && typeof restData.price === 'number') {
+        const merged: NeetFullCourseConfig = {
+          ...DEFAULT_FULL_COURSE_CONFIG,
+          ...restData,
+          price: Number(restData.price) > 0 ? Number(restData.price) : DEFAULT_FULL_COURSE_CONFIG.price
+        };
+        safeSetLocalStorage(COURSE_LOCAL_KEY, JSON.stringify(merged));
+        window.dispatchEvent(new CustomEvent('neetmbbs_course_config_updated', { detail: merged }));
+        return merged;
+      }
+    } catch {}
+  }
+
+  // 2. Secondary check: Backend API
   try {
     const endpoint = isAdmin ? '/api/course/admin-config' : '/api/course/public-info';
     const res = await fetch(endpoint);
@@ -204,7 +241,7 @@ export async function syncFullCourseConfigFromBackend(isAdmin = false): Promise<
           ...data.course,
           price: Number(data.course.price) > 0 ? Number(data.course.price) : current.price
         };
-        localStorage.setItem(COURSE_LOCAL_KEY, JSON.stringify(merged));
+        safeSetLocalStorage(COURSE_LOCAL_KEY, JSON.stringify(merged));
         window.dispatchEvent(new CustomEvent('neetmbbs_course_config_updated', { detail: merged }));
         return merged;
       }
@@ -216,7 +253,7 @@ export async function syncFullCourseConfigFromBackend(isAdmin = false): Promise<
 }
 
 /**
- * Saves course configuration to localStorage and syncs with backend server
+ * Saves course configuration to localStorage and syncs with Firebase RTDB and backend
  */
 export async function saveFullCourseConfig(config: Partial<NeetFullCourseConfig>): Promise<NeetFullCourseConfig> {
   const current = getFullCourseConfig();
@@ -228,11 +265,28 @@ export async function saveFullCourseConfig(config: Partial<NeetFullCourseConfig>
   };
 
   try {
-    localStorage.setItem(COURSE_LOCAL_KEY, JSON.stringify(updated));
+    safeSetLocalStorage(COURSE_LOCAL_KEY, JSON.stringify(updated));
     window.dispatchEvent(new CustomEvent('neetmbbs_course_config_updated', { detail: updated }));
+
+    // Also synchronize this price inside all multi-class courses list
+    const currentCourses = getAllCourses();
+    const updatedCourses = currentCourses.map(c => {
+      if (c.id === COURSE_ID || c.id.includes('full-course')) {
+        return { ...c, ...updated };
+      }
+      return c;
+    });
+    safeSetLocalStorage(ALL_COURSES_LOCAL_KEY, JSON.stringify(updatedCourses));
+    window.dispatchEvent(new CustomEvent('neetmbbs_all_courses_updated', { detail: updatedCourses }));
+
+    // Realtime Database SDK persistence
+    if (rtdb) {
+      rtdbSet(ref(rtdb, 'config/full_course_config'), updated).catch(() => {});
+      rtdbSet(ref(rtdb, 'config/courses'), updatedCourses).catch(() => {});
+    }
   } catch (e) {}
 
-  // Direct sync to Firebase Realtime Database
+  // Direct REST sync to Firebase Realtime Database
   syncToFirebaseRTDBRest('config/full_course_config', updated);
 
   // Sync to backend API
@@ -276,27 +330,74 @@ export function getAllCourses(): NeetFullCourseConfig[] {
  */
 export async function saveAllCourses(courses: NeetFullCourseConfig[]): Promise<NeetFullCourseConfig[]> {
   try {
-    localStorage.setItem(ALL_COURSES_LOCAL_KEY, JSON.stringify(courses));
+    safeSetLocalStorage(ALL_COURSES_LOCAL_KEY, JSON.stringify(courses));
     window.dispatchEvent(new CustomEvent('neetmbbs_all_courses_updated', { detail: courses }));
+
+    // If NEET course is inside, also sync it to full_course_config
+    const neetCourse = courses.find(c => c.id === COURSE_ID || c.id.includes('full-course'));
+    if (neetCourse) {
+      safeSetLocalStorage(COURSE_LOCAL_KEY, JSON.stringify(neetCourse));
+      window.dispatchEvent(new CustomEvent('neetmbbs_course_config_updated', { detail: neetCourse }));
+      if (rtdb) {
+        rtdbSet(ref(rtdb, 'config/full_course_config'), neetCourse).catch(() => {});
+      }
+      syncToFirebaseRTDBRest('config/full_course_config', neetCourse);
+    }
+
+    // Direct SDK write to Firebase RTDB
+    if (rtdb) {
+      rtdbSet(ref(rtdb, 'config/courses'), courses).catch(() => {});
+    }
   } catch (e) {}
 
-  // Realtime persistence to Firebase RTDB
+  // Realtime persistence to Firebase RTDB REST
   syncToFirebaseRTDBRest('config/courses', courses);
 
   return courses;
 }
 
 /**
- * Fetches all courses from backend server
+ * Fetches all courses from Firebase RTDB and backend server
  */
 export async function syncAllCoursesFromBackend(isAdmin = false): Promise<NeetFullCourseConfig[]> {
+  // 1. First priority: Direct fetch from Firebase RTDB
+  try {
+    if (rtdb) {
+      const snap = await rtdbGet(ref(rtdb, 'config/courses'));
+      if (snap.exists()) {
+        const val = snap.val();
+        if (val) {
+          const list = Array.isArray(val) ? val.filter(Boolean) : Object.values(val);
+          if (list.length > 0) {
+            safeSetLocalStorage(ALL_COURSES_LOCAL_KEY, JSON.stringify(list));
+            window.dispatchEvent(new CustomEvent('neetmbbs_all_courses_updated', { detail: list }));
+            return list as NeetFullCourseConfig[];
+          }
+        }
+      }
+    }
+  } catch (fbErr) {
+    try {
+      const restCourses = await fetchFromFirebaseRTDBRest('config/courses');
+      if (restCourses && (Array.isArray(restCourses) || typeof restCourses === 'object')) {
+        const list = Array.isArray(restCourses) ? restCourses.filter(Boolean) : Object.values(restCourses);
+        if (list.length > 0) {
+          safeSetLocalStorage(ALL_COURSES_LOCAL_KEY, JSON.stringify(list));
+          window.dispatchEvent(new CustomEvent('neetmbbs_all_courses_updated', { detail: list }));
+          return list as NeetFullCourseConfig[];
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Secondary check: Backend API
   try {
     const endpoint = isAdmin ? '/api/courses/admin' : '/api/courses';
     const res = await fetch(endpoint);
     if (res.ok) {
       const data = await res.json();
       if (data.success && Array.isArray(data.courses) && data.courses.length > 0) {
-        localStorage.setItem(ALL_COURSES_LOCAL_KEY, JSON.stringify(data.courses));
+        safeSetLocalStorage(ALL_COURSES_LOCAL_KEY, JSON.stringify(data.courses));
         window.dispatchEvent(new CustomEvent('neetmbbs_all_courses_updated', { detail: data.courses }));
         return data.courses;
       }

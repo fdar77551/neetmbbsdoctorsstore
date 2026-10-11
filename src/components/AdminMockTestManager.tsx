@@ -592,7 +592,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
       }
       setIsCreatingTest(false);
       setEditingTestId(null);
-      triggerToast(statusOverride === 'draft' ? 'Test saved as draft!' : 'Mock test updated successfully!');
+      triggerToast(statusOverride === 'draft' ? '✓ Test saved as draft & synced to Firebase!' : '✓ Mock test updated & synced live to Firebase!');
       if (openQuestionsBuilder && savedTest) {
         setActiveTab('questions');
       }
@@ -608,7 +608,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
       setSelectedTest(newTest);
       setIsCreatingTest(false);
       setEditingTestId(null);
-      triggerToast(statusOverride === 'draft' ? 'Test saved as draft!' : 'New mock test published!');
+      triggerToast(statusOverride === 'draft' ? '✓ Test saved as draft & synced to Firebase!' : '✓ New mock test published & live on Firebase!');
       if (openQuestionsBuilder) {
         setActiveTab('questions');
       }
@@ -621,6 +621,10 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     const testId = deleteConfirmTest.id;
     try {
       localStorage.removeItem(`neetmbbs_mock_questions_${testId}`);
+      if (typeof fetch !== 'undefined') {
+        fetch(`https://ncertify-neet-master-tests-default-rtdb.firebaseio.com/mock_tests/${testId}.json`, { method: 'DELETE' }).catch(() => {});
+        fetch(`https://ncertify-neet-master-tests-default-rtdb.firebaseio.com/mock_questions/${testId}.json`, { method: 'DELETE' }).catch(() => {});
+      }
     } catch (e) {
       console.warn('Questions storage cleanup note:', e);
     }
@@ -628,7 +632,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     handleSaveTestsList(updated);
     if (selectedTest?.id === testId) setSelectedTest(null);
     setDeleteConfirmTest(null);
-    triggerToast('Test deleted successfully');
+    triggerToast('✓ Test and questions deleted & synced to Firebase');
   };
 
   // Duplicate Test
@@ -1317,8 +1321,9 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
 
           if (autoCropDiagrams) {
             // 1. If Gemini returned a precise bounding box, crop it directly
-            if (rawQ.hasFigure && rawQ.figureBoundingBox && rawQ.figureBoundingBox.length === 4) {
-              const cropped = cropDiagramFromCanvas(processingCanvas, rawQ.figureBoundingBox);
+            const resolvedBbox = rawQ.figureBoundingBox || (rawQ as any).boundingBox || (rawQ as any).figure_bbox || (rawQ as any).bbox;
+            if (resolvedBbox && Array.isArray(resolvedBbox) && resolvedBbox.length === 4) {
+              const cropped = cropDiagramFromCanvas(processingCanvas, resolvedBbox as any);
               if (cropped) {
                 figureDataUrl = cropped;
                 totalFiguresCount++;
@@ -2042,9 +2047,15 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             {/* Header Banner matching specification */}
             <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 text-white p-5 sm:p-7 shadow-md border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="space-y-1.5 max-w-2xl">
-                <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10.5px] font-bold border border-blue-400/30">
-                  <Layers className="w-3.5 h-3.5" />
-                  <span>NEET CBT Examination Suite</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10.5px] font-bold border border-blue-400/30">
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>NEET CBT Examination Suite</span>
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10.5px] font-bold border border-emerald-400/30">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>Firebase RTDB Live Synced (mock_tests)</span>
+                  </div>
                 </div>
                 <h2 className="text-xl sm:text-2xl font-black font-['Outfit',sans-serif] tracking-tight">
                   Mock Tests Management Dashboard

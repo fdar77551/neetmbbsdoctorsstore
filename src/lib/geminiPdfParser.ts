@@ -208,34 +208,53 @@ export function cleanQuestionTextForMatchTable(questionText: string, matchTable?
 }
 
 /**
- * Crops a normalized bounding box [ymin, xmin, ymax, xmax] (0-1000 scale)
- * directly from the high-resolution original PDF canvas.
- * Adds a small optical padding to guarantee no diagram edges are clipped.
+ * Crops a normalized bounding box [ymin, xmin, ymax, xmax]
+ * Supports both standard 0.0-1.0 Gemini normalized floats and 0-1000 integer scales.
+ * Adds optical margin around diagram to capture labels/subscripts, wire extensions, and benzene ring bonds.
  */
 export function cropDiagramFromCanvas(
   canvas: HTMLCanvasElement,
-  box: [number, number, number, number]
+  box: [number, number, number, number] | any
 ): string {
-  if (!canvas || !box || box.length !== 4) return '';
+  if (!canvas || !box || !Array.isArray(box) || box.length !== 4) return '';
 
-  const ymin = Math.max(0, Math.min(1000, box[0]));
-  const xmin = Math.max(0, Math.min(1000, box[1]));
-  const ymax = Math.max(0, Math.min(1000, box[2]));
-  const xmax = Math.max(0, Math.min(1000, box[3]));
+  let b0 = Number(box[0]);
+  let b1 = Number(box[1]);
+  let b2 = Number(box[2]);
+  let b3 = Number(box[3]);
 
-  if (ymax <= ymin || xmax <= xmin) return '';
+  if (isNaN(b0) || isNaN(b1) || isNaN(b2) || isNaN(b3)) return '';
+
+  // 1. Detect if coordinates are in 0.0 - 1.0 range (Gemini default normalized coordinate format)
+  if (b0 <= 1 && b1 <= 1 && b2 <= 1 && b3 <= 1 && (b2 > 0 || b3 > 0)) {
+    b0 = Math.round(b0 * 1000);
+    b1 = Math.round(b1 * 1000);
+    b2 = Math.round(b2 * 1000);
+    b3 = Math.round(b3 * 1000);
+  }
+
+  // 2. Safe order resolution (ymin, xmin, ymax, xmax)
+  const ymin = Math.max(0, Math.min(1000, Math.min(b0, b2)));
+  const ymax = Math.max(0, Math.min(1000, Math.max(b0, b2)));
+  const xmin = Math.max(0, Math.min(1000, Math.min(b1, b3)));
+  const xmax = Math.max(0, Math.min(1000, Math.max(b1, b3)));
+
+  // Minimum dimensional span check (at least 1.5% of page)
+  if (ymax - ymin < 15 || xmax - xmin < 15) return '';
 
   const y = (ymin / 1000) * canvas.height;
   const x = (xmin / 1000) * canvas.width;
   const h = ((ymax - ymin) / 1000) * canvas.height;
   const w = ((xmax - xmin) / 1000) * canvas.width;
 
-  // Add 24px optical margin around diagram to capture labels/subscripts, wire extensions, and benzene ring bonds
-  const pad = 24;
-  const cropX = Math.max(0, x - pad);
-  const cropY = Math.max(0, y - pad);
-  const cropW = Math.min(canvas.width - cropX, w + pad * 2);
-  const cropH = Math.min(canvas.height - cropY, h + pad * 2);
+  // Add 28px optical margin around diagram to capture labels, subscripts, wire extensions, and bonds
+  const pad = 28;
+  const cropX = Math.max(0, Math.round(x - pad));
+  const cropY = Math.max(0, Math.round(y - pad));
+  const cropW = Math.min(canvas.width - cropX, Math.round(w + pad * 2));
+  const cropH = Math.min(canvas.height - cropY, Math.round(h + pad * 2));
+
+  if (cropW <= 20 || cropH <= 20) return '';
 
   return cropRegionFromCanvas(canvas, {
     x: cropX,

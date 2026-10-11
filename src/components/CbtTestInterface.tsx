@@ -47,10 +47,21 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
     return getStoredMockQuestions(test.id);
   }, [passedQuestions, test.id]);
 
+  const testDuration = test.durationMinutes && test.durationMinutes > 0 ? test.durationMinutes : 180;
+  const totalDurationSeconds = testDuration * 60;
+
   const initialAttempt = useMemo(() => {
     if (passedAttempt) return passedAttempt;
     const existing = getMockTestAttempt(test.id, userProfile?.uid, userProfile?.email);
-    if (existing && existing.status === 'in_progress') return existing;
+    if (existing && existing.status === 'in_progress') {
+      const existingStartedAt = new Date(existing.startedAt).getTime();
+      const existingElapsed = Math.floor((Date.now() - existingStartedAt) / 1000);
+      // If the old attempt was started so long ago that its duration is already over,
+      // start fresh so student never gets immediately auto-submitted!
+      if (existingElapsed < totalDurationSeconds - 30) {
+        return existing;
+      }
+    }
     return {
       id: `attempt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       testId: test.id,
@@ -65,7 +76,7 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
       visited: [1],
       timeSpentSeconds: 0
     };
-  }, [passedAttempt, test, userProfile]);
+  }, [passedAttempt, test, userProfile, totalDurationSeconds]);
 
   const [currentQIndex, setCurrentQIndex] = useState(0);
   const [currentLanguage, setCurrentLanguage] = useState<'en' | 'hi'>(initialLanguage);
@@ -75,10 +86,10 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
   
   // Timer state based on startedAt + duration
   const startTimeMs = useMemo(() => new Date(initialAttempt.startedAt).getTime(), [initialAttempt.startedAt]);
-  const totalDurationSeconds = test.durationMinutes * 60;
   const [secondsRemaining, setSecondsRemaining] = useState<number>(() => {
     const elapsed = Math.floor((Date.now() - startTimeMs) / 1000);
-    return Math.max(0, totalDurationSeconds - elapsed);
+    const rem = totalDurationSeconds - elapsed;
+    return rem > 0 ? rem : totalDurationSeconds;
   });
 
   // UI States
@@ -87,10 +98,13 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
   const [submissionStep, setSubmissionStep] = useState<'summary' | 'surity'>('summary');
   const [isSureChecked, setIsSureChecked] = useState(false);
   const [isExitConfirmOpen, setIsExitConfirmOpen] = useState(false);
+  const [isExitSureChecked, setIsExitSureChecked] = useState(false);
   const [isInstructionsOpen, setIsInstructionsOpen] = useState(false);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [selectedSubjectTab, setSelectedSubjectTab] = useState<'All' | MockSubject>('All');
   const [timerWarning, setTimerWarning] = useState<string | null>(null);
+
+  const mountTimeRef = useRef<number>(Date.now());
 
   const openSubmitModal = () => {
     setSubmissionStep('summary');
@@ -133,9 +147,14 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
       }
 
       if (remaining <= 0) {
-        // Auto-submit test immediately when time expires
-        clearInterval(timerRef.current);
-        handleFinalSubmit(true);
+        // Auto-submit test when time expires, but only if the session has actually been active for at least 10 seconds
+        if (Date.now() - mountTimeRef.current >= 10000) {
+          clearInterval(timerRef.current);
+          handleFinalSubmit(true);
+        } else {
+          // Reset starting timestamp if an old expired attempt was opened
+          setSecondsRemaining(totalDurationSeconds);
+        }
       }
     };
 
@@ -998,31 +1017,62 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
         </div>
       )}
 
-      {/* 6. EXIT CONFIRMATION MODAL */}
+      {/* 6. EXIT CONFIRMATION MODAL WITH EXPLICIT SURITY */}
       {isExitConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl p-5 max-w-sm w-full shadow-2xl border border-slate-200 space-y-3 text-center">
-            <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto" />
-            <h3 className="text-base font-black text-slate-900 font-['Outfit',sans-serif]">
-              Leave Mock Test?
-            </h3>
-            <p className="text-xs text-slate-500">
-              Your selected answers will be securely saved, but the timer will continue running in the background.
-            </p>
-            <div className="grid grid-cols-2 gap-2 pt-2">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl p-5 sm:p-6 max-w-sm w-full shadow-2xl border border-slate-200 space-y-4 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 mx-auto flex items-center justify-center shadow-inner">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            
+            <div className="space-y-1">
+              <h3 className="text-base font-black text-slate-900 font-['Outfit',sans-serif]">
+                Are You Sure You Want to Exit?
+              </h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Leaving now will pause your active exam view. Your selected answers ({answeredCount} answered) will remain securely saved.
+              </p>
+            </div>
+
+            {/* Surity Checkbox */}
+            <label className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 transition cursor-pointer text-left select-none">
+              <input
+                type="checkbox"
+                checked={isExitSureChecked}
+                onChange={(e) => setIsExitSureChecked(e.target.checked)}
+                className="mt-0.5 w-4 h-4 text-rose-600 rounded border-slate-300 focus:ring-rose-500 cursor-pointer"
+              />
+              <span className="text-xs font-semibold text-slate-800 leading-snug">
+                I understand and confirm I want to leave the test screen now.
+              </span>
+            </label>
+
+            <div className="grid grid-cols-2 gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setIsExitConfirmOpen(false)}
-                className="py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer"
+                onClick={() => {
+                  setIsExitConfirmOpen(false);
+                  setIsExitSureChecked(false);
+                }}
+                className="py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-black rounded-xl transition cursor-pointer shadow-xs"
               >
-                Stay
+                Stay &amp; Continue
               </button>
               <button
                 type="button"
-                onClick={onExitTest}
-                className="py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl cursor-pointer"
+                disabled={!isExitSureChecked}
+                onClick={() => {
+                  setIsExitConfirmOpen(false);
+                  setIsExitSureChecked(false);
+                  onExitTest();
+                }}
+                className={`py-2.5 text-xs font-bold rounded-xl transition cursor-pointer ${
+                  isExitSureChecked
+                    ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                }`}
               >
-                Exit Now
+                Confirm Exit
               </button>
             </div>
           </div>

@@ -7,6 +7,15 @@ import {
   MockSubject,
   SubjectScoreBreakdown
 } from '../types';
+import { 
+  rtdb,
+  ref,
+  set as rtdbSet,
+  get as rtdbGet,
+  remove as rtdbRemove
+} from './firebase';
+
+export const FIREBASE_RTDB_BASE = "https://ncertify-neet-master-tests-default-rtdb.firebaseio.com";
 
 export const MOCK_TESTS_STORAGE_KEY = 'neetmbbs_mock_tests_data';
 export const MOCK_QUESTIONS_STORAGE_KEY_PREFIX = 'neetmbbs_mock_questions_';
@@ -53,7 +62,32 @@ export function saveStoredMockQuestions(testId: string, questions: MockQuestion[
     localStorage.setItem(`${MOCK_QUESTIONS_STORAGE_KEY_PREFIX}${testId}`, JSON.stringify(questions));
     window.dispatchEvent(new CustomEvent('neetmbbs_mock_questions_updated', { detail: { testId } }));
 
-    // Sync to backend DB asynchronously
+    // 1. Direct sync to Firebase Realtime Database (SDK + REST)
+    try {
+      const qMap: Record<string, any> = {};
+      questions.forEach((q, idx) => {
+        const key = q.id || `q_${idx + 1}`;
+        qMap[key] = q;
+      });
+
+      if (rtdb && testId) {
+        rtdbSet(ref(rtdb, `mock_questions/${testId}`), qMap).catch(err => {
+          console.warn('Firebase RTDB SDK questions save warning:', err);
+        });
+      }
+
+      if (typeof fetch !== 'undefined' && testId) {
+        fetch(`${FIREBASE_RTDB_BASE}/mock_questions/${testId}.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(qMap)
+        }).catch(err => console.warn('Firebase RTDB REST questions save warning:', err));
+      }
+    } catch (fbErr) {
+      console.warn('Firebase sync mock questions error:', fbErr);
+    }
+
+    // 2. Sync to backend DB asynchronously
     if (typeof fetch !== 'undefined') {
       fetch('/api/db/mock-questions', {
         method: 'POST',
@@ -64,6 +98,34 @@ export function saveStoredMockQuestions(testId: string, questions: MockQuestion[
   } catch (e) {
     console.error('Error saving mock questions:', e);
   }
+}
+
+/**
+ * Asynchronously fetch questions for a test from Firebase RTDB if not in localStorage
+ */
+export async function fetchMockQuestionsFromFirebase(testId: string): Promise<MockQuestion[]> {
+  try {
+    const cached = getStoredMockQuestions(testId);
+    if (cached && cached.length > 0) return cached;
+
+    if (typeof fetch !== 'undefined' && testId) {
+      const resp = await fetch(`${FIREBASE_RTDB_BASE}/mock_questions/${testId}.json`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data) {
+          const list: MockQuestion[] = Array.isArray(data) ? data.filter(Boolean) : Object.values(data);
+          if (list.length > 0) {
+            localStorage.setItem(`${MOCK_QUESTIONS_STORAGE_KEY_PREFIX}${testId}`, JSON.stringify(list));
+            window.dispatchEvent(new CustomEvent('neetmbbs_mock_questions_updated', { detail: { testId } }));
+            return list;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Error fetching mock questions from Firebase:', e);
+  }
+  return getStoredMockQuestions(testId);
 }
 
 /**
@@ -126,7 +188,33 @@ export function saveStoredMockTests(tests: MockTest[]) {
     localStorage.setItem(MOCK_TESTS_STORAGE_KEY, JSON.stringify(tests));
     window.dispatchEvent(new Event('neetmbbs_mock_tests_updated'));
 
-    // Sync to backend DB asynchronously
+    // 1. Direct sync to Firebase Realtime Database (SDK + REST)
+    try {
+      const testsMap: Record<string, any> = {};
+      tests.forEach(t => {
+        if (t && t.id) {
+          testsMap[t.id] = t;
+        }
+      });
+
+      if (rtdb) {
+        rtdbSet(ref(rtdb, 'mock_tests'), testsMap).catch(err => {
+          console.warn('Firebase RTDB SDK mock_tests save warning:', err);
+        });
+      }
+
+      if (typeof fetch !== 'undefined') {
+        fetch(`${FIREBASE_RTDB_BASE}/mock_tests.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(testsMap)
+        }).catch(err => console.warn('Firebase RTDB REST mock_tests save warning:', err));
+      }
+    } catch (fbErr) {
+      console.warn('Firebase sync mock tests error:', fbErr);
+    }
+
+    // 2. Sync to backend DB asynchronously
     if (typeof fetch !== 'undefined') {
       fetch('/api/db/mock-tests', {
         method: 'POST',
@@ -157,6 +245,20 @@ export function saveStoredMockPurchase(purchase: MockTestPurchase) {
       all.unshift(purchase);
       localStorage.setItem(MOCK_PURCHASES_STORAGE_KEY, JSON.stringify(all));
       window.dispatchEvent(new Event('neetmbbs_mock_purchases_updated'));
+
+      // Sync to Firebase RTDB
+      try {
+        if (rtdb && purchase.id) {
+          rtdbSet(ref(rtdb, `mock_purchases/${purchase.id}`), purchase).catch(() => {});
+        }
+        if (typeof fetch !== 'undefined' && purchase.id) {
+          fetch(`${FIREBASE_RTDB_BASE}/mock_purchases/${purchase.id}.json`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(purchase)
+          }).catch(() => {});
+        }
+      } catch (e) {}
     }
   } catch (e) {
     console.error('Error saving mock purchase:', e);
@@ -224,6 +326,20 @@ export function saveStoredMockAttempt(attempt: MockTestAttempt) {
     }
     localStorage.setItem(MOCK_ATTEMPTS_STORAGE_KEY, JSON.stringify(all));
     window.dispatchEvent(new Event('neetmbbs_mock_attempts_updated'));
+
+    // Sync to Firebase RTDB
+    try {
+      if (rtdb && attempt.id) {
+        rtdbSet(ref(rtdb, `mock_attempts/${attempt.id}`), attempt).catch(() => {});
+      }
+      if (typeof fetch !== 'undefined' && attempt.id) {
+        fetch(`${FIREBASE_RTDB_BASE}/mock_attempts/${attempt.id}.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(attempt)
+        }).catch(() => {});
+      }
+    } catch (e) {}
   } catch (e) {
     console.error('Error saving mock attempt:', e);
   }

@@ -8,7 +8,8 @@ import {
   StoreConfig,
   UserNeetPass,
   DownloadHistoryItem,
-  CloudflareR2Config
+  CloudflareR2Config,
+  MockTest
 } from '../types';
 import { INITIAL_PRODUCTS, INITIAL_ORDERS, INITIAL_REGISTERED_USERS, DEFAULT_BANNERS } from './data';
 import { 
@@ -851,6 +852,33 @@ export function initRealtimeFirebaseSync(): void {
           }
         }
       }, (err) => console.warn('Firebase RTDB courses listener notice:', err));
+
+      // 10. Live Mock Tests Listener (Chapter Wise, Full Subject, Full Syllabus)
+      const mockTestsRef = ref(rtdb, 'mock_tests');
+      onValue(mockTestsRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val) {
+          const testList: MockTest[] = (Array.isArray(val) ? val.filter(Boolean) : Object.values(val))
+            .filter((t: any) => t && t.id);
+          if (testList.length > 0) {
+            safeSetLocalStorage('neetmbbs_mock_tests_data', JSON.stringify(testList));
+            window.dispatchEvent(new Event('neetmbbs_mock_tests_updated'));
+          }
+        }
+      }, (err) => console.warn('Firebase RTDB mock_tests listener notice:', err));
+
+      // 11. Live Mock Purchases Listener
+      const mockPurchasesRef = ref(rtdb, 'mock_purchases');
+      onValue(mockPurchasesRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val) {
+          const list = (Array.isArray(val) ? val.filter(Boolean) : Object.values(val)).filter((p: any) => p && p.testId);
+          if (list.length > 0) {
+            safeSetLocalStorage('neetmbbs_mock_purchases', JSON.stringify(list));
+            window.dispatchEvent(new Event('neetmbbs_mock_purchases_updated'));
+          }
+        }
+      }, (err) => console.warn('Firebase RTDB mock_purchases listener notice:', err));
     }
   } catch (err) {
     console.warn('Realtime database sync setup notice:', err);
@@ -891,6 +919,27 @@ export async function syncDataFromDatabase(): Promise<void> {
       if (list.length > 0) {
         safeSetLocalStorage('neetmbbs_all_courses_list_v1', JSON.stringify(list));
         window.dispatchEvent(new CustomEvent('neetmbbs_all_courses_updated', { detail: list }));
+      }
+    }
+
+    // 0.4 Sync Mock Tests from Firebase RTDB (Live & Persistent on Cloudflare Pages)
+    const remoteMockTests = await fetchFromFirebaseRTDBRest('mock_tests');
+    if (remoteMockTests && (Array.isArray(remoteMockTests) || typeof remoteMockTests === 'object')) {
+      const testList: MockTest[] = (Array.isArray(remoteMockTests) ? remoteMockTests.filter(Boolean) : Object.values(remoteMockTests))
+        .filter((t: any) => t && t.id);
+      if (testList.length > 0) {
+        safeSetLocalStorage('neetmbbs_mock_tests_data', JSON.stringify(testList));
+        window.dispatchEvent(new Event('neetmbbs_mock_tests_updated'));
+      }
+    }
+
+    // 0.5 Sync Mock Purchases from Firebase RTDB
+    const remoteMockPurchases = await fetchFromFirebaseRTDBRest('mock_purchases');
+    if (remoteMockPurchases && (Array.isArray(remoteMockPurchases) || typeof remoteMockPurchases === 'object')) {
+      const pList = (Array.isArray(remoteMockPurchases) ? remoteMockPurchases.filter(Boolean) : Object.values(remoteMockPurchases)).filter((p: any) => p && p.testId);
+      if (pList.length > 0) {
+        safeSetLocalStorage('neetmbbs_mock_purchases', JSON.stringify(pList));
+        window.dispatchEvent(new Event('neetmbbs_mock_purchases_updated'));
       }
     }
 

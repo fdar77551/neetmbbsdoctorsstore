@@ -15,7 +15,13 @@ import {
   ZoomIn,
   Sparkles,
   History,
-  Calendar
+  Calendar,
+  Zap,
+  Gauge,
+  Flame,
+  Atom,
+  Dna,
+  Share2
 } from 'lucide-react';
 import { MockTest, MockQuestion, MockTestAttempt } from '../types';
 import { getStoredMockQuestions, getAttemptsForTest } from '../lib/mockTestData';
@@ -91,7 +97,8 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
   const negativeMarks = test.negativeMarks ?? 1;
   const maxMarks = test.maxMarks || (totalQuestions * correctMarks) || 720;
   const score = attempt?.score ?? ((correctCount * correctMarks) - (incorrectCount * negativeMarks));
-  const accuracy = attempt?.accuracy ?? (correctCount + incorrectCount > 0 ? Math.round((correctCount / (correctCount + incorrectCount)) * 100) : 0);
+  const attemptedCount = correctCount + incorrectCount;
+  const accuracy = attempt?.accuracy ?? (attemptedCount > 0 ? Math.round((correctCount / attemptedCount) * 100) : 0);
 
   const formatDuration = (secs: number) => {
     const hours = Math.floor(secs / 3600);
@@ -101,13 +108,24 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
     return `${mins}m ${s}s`;
   };
 
+  const avgSecondsPerQ = attemptedCount > 0 ? Math.round(attempt.timeSpentSeconds / attemptedCount) : 0;
+  const percentScore = Math.max(0, Math.round((score / maxMarks) * 100));
+
+  // Dynamic energetic All India Rank projection
+  const estimatedAirRange = useMemo(() => {
+    if (percentScore >= 95) return 'AIR 1 – 150 (Top AIIMS Confirmed)';
+    if (percentScore >= 88) return 'AIR 150 – 850 (Top GMC / MAMC Ready)';
+    if (percentScore >= 75) return 'AIR 850 – 3,500 (State Govt Medical College)';
+    if (percentScore >= 60) return 'AIR 3,500 – 14,000 (Govt Medical Seat Qualifier)';
+    if (percentScore >= 45) return 'AIR 14,000 – 45,000 (Private / Semigovt Qualifying)';
+    return 'AIR 50,000+ (High Revision Needed)';
+  }, [percentScore]);
+
   const filteredQuestions = resolvedQuestions.filter(q => {
     if (!q) return false;
-    // Subject filter
     if (selectedSubjectFilter !== 'all' && q.subject !== selectedSubjectFilter) {
       return false;
     }
-
     const userAnswer = attempt?.answers?.[q.questionNumber];
     if (activeFilter === 'correct') return userAnswer === q.correctAnswer;
     if (activeFilter === 'incorrect') return userAnswer && userAnswer !== q.correctAnswer;
@@ -115,10 +133,8 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
     return true;
   });
 
-  const percentScore = Math.max(0, Math.round((score / maxMarks) * 100));
-
   return (
-    <div className="min-h-screen bg-slate-50 py-4 sm:py-6 px-3 sm:px-6 font-['Plus_Jakarta_Sans',sans-serif]">
+    <div className="min-h-screen bg-slate-900/5 py-4 sm:py-6 px-3 sm:px-6 font-['Plus_Jakarta_Sans',sans-serif]">
       <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6">
         
         {/* Top Bar Navigation */}
@@ -137,7 +153,7 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
               <button
                 type="button"
                 onClick={onOpenLeaderboard}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-bold rounded-xl transition cursor-pointer"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold rounded-xl transition cursor-pointer"
               >
                 <Trophy className="w-3.5 h-3.5 text-amber-500" />
                 <span>Leaderboard</span>
@@ -148,7 +164,7 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
               <button
                 type="button"
                 onClick={onRetakeTest}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer active:scale-95"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Retake Test</span>
@@ -192,104 +208,129 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
           </div>
         )}
 
-        {/* Hero Score Card */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 text-white p-5 sm:p-8 shadow-xl border border-slate-800">
-          <div className="absolute top-0 right-0 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+        {/* ================= HERO SCORE CARD: ENERGETIC, COLOURFUL & ADVANCED ================= */}
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-indigo-950 to-purple-950 text-white p-5 sm:p-8 shadow-2xl border border-indigo-500/30">
+          
+          {/* Ambient Glowing Neon Spotlights */}
+          <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-indigo-500/20 via-purple-500/20 to-pink-500/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-80 h-80 bg-gradient-to-tr from-emerald-500/20 via-cyan-500/15 to-transparent rounded-full blur-3xl pointer-events-none" />
+
           <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
             
+            {/* Left Header & Test Meta */}
             <div className="space-y-2 text-center md:text-left">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[11px] font-bold border border-blue-400/30">
-                <Sparkles className="w-3 h-3 text-blue-300" />
-                <span>Official NEET CBT Evaluation Result</span>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-blue-500/20 via-indigo-500/20 to-purple-500/20 text-indigo-300 text-[11px] font-black border border-indigo-400/30">
+                <Sparkles className="w-3.5 h-3.5 text-amber-300 fill-amber-300 animate-pulse" />
+                <span>OFFICIAL NTA NEET CBT SCORECARD</span>
               </div>
               
-              <h1 className="text-xl sm:text-2xl lg:text-3xl font-black font-['Outfit',sans-serif] tracking-tight">
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-black font-['Outfit',sans-serif] tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-indigo-100 to-amber-200">
                 {test.title}
               </h1>
               <p className="text-xs sm:text-sm text-slate-300 max-w-xl">
-                Completed on {new Date(attempt.submittedAt || Date.now()).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                Submitted on {new Date(attempt.submittedAt || Date.now()).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
               </p>
+
+              {/* Dynamic AIR Estimation Pill */}
+              <div className="pt-1">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-400/15 border border-amber-400/30 text-amber-300 text-xs font-black">
+                  <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Estimated Rank: {estimatedAirRange}</span>
+                </span>
+              </div>
             </div>
 
-            {/* Score Badge Ring */}
-            <div className="flex flex-col items-center justify-center p-4 sm:p-5 bg-white/10 backdrop-blur-md rounded-2xl border border-white/15 min-w-[170px] text-center shadow-lg">
-              <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
-                Your Total Score
+            {/* Right Big Score Gauge Ring */}
+            <div className="flex flex-col items-center justify-center p-5 sm:p-6 bg-white/10 backdrop-blur-xl rounded-3xl border border-white/20 min-w-[200px] text-center shadow-xl">
+              <span className="text-[10px] font-black text-indigo-200 uppercase tracking-widest block">
+                Total NEET Score
               </span>
-              <div className="text-3xl sm:text-4xl font-black font-['Outfit',sans-serif] text-emerald-400 mt-0.5">
+              
+              <div className="text-4xl sm:text-5xl font-black font-['Outfit',sans-serif] text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-300 mt-1">
                 {score}
-                <span className="text-sm sm:text-base font-normal text-slate-400 ml-1">
+                <span className="text-base sm:text-lg font-normal text-slate-300 ml-1">
                   / {test.maxMarks}
                 </span>
               </div>
-              <div className="mt-2 text-xs font-bold text-white bg-emerald-500/30 border border-emerald-400/40 px-3 py-0.5 rounded-full">
-                {percentScore >= 80 ? '🌟 AIIMS Cutoff Ready' : percentScore >= 60 ? '🩺 GMC Qualifiable' : '⚡ High Revision Needed'}
+
+              {/* Admission Readiness Badge */}
+              <div className="mt-2.5 text-xs font-black text-white bg-gradient-to-r from-emerald-500/40 to-teal-500/40 border border-emerald-400/50 px-3 py-1 rounded-full shadow-xs">
+                {percentScore >= 80 ? '🌟 AIIMS Cutoff Ready' : percentScore >= 60 ? '🩺 GMC Qualifiable' : '⚡ Revision Recommended'}
               </div>
             </div>
           </div>
 
-          {/* Quick Metrics Grid */}
-          <div className="relative z-10 grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-6 pt-6 border-t border-white/10">
-            <div className="bg-white/5 rounded-xl p-3 border border-white/5 text-center">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block">Correct (+4)</span>
-              <span className="text-lg font-black text-emerald-400 mt-0.5 block">{correctCount}</span>
-              <span className="text-[10px] text-slate-400">+{correctCount * test.correctMarks} marks</span>
+          {/* Quick Metrics Grid (Energetic & Colourful Glassmorphism) */}
+          <div className="relative z-10 grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-6 border-t border-white/10">
+            <div className="bg-emerald-500/10 rounded-2xl p-3 sm:p-3.5 border border-emerald-500/20 text-center backdrop-blur-xs">
+              <span className="text-[10px] uppercase font-black text-emerald-300 block">Correct (+4)</span>
+              <span className="text-xl sm:text-2xl font-black text-emerald-400 mt-0.5 block">{correctCount}</span>
+              <span className="text-[10px] text-emerald-200/80">+{correctCount * test.correctMarks} marks gained</span>
             </div>
 
-            <div className="bg-white/5 rounded-xl p-3 border border-white/5 text-center">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block">Incorrect (-1)</span>
-              <span className="text-lg font-black text-rose-400 mt-0.5 block">{incorrectCount}</span>
-              <span className="text-[10px] text-slate-400">-{incorrectCount * test.negativeMarks} marks</span>
+            <div className="bg-rose-500/10 rounded-2xl p-3 sm:p-3.5 border border-rose-500/20 text-center backdrop-blur-xs">
+              <span className="text-[10px] uppercase font-black text-rose-300 block">Incorrect (-1)</span>
+              <span className="text-xl sm:text-2xl font-black text-rose-400 mt-0.5 block">{incorrectCount}</span>
+              <span className="text-[10px] text-rose-200/80">-{incorrectCount * test.negativeMarks} negative marks</span>
             </div>
 
-            <div className="bg-white/5 rounded-xl p-3 border border-white/5 text-center">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block">Accuracy</span>
-              <span className="text-lg font-black text-amber-300 mt-0.5 block">{accuracy}%</span>
-              <span className="text-[10px] text-slate-400">{unansweredCount} unattempted</span>
+            <div className="bg-amber-500/10 rounded-2xl p-3 sm:p-3.5 border border-amber-500/20 text-center backdrop-blur-xs">
+              <span className="text-[10px] uppercase font-black text-amber-300 block">Accuracy</span>
+              <span className="text-xl sm:text-2xl font-black text-amber-400 mt-0.5 block">{accuracy}%</span>
+              <span className="text-[10px] text-amber-200/80">{unansweredCount} unattempted</span>
             </div>
 
-            <div className="bg-white/5 rounded-xl p-3 border border-white/5 text-center">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block">Time Taken</span>
-              <span className="text-lg font-black text-blue-300 mt-0.5 block">{formatDuration(attempt.timeSpentSeconds)}</span>
-              <span className="text-[10px] text-slate-400">of {test.durationMinutes} mins</span>
+            <div className="bg-blue-500/10 rounded-2xl p-3 sm:p-3.5 border border-blue-500/20 text-center backdrop-blur-xs">
+              <span className="text-[10px] uppercase font-black text-blue-300 block">Avg Speed</span>
+              <span className="text-xl sm:text-2xl font-black text-blue-300 mt-0.5 block">{avgSecondsPerQ}s / Q</span>
+              <span className="text-[10px] text-blue-200/80">{formatDuration(attempt.timeSpentSeconds)} total</span>
             </div>
           </div>
         </div>
 
-        {/* Subject Performance Breakdown */}
+        {/* ================= SUBJECT PERFORMANCE BREAKDOWN (COLOURFUL THEMED CARDS) ================= */}
         {attempt.subjectScores && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-2xs space-y-3">
+          <div className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 shadow-sm space-y-4">
             <h2 className="text-sm sm:text-base font-black text-slate-900 font-['Outfit',sans-serif] flex items-center gap-2">
-              <Award className="w-4 h-4 text-blue-600" />
-              <span>Subject Performance Analysis</span>
+              <Award className="w-5 h-5 text-indigo-600" />
+              <span>Subject-Wise Score Breakdown &amp; Analysis</span>
             </h2>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
               {(['Physics', 'Chemistry', 'Biology'] as const).map(subj => {
                 const subData = attempt.subjectScores?.[subj];
                 if (!subData || subData.questionsCount === 0) return null;
                 const subPercent = subData.totalMarks > 0 ? Math.max(0, Math.round((subData.score / subData.totalMarks) * 100)) : 0;
+
+                const subjTheme = subj === 'Physics'
+                  ? { bg: 'bg-violet-50/70 border-violet-200', text: 'text-violet-900', bar: 'bg-violet-600', icon: <Atom className="w-4 h-4 text-violet-600" /> }
+                  : subj === 'Chemistry'
+                  ? { bg: 'bg-rose-50/70 border-rose-200', text: 'text-rose-900', bar: 'bg-rose-600', icon: <Flame className="w-4 h-4 text-rose-600" /> }
+                  : { bg: 'bg-emerald-50/70 border-emerald-200', text: 'text-emerald-900', bar: 'bg-emerald-600', icon: <Dna className="w-4 h-4 text-emerald-600" /> };
                 
                 return (
-                  <div key={subj} className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 space-y-2">
+                  <div key={subj} className={`${subjTheme.bg} border rounded-2xl p-4 space-y-2.5 shadow-2xs`}>
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-black text-slate-800">{subj}</span>
-                      <span className="text-xs font-black text-blue-600">{subData.score} / {subData.totalMarks}</span>
+                      <div className="flex items-center gap-1.5 font-black text-sm">
+                        {subjTheme.icon}
+                        <span className={subjTheme.text}>{subj}</span>
+                      </div>
+                      <span className="text-sm font-black text-slate-900 font-['Outfit',sans-serif]">
+                        {subData.score} <span className="text-xs text-slate-500 font-normal">/ {subData.totalMarks}</span>
+                      </span>
                     </div>
 
                     {/* Progress Bar */}
-                    <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                    <div className="w-full bg-slate-200/90 h-2.5 rounded-full overflow-hidden">
                       <div 
-                        className={`h-full rounded-full ${
-                          subPercent >= 75 ? 'bg-emerald-500' : subPercent >= 50 ? 'bg-amber-500' : 'bg-rose-500'
-                        }`}
+                        className={`h-full rounded-full transition-all duration-500 ${subjTheme.bar}`}
                         style={{ width: `${Math.min(100, Math.max(5, subPercent))}%` }}
                       />
                     </div>
 
-                    <div className="flex items-center justify-between text-[10px] text-slate-500">
-                      <span className="text-emerald-700 font-bold">✓ {subData.correct} Correct</span>
-                      <span className="text-rose-700 font-bold">✕ {subData.incorrect} Wrong</span>
+                    <div className="flex items-center justify-between text-[11px] font-bold">
+                      <span className="text-emerald-700">✓ {subData.correct} Correct</span>
+                      <span className="text-rose-700">✕ {subData.incorrect} Wrong</span>
                       <span className="text-slate-500">⭕ {subData.unanswered} Skipped</span>
                     </div>
                   </div>
@@ -299,16 +340,16 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
           </div>
         )}
 
-        {/* Question-Wise Detailed Review Section */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-2xs space-y-4">
+        {/* ================= QUESTION-WISE SOLUTION & REVIEW SECTION ================= */}
+        <div className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-6 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
             <div>
               <h2 className="text-sm sm:text-base font-black text-slate-900 font-['Outfit',sans-serif] flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-blue-600" />
-                <span>Question-Wise Solution & Explanations</span>
+                <BookOpen className="w-5 h-5 text-indigo-600" />
+                <span>Question-Wise Explanations &amp; Solutions</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Inspect authentic figures, verify step-by-step derivations, and rectify conceptual errors.
+                Inspect authentic diagrams, derivations, and learn from mistakes.
               </p>
             </div>
 
@@ -319,9 +360,9 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
                   key={sub}
                   type="button"
                   onClick={() => setSelectedSubjectFilter(sub)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer shrink-0 ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
                     selectedSubjectFilter === sub
-                      ? 'bg-blue-600 text-white shadow-2xs'
+                      ? 'bg-indigo-600 text-white shadow-2xs'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
@@ -338,7 +379,7 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
               onClick={() => setActiveFilter('all')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
                 activeFilter === 'all'
-                  ? 'bg-slate-900 text-white'
+                  ? 'bg-slate-900 text-white shadow-2xs'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
@@ -347,187 +388,147 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
             <button
               type="button"
               onClick={() => setActiveFilter('correct')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 flex items-center gap-1 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 flex items-center gap-1.5 ${
                 activeFilter === 'correct'
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
               }`}
             >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Correct ({correctCount})
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Correct ({correctCount})</span>
             </button>
             <button
               type="button"
               onClick={() => setActiveFilter('incorrect')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 flex items-center gap-1 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 flex items-center gap-1.5 ${
                 activeFilter === 'incorrect'
-                  ? 'bg-rose-600 text-white'
-                  : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
+                  ? 'bg-rose-600 text-white shadow-2xs'
+                  : 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-200'
               }`}
             >
-              <XCircle className="w-3.5 h-3.5" />
-              Incorrect ({incorrectCount})
+              <XCircle className="w-3.5 h-3.5 text-rose-600" />
+              <span>Incorrect ({incorrectCount})</span>
             </button>
             <button
               type="button"
               onClick={() => setActiveFilter('unanswered')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 flex items-center gap-1 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 flex items-center gap-1.5 ${
                 activeFilter === 'unanswered'
-                  ? 'bg-amber-600 text-white'
-                  : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
+                  ? 'bg-slate-700 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
               }`}
             >
-              <HelpCircle className="w-3.5 h-3.5" />
-              Unattempted ({unansweredCount})
+              <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
+              <span>Unattempted ({unansweredCount})</span>
             </button>
           </div>
 
-          {/* Questions List */}
-          <div className="space-y-4">
+          {/* Questions list */}
+          <div className="space-y-4 pt-2">
             {filteredQuestions.length === 0 ? (
-              <div className="text-center py-10 text-slate-400 text-xs">
-                No questions match the selected filter.
+              <div className="text-center py-8 text-slate-400 text-xs font-bold">
+                No questions found under this filter.
               </div>
             ) : (
-              filteredQuestions.map((q, idx) => {
-                const userChoice = attempt?.answers?.[q.questionNumber];
-                const isCorrect = userChoice === q.correctAnswer;
-                const isUnanswered = !userChoice;
+              filteredQuestions.map((q) => {
+                const userAns = attempt?.answers?.[q.questionNumber];
+                const isCorrect = userAns === q.correctAnswer;
+                const isUnanswered = !userAns;
 
                 return (
-                  <div
-                    key={q.id ? `${q.id}-${idx}` : `result-q-${q.questionNumber}-${idx}`}
-                    className={`p-4 sm:p-5 rounded-2xl border transition-all ${
-                      isCorrect
-                        ? 'border-emerald-200 bg-emerald-50/20'
-                        : isUnanswered
-                        ? 'border-slate-200 bg-white'
+                  <div 
+                    key={q.id || `q-${q.questionNumber}`}
+                    className={`rounded-2xl border p-4 sm:p-5 space-y-3 transition ${
+                      isCorrect 
+                        ? 'border-emerald-200 bg-emerald-50/20' 
+                        : isUnanswered 
+                        ? 'border-slate-200 bg-slate-50/40' 
                         : 'border-rose-200 bg-rose-50/20'
                     }`}
                   >
-                    {/* Question Header */}
-                    <div className="flex items-center justify-between gap-2 mb-2.5">
+                    {/* Header: Question Number, Subject, Status Badge */}
+                    <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
-                        <span className="w-7 h-7 rounded-lg bg-slate-900 text-white text-xs font-black flex items-center justify-center">
-                          Q{q.questionNumber}
+                        <span className="w-7 h-7 rounded-lg bg-slate-900 text-white flex items-center justify-center text-xs font-black">
+                          {q.questionNumber}
                         </span>
-                        <span className="text-[11px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
+                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
                           {q.subject}
                         </span>
-                        {q.chapter && (
-                          <span className="text-[10px] text-slate-500 font-medium hidden sm:inline">
-                            • {q.chapter}
-                          </span>
-                        )}
                       </div>
 
-                      {/* Status Tag */}
-                      <div>
-                        {isCorrect && (
-                          <span className="inline-flex items-center gap-1 text-xs font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-lg">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> +4 Marks
-                          </span>
-                        )}
-                        {!isCorrect && !isUnanswered && (
-                          <span className="inline-flex items-center gap-1 text-xs font-black text-rose-700 bg-rose-100 px-2 py-0.5 rounded-lg">
-                            <XCircle className="w-3.5 h-3.5" /> -1 Mark
-                          </span>
-                        )}
-                        {isUnanswered && (
-                          <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-lg">
-                            0 Marks (Skipped)
-                          </span>
-                        )}
-                      </div>
+                      {isCorrect ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Correct (+4)</span>
+                        </span>
+                      ) : isUnanswered ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-200 px-2.5 py-0.5 rounded-full">
+                          <HelpCircle className="w-3.5 h-3.5" />
+                          <span>Skipped (0)</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-rose-800 bg-rose-100 px-2.5 py-0.5 rounded-full">
+                          <XCircle className="w-3.5 h-3.5 text-rose-600" />
+                          <span>Wrong (-1)</span>
+                        </span>
+                      )}
                     </div>
 
                     {/* Question Text */}
                     <p className="text-xs sm:text-sm font-semibold text-slate-900 leading-relaxed">
-                      {q?.languages?.en?.questionText || q.questionText || `Question ${q.questionNumber}`}
+                      {q.questionText}
                     </p>
 
-                    {/* Original Scientific Diagram (Unaltered) */}
-                    {q.questionImageUrl && (
-                      <div className="my-3 p-2 bg-white rounded-xl border border-slate-200 max-w-md">
-                        <div className="flex items-center justify-between mb-1 text-[10px] text-slate-500 font-medium">
-                          <span>Original Scientific Figure / Mechanism:</span>
-                          <button
-                            type="button"
-                            onClick={() => setZoomedImage(q.questionImageUrl!)}
-                            className="flex items-center gap-1 text-blue-600 hover:underline cursor-pointer"
-                          >
-                            <ZoomIn className="w-3 h-3" /> Zoom
-                          </button>
-                        </div>
-                        <img
-                          src={q.questionImageUrl}
-                          alt={`Question ${q.questionNumber} Diagram`}
-                          className="max-h-60 mx-auto object-contain rounded-lg cursor-pointer"
-                          onClick={() => setZoomedImage(q.questionImageUrl!)}
+                    {/* Diagram preview if available */}
+                    {(q.figureUrl || q.questionImageUrl || (q.figures && q.figures[0])) && (
+                      <div className="my-2 bg-white p-2 rounded-xl border border-slate-200 inline-block">
+                        <img 
+                          src={q.figureUrl || q.questionImageUrl || q.figures?.[0]} 
+                          alt="Diagram" 
+                          onClick={() => setZoomedImage(q.figureUrl || q.questionImageUrl || q.figures?.[0] || null)}
+                          className="max-h-48 rounded-lg cursor-zoom-in hover:opacity-90"
                         />
                       </div>
                     )}
 
-                    {/* Options List */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
-                      {(q?.languages?.en?.options || q.options || []).map((opt) => {
-                        const isChosen = userChoice === opt.label;
-                        const isTheCorrectOne = q.correctAnswer === opt.label;
+                    {/* Options list */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      {q.options.map(opt => {
+                        const isSelected = userAns === opt.label;
+                        const isCorrectOpt = q.correctAnswer === opt.label;
 
-                        let optStyles = 'bg-white border-slate-200 text-slate-800';
-                        if (isTheCorrectOne) {
-                          optStyles = 'bg-emerald-50 border-emerald-400 text-emerald-950 font-bold ring-1 ring-emerald-400';
-                        } else if (isChosen && !isTheCorrectOne) {
-                          optStyles = 'bg-rose-50 border-rose-400 text-rose-950 font-bold ring-1 ring-rose-400';
+                        let style = 'bg-white border-slate-200 text-slate-700';
+                        if (isCorrectOpt) {
+                          style = 'bg-emerald-50 border-emerald-400 text-emerald-950 font-bold ring-1 ring-emerald-300';
+                        } else if (isSelected) {
+                          style = 'bg-rose-50 border-rose-400 text-rose-950 font-bold';
                         }
 
                         return (
-                          <div
-                            key={opt.label}
-                            className={`p-2.5 rounded-xl border flex items-start gap-2 text-xs transition ${optStyles}`}
-                          >
-                            <span className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-black shrink-0 ${
-                              isTheCorrectOne ? 'bg-emerald-600 text-white' :
-                              isChosen ? 'bg-rose-600 text-white' : 'bg-slate-100 text-slate-700'
-                            }`}>
-                              {opt.label}
-                            </span>
-
-                            <div className="flex-1 min-w-0">
-                              {opt.value && <span>{opt.value}</span>}
-                              
-                              {/* Option image if chemical structure */}
-                              {opt.imageUrl && (
-                                <div className="mt-1">
-                                  <img 
-                                    src={opt.imageUrl} 
-                                    alt={`Option ${opt.label} structure`}
-                                    className="max-h-20 object-contain rounded border border-slate-200 bg-white p-1"
-                                  />
-                                </div>
-                              )}
+                          <div key={opt.label} className={`p-2.5 rounded-xl border text-xs flex items-center justify-between gap-2 ${style}`}>
+                            <div className="flex items-center gap-2">
+                              <span className="w-5 h-5 rounded-md bg-slate-100 text-slate-800 flex items-center justify-center font-black text-[10px] shrink-0">
+                                {opt.label}
+                              </span>
+                              <span>{opt.value}</span>
                             </div>
-
-                            {isTheCorrectOne && (
-                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                            )}
-                            {isChosen && !isTheCorrectOne && (
-                              <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                            )}
+                            {isCorrectOpt && <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
+                            {isSelected && !isCorrectOpt && <XCircle className="w-4 h-4 text-rose-600 shrink-0" />}
                           </div>
                         );
                       })}
                     </div>
 
-                    {/* Step-by-Step NCERT Explanation */}
-                    {(q.explanation || q?.languages?.en?.explanation) && (
-                      <div className="mt-3.5 pt-3 border-t border-slate-200/80 bg-blue-50/50 -mx-4 -mb-4 sm:-mx-5 sm:-mb-5 p-3 sm:p-4 rounded-b-2xl">
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-blue-900 mb-1">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
-                          <span>Detailed Solution & NCERT Explanation:</span>
-                        </div>
-                        <p className="text-xs text-slate-700 leading-relaxed">
-                          {q.explanation || q?.languages?.en?.explanation}
+                    {/* Detailed Solution / Explanation Box */}
+                    {q.explanation && (
+                      <div className="mt-3 p-3 bg-indigo-50/70 border border-indigo-200/70 rounded-xl space-y-1 text-xs">
+                        <span className="font-bold text-indigo-950 flex items-center gap-1 text-[11px] uppercase tracking-wider">
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>Detailed Derivation &amp; Solution:</span>
+                        </span>
+                        <p className="text-slate-800 leading-relaxed whitespace-pre-line">
+                          {q.explanation}
                         </p>
                       </div>
                     )}
@@ -540,14 +541,14 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
 
       </div>
 
-      {/* Image Zoom Modal */}
+      {/* Lightbox Image Modal */}
       {zoomedImage && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-xs cursor-pointer"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-xs cursor-pointer"
           onClick={() => setZoomedImage(null)}
         >
           <div className="relative max-w-3xl max-h-[85vh] bg-white p-3 rounded-2xl shadow-2xl">
-            <img src={zoomedImage} alt="Zoomed scientific diagram" className="max-w-full max-h-[80vh] object-contain mx-auto" />
+            <img src={zoomedImage} alt="Diagram" className="max-w-full max-h-[80vh] object-contain mx-auto" />
             <p className="text-center text-xs text-slate-500 mt-2">Click anywhere to close</p>
           </div>
         </div>
