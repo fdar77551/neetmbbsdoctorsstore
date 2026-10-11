@@ -975,11 +975,10 @@ export function createAndSaveCompleteNeetTest(
     attemptLimit: 'unlimited',
     showLeaderboard: true,
     createdAt: new Date().toISOString(),
-    questionsCount: totalCount,
-    questions: normalizedQuestions
+    questionsCount: totalCount
   };
 
-  // Save to client localStorage
+  // Save to IndexedDB & Multi-source persistent storage
   saveStoredMockQuestions(testId, normalizedQuestions);
   const updatedTests = [newTest, ...existingTests];
   saveStoredMockTests(updatedTests);

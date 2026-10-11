@@ -1,10 +1,19 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "neetmbbsdoctorsstore",
+  "main": "worker.ts",
   "compatibility_date": "2025-01-01",
   "assets": {
     "directory": "./dist",
+    "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     "html_handling": "auto-trailing-slash"
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "neetmbbsdoctorsstore",
+      "database_id": "daf5a141-af4a-4db6-b10d-ac3bbab28b72"
+    }
+  ]
 }

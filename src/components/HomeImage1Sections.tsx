@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   ArrowRight, 
   BookOpen, 
@@ -159,6 +159,102 @@ interface PopularPhysicalBooksProps {
   onViewAll: () => void;
 }
 
+// Resilient Book Cover Thumbnail with automatic R2 CDN fallback and handsome NCERT card on error
+const BookCoverThumbnail: React.FC<{ book: Product }> = ({ book }) => {
+  const [imgFailed, setImgFailed] = useState(false);
+  const resolvedUrl = resolveImageUrl(book.coverImage);
+
+  if (!resolvedUrl || imgFailed) {
+    return (
+      <div className="w-full h-full bg-gradient-to-br from-[#111c38] via-[#172554] to-[#0f172a] text-white flex flex-col items-center justify-between p-2 text-center relative overflow-hidden select-none">
+        <div className="w-full flex items-center justify-between text-[7px] font-black uppercase tracking-wider text-yellow-400">
+          <span>NEET MBBS</span>
+          <span>BOOK</span>
+        </div>
+        <div className="my-auto py-1">
+          <BookOpen className="w-4 h-4 mx-auto text-yellow-400 mb-0.5" />
+          <span className="text-[10px] font-black leading-tight line-clamp-2 text-white block">
+            {book.title}
+          </span>
+        </div>
+        <div className="w-full flex items-center justify-center">
+          <span className="text-[6.5px] bg-white/10 px-1.5 py-0.5 rounded-full text-blue-100 font-bold tracking-tight">
+            100% NCERT Verified HARDCOPY
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={resolvedUrl}
+      alt={book.title}
+      referrerPolicy="no-referrer"
+      className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
+      onError={(e) => {
+        const target = e.currentTarget;
+        if (target.src.includes('/api/r2/file/')) {
+          const key = target.src.split('/api/r2/file/')[1];
+          if (key) {
+            target.src = `https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/${key}`;
+            return;
+          }
+        }
+        setImgFailed(true);
+      }}
+    />
+  );
+};
+
+// Resilient PDF Cover Thumbnail
+const PdfCoverThumbnail: React.FC<{ pdf: Product }> = ({ pdf }) => {
+  const [imgFailed, setImgFailed] = useState(false);
+  const resolvedUrl = resolveImageUrl(pdf.coverImage);
+
+  if (!resolvedUrl || imgFailed) {
+    return (
+      <div className="w-full h-full bg-gradient-to-br from-indigo-950 via-purple-900 to-slate-900 text-white flex flex-col items-center justify-between p-2 text-center relative overflow-hidden select-none">
+        <div className="w-full flex items-center justify-between text-[7px] font-black uppercase tracking-wider text-rose-400">
+          <span>PDF NOTE</span>
+          <span>NEET 2026</span>
+        </div>
+        <div className="my-auto py-1">
+          <FileText className="w-4 h-4 mx-auto text-yellow-300 mb-0.5" />
+          <span className="text-[10px] font-black leading-tight line-clamp-2 text-white block">
+            {pdf.title}
+          </span>
+        </div>
+        <div className="w-full flex items-center justify-center">
+          <span className="text-[6.5px] bg-white/10 px-1.5 py-0.5 rounded-full text-indigo-100 font-bold tracking-tight">
+            Instant Digital Access
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={resolvedUrl}
+      alt={pdf.title}
+      referrerPolicy="no-referrer"
+      className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
+      onError={(e) => {
+        const target = e.currentTarget;
+        if (target.src.includes('/api/r2/file/')) {
+          const key = target.src.split('/api/r2/file/')[1];
+          if (key) {
+            target.src = `https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev/${key}`;
+            return;
+          }
+        }
+        setImgFailed(true);
+      }}
+    />
+  );
+};
+
 export const PopularPhysicalBooksSection: React.FC<PopularPhysicalBooksProps> = ({
   products,
   popularBookIds,
@@ -213,19 +309,7 @@ export const PopularPhysicalBooksSection: React.FC<PopularPhysicalBooksProps> = 
               <div>
                 {/* Book Cover Thumbnail */}
                 <div className="relative aspect-[4/3] rounded-lg sm:rounded-xl overflow-hidden bg-slate-100 mb-1.5 sm:mb-2.5 flex items-center justify-center">
-                  {book.coverImage ? (
-                    <img
-                      src={resolveImageUrl(book.coverImage)}
-                      alt={book.title}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-gradient-to-tr from-emerald-600 to-teal-700 text-white flex flex-col items-center justify-center p-2 text-center">
-                      <span className="text-[10px] font-black uppercase">NCERT</span>
-                      <span className="text-xs font-black">{book.category}</span>
-                    </div>
-                  )}
+                  <BookCoverThumbnail book={book} />
                 </div>
 
                 {/* Title & Edition */}
@@ -345,19 +429,7 @@ export const DigitalStudyMaterialSection: React.FC<DigitalStudyMaterialProps> = 
               <div>
                 {/* PDF Cover / Icon Thumbnail */}
                 <div className="relative aspect-[4/3] rounded-lg sm:rounded-xl overflow-hidden bg-slate-100 mb-1.5 sm:mb-2.5 flex items-center justify-center">
-                  {pdf.coverImage ? (
-                    <img
-                      src={resolveImageUrl(pdf.coverImage)}
-                      alt={pdf.title}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-gradient-to-tr from-purple-700 to-indigo-800 text-white flex flex-col items-center justify-center p-2 text-center">
-                      <span className="text-xs font-black uppercase">{pdf.category}</span>
-                      <span className="text-[9px] font-medium text-purple-200">Notes &amp; PYQs</span>
-                    </div>
-                  )}
+                  <PdfCoverThumbnail pdf={pdf} />
 
                   {/* PDF Pill Tag */}
                   <div className="absolute top-1 left-1 sm:top-1.5 sm:left-1.5 bg-rose-600 text-white text-[7.5px] sm:text-[8px] font-black px-1.5 py-0.2 sm:py-0.5 rounded shadow-2xs uppercase">

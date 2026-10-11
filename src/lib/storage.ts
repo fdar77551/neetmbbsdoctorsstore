@@ -710,6 +710,21 @@ export async function syncAllToFirebaseRTDB(): Promise<boolean> {
       syncToFirebaseRTDBRest('users', usrMap),
       syncToFirebaseRTDBRest('config/r2_public_domain', getR2PublicDomain())
     ]);
+
+    // Also push to Cloudflare D1 Database as a secondary persistent backup
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/d1/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          products: prods,
+          banners: bans,
+          orders: ords,
+          users: usrs
+        })
+      }).catch(e => console.warn('Cloudflare D1 sync note:', e));
+    }
+
     return true;
   } catch (err) {
     console.error('Failed to sync all to RTDB:', err);

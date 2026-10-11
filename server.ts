@@ -2481,6 +2481,105 @@ app.post("/api/db/mock-purchases", async (req, res) => {
   }
 });
 
+// CLOUDFLARE D1 DATABASE APIS COMPATIBILITY LAYER
+app.get("/api/d1/tests", async (_req, res) => {
+  try {
+    const db = loadDatabase();
+    const tests = db.mock_tests || [];
+    return res.json({ success: true, tests, count: tests.length });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message, tests: [] });
+  }
+});
+
+app.post("/api/d1/tests", async (req, res) => {
+  try {
+    const db = loadDatabase();
+    const testsToSave = Array.isArray(req.body.tests) ? req.body.tests : (req.body.test ? [req.body.test] : (Array.isArray(req.body) ? req.body : []));
+    if (!db.mock_tests) db.mock_tests = [];
+    
+    // Clean tests (strip heavy embedded questions)
+    const cleaned = testsToSave.map((t: any) => {
+      const { questions: _, ...rest } = t;
+      return rest;
+    });
+
+    for (const ct of cleaned) {
+      const idx = db.mock_tests.findIndex((existing: any) => existing.id === ct.id);
+      if (idx > -1) {
+        db.mock_tests[idx] = ct;
+      } else {
+        db.mock_tests.unshift(ct);
+      }
+    }
+    saveDatabase(db);
+    return res.json({ success: true, savedCount: cleaned.length });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/d1/questions", async (req, res) => {
+  try {
+    const db = loadDatabase();
+    const testId = req.query.testId as string;
+    if (!testId) return res.status(400).json({ success: false, error: "testId required" });
+    const questions = (db.mock_questions && db.mock_questions[testId]) || [];
+    return res.json({ success: true, testId, questions, count: questions.length });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message, questions: [] });
+  }
+});
+
+app.post("/api/d1/questions", async (req, res) => {
+  try {
+    const db = loadDatabase();
+    const { testId, questions } = req.body;
+    if (!testId || !Array.isArray(questions)) {
+      return res.status(400).json({ success: false, error: "testId and questions array required" });
+    }
+    if (!db.mock_questions) db.mock_questions = {};
+    db.mock_questions[testId] = questions;
+
+    // Update question count in mock_tests
+    if (db.mock_tests) {
+      const t = db.mock_tests.find((item: any) => item.id === testId);
+      if (t) {
+        t.questionsCount = questions.length;
+        t.totalQuestions = questions.length;
+      }
+    }
+    saveDatabase(db);
+    return res.json({ success: true, testId, count: questions.length });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/d1/sync", async (req, res) => {
+  try {
+    const db = loadDatabase();
+    const body = req.body;
+    if (Array.isArray(body.tests)) {
+      if (!db.mock_tests) db.mock_tests = [];
+      for (const t of body.tests) {
+        const { questions: _, ...cleanT } = t;
+        const idx = db.mock_tests.findIndex((existing: any) => existing.id === cleanT.id);
+        if (idx > -1) db.mock_tests[idx] = cleanT;
+        else db.mock_tests.unshift(cleanT);
+      }
+    }
+    if (body.testQuestions && typeof body.testQuestions === 'object') {
+      if (!db.mock_questions) db.mock_questions = {};
+      Object.assign(db.mock_questions, body.testQuestions);
+    }
+    saveDatabase(db);
+    return res.json({ success: true, message: "Synced to database" });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ==========================================
 // NEET (11th & 12th) FULL COURSE API ENDPOINTS
 // ==========================================

@@ -57,7 +57,7 @@ import { CbtTestInterface } from './components/CbtTestInterface';
 import { MockTestResultView } from './components/MockTestResultView';
 import { MockTestLeaderboardModal } from './components/MockTestLeaderboardModal';
 import { MockTest, MockTestAttempt, NeetFullCourseConfig } from './types';
-import { saveStoredMockPurchase, getStoredMockTests } from './lib/mockTestData';
+import { saveStoredMockPurchase, getStoredMockTests, syncAllMockTestsFromSources } from './lib/mockTestData';
 import { HomeFullCourseCard } from './components/HomeFullCourseCard';
 import { FullCourseDetailView } from './components/FullCourseDetailView';
 import { 
@@ -80,6 +80,7 @@ export default function App() {
   const [activeMockTestAttempt, setActiveMockTestAttempt] = useState<MockTestAttempt | null>(null);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
   const [leaderboardMockTest, setLeaderboardMockTest] = useState<MockTest | null>(null);
+  const [mockTestsList, setMockTestsList] = useState<MockTest[]>(() => getStoredMockTests());
 
   // NEET Full Course State
   const [fullCourseConfig, setFullCourseConfig] = useState<NeetFullCourseConfig>(() => getFullCourseConfig());
@@ -182,6 +183,9 @@ export default function App() {
       if (e?.detail) setFullCourseConfig(e.detail);
       else setFullCourseConfig(getFullCourseConfig());
     };
+    const handleMockTestsUpdate = () => {
+      setMockTestsList(getStoredMockTests());
+    };
 
     window.addEventListener('neetmbbs_products_updated', handleProductsUpdate);
     window.addEventListener('neetmbbs_orders_updated', handleOrdersUpdate);
@@ -191,6 +195,14 @@ export default function App() {
     window.addEventListener('neetmbbs_current_user_updated', handleCurrentUserUpdate);
     window.addEventListener('neetmbbs_store_config_updated', handleStoreConfigUpdate);
     window.addEventListener('neetmbbs_course_config_updated', handleCourseConfigUpdate);
+    window.addEventListener('neetmbbs_mock_tests_updated', handleMockTestsUpdate);
+
+    // Initial background sync for mock tests from Cloudflare D1 & Firebase
+    syncAllMockTestsFromSources().then(synced => {
+      if (synced && synced.length > 0) {
+        setMockTestsList(synced);
+      }
+    }).catch(() => {});
 
     // Initial background sync with backend course endpoint
     syncFullCourseConfigFromBackend(isUserAdmin(userProfile?.email)).then(cfg => {
@@ -652,7 +664,7 @@ export default function App() {
 
               {/* 5. Featured Mock Tests (Real CBT Mock Tests) */}
               <FeaturedMockTestsSection
-                tests={getStoredMockTests()}
+                tests={mockTestsList}
                 onExploreMockTests={() => handleNavigateScreen('mock-tests')}
                 onSelectTest={handleStartMockTest}
                 userProfile={userProfile}

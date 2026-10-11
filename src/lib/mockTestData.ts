@@ -14,6 +14,12 @@ import {
   get as rtdbGet,
   remove as rtdbRemove
 } from './firebase';
+import { 
+  idbSaveQuestions, 
+  idbGetQuestions, 
+  idbSaveTests, 
+  idbGetTests 
+} from './idbStorage';
 
 export const FIREBASE_RTDB_BASE = "https://ncertify-neet-master-tests-default-rtdb.firebaseio.com";
 
@@ -21,6 +27,15 @@ export const MOCK_TESTS_STORAGE_KEY = 'neetmbbs_mock_tests_data';
 export const MOCK_QUESTIONS_STORAGE_KEY_PREFIX = 'neetmbbs_mock_questions_';
 export const MOCK_PURCHASES_STORAGE_KEY = 'neetmbbs_mock_purchases';
 export const MOCK_ATTEMPTS_STORAGE_KEY = 'neetmbbs_mock_attempts';
+
+// In-memory hot cache for questions to eliminate redundant IO and prevent quota crashes
+const questionsMemoryCache: Record<string, MockQuestion[]> = {};
+
+// Clean a test object so it never contains the heavy questions array in the listing metadata
+export function sanitizeTestMetadata(test: MockTest): MockTest {
+  const { questions: _, ...clean } = test;
+  return clean as MockTest;
+}
 
 // High-Yield Accurate Scientific Diagram SVGs (Data URLs) to ensure zero AI hallucinations and crisp scientific rendering
 export const SCIENTIFIC_SAMPLE_DIAGRAMS = {
@@ -43,26 +58,77 @@ export const INITIAL_TEST_QUESTIONS: Record<string, MockQuestion[]> = {};
 
 // Populate additional questions up to the test count if needed
 export function getStoredMockQuestions(testId: string): MockQuestion[] {
+  // 1. Check in-memory hot cache first (fastest, zero size limit)
+  if (questionsMemoryCache[testId] && questionsMemoryCache[testId].length > 0) {
+    return questionsMemoryCache[testId];
+  }
+
+  // 2. Check localStorage
   try {
     const raw = localStorage.getItem(`${MOCK_QUESTIONS_STORAGE_KEY_PREFIX}${testId}`);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        questionsMemoryCache[testId] = parsed;
         return parsed;
       }
     }
   } catch (e) {
-    console.warn('Error reading mock questions:', e);
+    console.warn('Error reading mock questions from localStorage:', e);
   }
+
+  // 3. Asynchronously trigger load from IndexedDB / Cloudflare D1 / Firebase
+  fetchMockQuestionsFromAnySource(testId).catch(() => {});
+
   return [];
 }
 
 export function saveStoredMockQuestions(testId: string, questions: MockQuestion[]) {
+  if (!testId) return;
+
   try {
-    localStorage.setItem(`${MOCK_QUESTIONS_STORAGE_KEY_PREFIX}${testId}`, JSON.stringify(questions));
+    // 1. Always store in memory cache immediately
+    questionsMemoryCache[testId] = questions;
+
+    // 2. Persist to browser IndexedDB (high-capacity, supports hundreds of MBs of diagrams)
+    idbSaveQuestions(testId, questions).catch(err => {
+      console.warn('idbSaveQuestions note:', err);
+    });
+
+    // 3. Try saving to localStorage safely (catch QuotaExceededError without breaking execution)
+    try {
+      localStorage.setItem(`${MOCK_QUESTIONS_STORAGE_KEY_PREFIX}${testId}`, JSON.stringify(questions));
+    } catch (quotaErr) {
+      console.warn('localStorage quota exceeded for questions, stored safely in IndexedDB:', quotaErr);
+      // Fallback: save a lightweight stripped version in localStorage so basic questions remain visible
+      try {
+        const lightweight = questions.map(q => {
+          const { figures: _, figureUrl: __, questionImageUrl: ___, ...lite } = q;
+          return lite as MockQuestion;
+        });
+        localStorage.setItem(`${MOCK_QUESTIONS_STORAGE_KEY_PREFIX}${testId}`, JSON.stringify(lightweight));
+      } catch {}
+    }
+
+    // 4. Notify app of update
     window.dispatchEvent(new CustomEvent('neetmbbs_mock_questions_updated', { detail: { testId } }));
 
-    // 1. Direct sync to Firebase Realtime Database (SDK + REST)
+    // 5. Sync to Cloudflare D1 Database (/api/d1/questions)
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/d1/questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testId, questions })
+      }).catch(d1Err => console.warn('Cloudflare D1 questions sync note:', d1Err));
+
+      fetch('/api/db/mock-questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testId, questions })
+      }).catch(err => console.warn('Backend questions sync note:', err));
+    }
+
+    // 6. Direct sync to Firebase Realtime Database (SDK + REST)
     try {
       const qMap: Record<string, any> = {};
       questions.forEach((q, idx) => {
@@ -86,46 +152,75 @@ export function saveStoredMockQuestions(testId: string, questions: MockQuestion[
     } catch (fbErr) {
       console.warn('Firebase sync mock questions error:', fbErr);
     }
-
-    // 2. Sync to backend DB asynchronously
-    if (typeof fetch !== 'undefined') {
-      fetch('/api/db/mock-questions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ testId, questions })
-      }).catch(err => console.warn('Backend questions sync note:', err));
-    }
   } catch (e) {
     console.error('Error saving mock questions:', e);
   }
 }
 
 /**
- * Asynchronously fetch questions for a test from Firebase RTDB if not in localStorage
+ * Universal fetcher for mock questions:
+ * Tries: Memory Cache -> IndexedDB -> Cloudflare D1 -> Firebase RTDB
  */
-export async function fetchMockQuestionsFromFirebase(testId: string): Promise<MockQuestion[]> {
-  try {
-    const cached = getStoredMockQuestions(testId);
-    if (cached && cached.length > 0) return cached;
+export async function fetchMockQuestionsFromAnySource(testId: string): Promise<MockQuestion[]> {
+  if (!testId) return [];
 
-    if (typeof fetch !== 'undefined' && testId) {
-      const resp = await fetch(`${FIREBASE_RTDB_BASE}/mock_questions/${testId}.json`);
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data) {
-          const list: MockQuestion[] = Array.isArray(data) ? data.filter(Boolean) : Object.values(data);
-          if (list.length > 0) {
-            localStorage.setItem(`${MOCK_QUESTIONS_STORAGE_KEY_PREFIX}${testId}`, JSON.stringify(list));
-            window.dispatchEvent(new CustomEvent('neetmbbs_mock_questions_updated', { detail: { testId } }));
-            return list;
-          }
+  // A. Memory Cache
+  if (questionsMemoryCache[testId] && questionsMemoryCache[testId].length > 0) {
+    return questionsMemoryCache[testId];
+  }
+
+  // B. IndexedDB
+  try {
+    const fromIdb = await idbGetQuestions(testId);
+    if (fromIdb && fromIdb.length > 0) {
+      questionsMemoryCache[testId] = fromIdb;
+      window.dispatchEvent(new CustomEvent('neetmbbs_mock_questions_updated', { detail: { testId } }));
+      return fromIdb;
+    }
+  } catch {}
+
+  // C. Cloudflare D1 Database API
+  try {
+    const d1Resp = await fetch(`/api/d1/questions?testId=${encodeURIComponent(testId)}`);
+    if (d1Resp.ok) {
+      const d1Json = await d1Resp.json();
+      if (d1Json && Array.isArray(d1Json.questions) && d1Json.questions.length > 0) {
+        const qs = d1Json.questions as MockQuestion[];
+        questionsMemoryCache[testId] = qs;
+        idbSaveQuestions(testId, qs).catch(() => {});
+        window.dispatchEvent(new CustomEvent('neetmbbs_mock_questions_updated', { detail: { testId } }));
+        return qs;
+      }
+    }
+  } catch {}
+
+  // D. Firebase RTDB
+  try {
+    const fbResp = await fetch(`${FIREBASE_RTDB_BASE}/mock_questions/${testId}.json`);
+    if (fbResp.ok) {
+      const fbData = await fbResp.json();
+      if (fbData) {
+        const list: MockQuestion[] = Array.isArray(fbData) ? fbData.filter(Boolean) : Object.values(fbData);
+        if (list.length > 0) {
+          questionsMemoryCache[testId] = list;
+          idbSaveQuestions(testId, list).catch(() => {});
+          window.dispatchEvent(new CustomEvent('neetmbbs_mock_questions_updated', { detail: { testId } }));
+          return list;
         }
       }
     }
   } catch (e) {
     console.warn('Error fetching mock questions from Firebase:', e);
   }
-  return getStoredMockQuestions(testId);
+
+  return [];
+}
+
+/**
+ * Asynchronously fetch questions for a test from Firebase RTDB if not in localStorage
+ */
+export async function fetchMockQuestionsFromFirebase(testId: string): Promise<MockQuestion[]> {
+  return fetchMockQuestionsFromAnySource(testId);
 }
 
 /**
@@ -170,28 +265,42 @@ export function getStoredMockTests(): MockTest[] {
           if (['neet-cbt-01', 'neet-cbt-02', 'neet-cbt-03', 'neet-cbt-04', 'demo-test', 'sample-test'].includes(t.id)) return false;
           if (typeof t.title === 'string' && (t.title.toLowerCase().includes('sample test') || t.title.toLowerCase().includes('demo test'))) return false;
           return true;
-        });
-        if (clean.length !== parsed.length) {
-          localStorage.setItem(MOCK_TESTS_STORAGE_KEY, JSON.stringify(clean));
-        }
+        }).map(sanitizeTestMetadata);
         return clean;
       }
     }
   } catch (e) {
     console.warn('Error reading mock tests:', e);
   }
+
+  // Trigger background sync if empty
+  syncAllMockTestsFromSources().catch(() => {});
+
   return [];
 }
 
 export function saveStoredMockTests(tests: MockTest[]) {
   try {
-    localStorage.setItem(MOCK_TESTS_STORAGE_KEY, JSON.stringify(tests));
+    // Crucial: Sanitize tests to strip heavy embedded questions array!
+    // Prevents DOMException: QuotaExceededError and keeps storage light and fast!
+    const cleanTests = tests.map(sanitizeTestMetadata);
+
+    // 1. Save to IndexedDB
+    idbSaveTests(cleanTests).catch(err => console.warn('idbSaveTests error:', err));
+
+    // 2. Save to localStorage safely
+    try {
+      localStorage.setItem(MOCK_TESTS_STORAGE_KEY, JSON.stringify(cleanTests));
+    } catch (quotaErr) {
+      console.warn('localStorage quota warning for tests list, persisted to IndexedDB:', quotaErr);
+    }
+
     window.dispatchEvent(new Event('neetmbbs_mock_tests_updated'));
 
-    // 1. Direct sync to Firebase Realtime Database (SDK + REST)
+    // 3. Direct sync to Firebase Realtime Database (SDK + REST)
     try {
       const testsMap: Record<string, any> = {};
-      tests.forEach(t => {
+      cleanTests.forEach(t => {
         if (t && t.id) {
           testsMap[t.id] = t;
         }
@@ -214,17 +323,103 @@ export function saveStoredMockTests(tests: MockTest[]) {
       console.warn('Firebase sync mock tests error:', fbErr);
     }
 
-    // 2. Sync to backend DB asynchronously
+    // 4. Sync to Cloudflare D1 Database (/api/d1/tests) & backend
     if (typeof fetch !== 'undefined') {
+      fetch('/api/d1/tests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tests: cleanTests })
+      }).catch(d1Err => console.warn('Cloudflare D1 tests sync note:', d1Err));
+
       fetch('/api/db/mock-tests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(tests)
+        body: JSON.stringify(cleanTests)
       }).catch(err => console.warn('Backend tests sync note:', err));
     }
   } catch (e) {
     console.error('Error saving mock tests:', e);
   }
+}
+
+/**
+ * Universal Multi-Source Synchronizer for Mock Tests:
+ * Syncs from Cloudflare D1, Firebase RTDB, and Backend DB to guarantee zero data loss.
+ */
+export async function syncAllMockTestsFromSources(): Promise<MockTest[]> {
+  let loadedTests: MockTest[] = [];
+
+  // 1. Try IndexedDB first
+  try {
+    const fromIdb = await idbGetTests();
+    if (fromIdb && fromIdb.length > 0) {
+      loadedTests = fromIdb;
+    }
+  } catch {}
+
+  // 2. Fetch from Cloudflare D1 Database
+  try {
+    const d1Resp = await fetch('/api/d1/tests');
+    if (d1Resp.ok) {
+      const d1Json = await d1Resp.json();
+      if (d1Json && Array.isArray(d1Json.tests) && d1Json.tests.length > 0) {
+        const mergedMap = new Map<string, MockTest>();
+        loadedTests.forEach(t => mergedMap.set(t.id, t));
+        d1Json.tests.forEach((t: MockTest) => mergedMap.set(t.id, t));
+        loadedTests = Array.from(mergedMap.values());
+      }
+    }
+  } catch {}
+
+  // 3. Fetch from Firebase Realtime Database
+  try {
+    const fbResp = await fetch(`${FIREBASE_RTDB_BASE}/mock_tests.json`);
+    if (fbResp.ok) {
+      const fbData = await fbResp.json();
+      if (fbData) {
+        const fbTests: MockTest[] = Array.isArray(fbData) ? fbData.filter(Boolean) : Object.values(fbData);
+        if (fbTests.length > 0) {
+          const mergedMap = new Map<string, MockTest>();
+          loadedTests.forEach(t => mergedMap.set(t.id, t));
+          fbTests.forEach(t => {
+            if (t && t.id) mergedMap.set(t.id, t);
+          });
+          loadedTests = Array.from(mergedMap.values());
+        }
+      }
+    }
+  } catch {}
+
+  // 4. Fetch from Express Backend fallback
+  if (loadedTests.length === 0) {
+    try {
+      const bkResp = await fetch('/api/db/mock-tests');
+      if (bkResp.ok) {
+        const bkJson = await bkResp.json();
+        if (bkJson && Array.isArray(bkJson.tests) && bkJson.tests.length > 0) {
+          loadedTests = bkJson.tests;
+        }
+      }
+    } catch {}
+  }
+
+  // Filter out demo/sample legacy tests and sanitize
+  const cleanTests = loadedTests.filter((t: any) => {
+    if (!t || !t.id) return false;
+    if (['neet-cbt-01', 'neet-cbt-02', 'neet-cbt-03', 'neet-cbt-04', 'demo-test', 'sample-test'].includes(t.id)) return false;
+    if (typeof t.title === 'string' && (t.title.toLowerCase().includes('sample test') || t.title.toLowerCase().includes('demo test'))) return false;
+    return true;
+  }).map(sanitizeTestMetadata);
+
+  if (cleanTests.length > 0) {
+    try {
+      localStorage.setItem(MOCK_TESTS_STORAGE_KEY, JSON.stringify(cleanTests));
+    } catch {}
+    idbSaveTests(cleanTests).catch(() => {});
+    window.dispatchEvent(new Event('neetmbbs_mock_tests_updated'));
+  }
+
+  return cleanTests;
 }
 
 // Purchases

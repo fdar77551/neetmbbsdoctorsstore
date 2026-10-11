@@ -104,6 +104,9 @@ import { QuestionCanvasBuilder } from './QuestionCanvasBuilder';
 import { MockTestLeaderboardModal } from './MockTestLeaderboardModal';
 import { MockQuestionReviewModal } from './MockQuestionReviewModal';
 import { AdminDeleteConfirmModal } from './AdminDeleteConfirmModal';
+import { DiagramRecropModal } from './DiagramRecropModal';
+import { backgroundPdfParserService } from '../lib/backgroundPdfParser';
+import { idbSavePageImage } from '../lib/idbStorage';
 
 interface AdminMockTestManagerProps {
   onBack?: () => void;
@@ -381,10 +384,44 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
 
   // Requirement 4 & 8: Review Modal, Filtering, and Accuracy Audit State
   const [editingQuestionForReview, setEditingQuestionForReview] = useState<MockQuestion | null>(null);
+  const [recroppingQuestion, setRecroppingQuestion] = useState<MockQuestion | null>(null);
+  const [backgroundParseJob, setBackgroundParseJob] = useState<any>(null);
   const [filterFlaggedOnly, setFilterFlaggedOnly] = useState<boolean>(false);
   const [filterFiguresOnly, setFilterFiguresOnly] = useState<boolean>(false);
   const [filterMatchTablesOnly, setFilterMatchTablesOnly] = useState<boolean>(false);
   const [samplePdfLoading, setSamplePdfLoading] = useState<boolean>(false);
+
+  // Background PDF AI parsing listener
+  useEffect(() => {
+    backgroundPdfParserService.getActiveJob().then(job => {
+      if (job) setBackgroundParseJob(job);
+    }).catch(() => {});
+
+    const handleProgress = (e: any) => {
+      const job = e.detail;
+      setBackgroundParseJob(job);
+      if (job?.parsedQuestions && job.parsedQuestions.length > 0) {
+        setAiParsedQuestionsList(job.parsedQuestions);
+      }
+    };
+
+    const handleCompleted = (e: any) => {
+      const job = e.detail;
+      setBackgroundParseJob(job);
+      if (job?.parsedQuestions && job.parsedQuestions.length > 0) {
+        setAiParsedQuestionsList(job.parsedQuestions);
+        triggerToast(`🎉 AI Finished parsing "${job.pdfName}" (${job.parsedQuestions.length} questions digitized)! Ready to review & save.`);
+      }
+    };
+
+    window.addEventListener('neetmbbs_pdf_job_progress', handleProgress);
+    window.addEventListener('neetmbbs_pdf_job_completed', handleCompleted);
+
+    return () => {
+      window.removeEventListener('neetmbbs_pdf_job_progress', handleProgress);
+      window.removeEventListener('neetmbbs_pdf_job_completed', handleCompleted);
+    };
+  }, []);
 
   // Compute accuracy audit result dynamically
   const activeQuestionsPool = aiParsedQuestionsList.length > 0 ? aiParsedQuestionsList : questions;
@@ -1229,6 +1266,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
 
         // 2. Export JPEG base64 (quality 0.85)
         const imageBase64 = processingCanvas.toDataURL('image/jpeg', 0.85);
+        idbSavePageImage('active_pdf_job', p, imageBase64).catch(() => {});
 
         // 3. Call server-side Gemini Vision API with automatic multi-model fallback & retries
         setAiParseProgress(prev => ({
@@ -1969,6 +2007,86 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             ))}
           </div>
         </div>
+
+        {/* Background AI Parser Active Status Banner */}
+        {backgroundParseJob && backgroundParseJob.status === 'parsing' && (
+          <div className="bg-gradient-to-r from-indigo-900 via-blue-900 to-purple-900 text-white p-3.5 rounded-2xl shadow-md border border-indigo-500/40 flex items-center justify-between gap-3 animate-pulse">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                <Sparkles className="w-4 h-4 text-yellow-300 animate-spin" />
+              </div>
+              <div>
+                <h4 className="text-xs sm:text-sm font-black flex items-center gap-2">
+                  <span>AI Parsing in Background: {backgroundParseJob.pdfName}</span>
+                  <span className="text-[10px] bg-yellow-400 text-slate-900 px-2 py-0.5 rounded-full font-bold">
+                    Page {backgroundParseJob.currentPage} / {backgroundParseJob.totalPages}
+                  </span>
+                </h4>
+                <p className="text-[11px] text-blue-200">
+                  {backgroundParseJob.questionsFound} questions digitized so far ({backgroundParseJob.figuresCropped} original diagrams preserved) • Safe to switch sections or leave!
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveTab('pdf_import')}
+                className="px-3 py-1.5 bg-white text-blue-900 font-black text-xs rounded-xl shadow-xs hover:bg-blue-50 transition cursor-pointer"
+              >
+                View Parser
+              </button>
+              <button
+                type="button"
+                onClick={() => backgroundPdfParserService.stopActiveJob()}
+                className="px-2.5 py-1.5 bg-rose-600/80 hover:bg-rose-600 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                Stop
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Background AI Parser Completed Notification Banner */}
+        {backgroundParseJob && backgroundParseJob.status === 'completed' && backgroundParseJob.questionsFound > 0 && (
+          <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-emerald-900 text-white p-3.5 rounded-2xl shadow-md border border-emerald-400/40 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-5 h-5 text-emerald-300" />
+              </div>
+              <div>
+                <h4 className="text-xs sm:text-sm font-black flex items-center gap-2">
+                  <span>AI Parsing Finished: "{backgroundParseJob.pdfName}"</span>
+                  <span className="text-[10px] bg-emerald-400 text-slate-950 px-2 py-0.5 rounded-full font-bold">
+                    {backgroundParseJob.questionsFound} Questions Ready
+                  </span>
+                </h4>
+                <p className="text-[11px] text-emerald-200">
+                  All {backgroundParseJob.questionsFound} questions with original diagrams are digitized and preserved.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAiParsedQuestionsList(backgroundParseJob.parsedQuestions || []);
+                  setActiveTab('pdf_import');
+                  triggerToast(`Loaded ${backgroundParseJob.questionsFound} parsed questions ready for review!`);
+                }}
+                className="px-3 py-1.5 bg-white text-emerald-900 font-black text-xs rounded-xl shadow-xs hover:bg-emerald-50 transition cursor-pointer"
+              >
+                Review &amp; Save
+              </button>
+              <button
+                type="button"
+                onClick={() => setBackgroundParseJob(null)}
+                className="p-1.5 text-white/70 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Navigation Tabs (CBT Engine Workspaces) */}
         <div className="flex items-center gap-1.5 overflow-x-auto bg-white p-1.5 rounded-2xl border border-slate-200 shadow-2xs">
@@ -3637,6 +3755,15 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                                       </span>
                                       <button
                                         type="button"
+                                        onClick={() => setRecroppingQuestion(q)}
+                                        className="inline-flex items-center gap-1 px-2 py-1 text-[10.5px] font-bold rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition cursor-pointer"
+                                        title="Recrop diagram directly from original PDF page"
+                                      >
+                                        <Crop className="w-3 h-3 text-indigo-600" />
+                                        <span>{hasFig ? 'Recrop' : 'Crop from PDF'}</span>
+                                      </button>
+                                      <button
+                                        type="button"
                                         onClick={() => setEditingQuestionForReview(q)}
                                         className="p-1.5 hover:bg-slate-100 text-blue-600 rounded-lg transition cursor-pointer"
                                         title="Edit Question & Diagram"
@@ -3703,16 +3830,11 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                                         <div className="flex flex-wrap items-center gap-2">
                                           <button
                                             type="button"
-                                            onClick={() => {
-                                              setTargetQuestionForCrop(q.questionNumber);
-                                              setCurrentPdfPage(q.pdfPageNumber || 1);
-                                              setShowManualCropStudio(true);
-                                              triggerToast(`Ready to crop diagram for Question #${q.questionNumber}!`);
-                                            }}
+                                            onClick={() => setRecroppingQuestion(q)}
                                             className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 underline flex items-center gap-1 cursor-pointer"
                                           >
                                             <Crop className="w-3 h-3" />
-                                            <span>Re-Crop</span>
+                                            <span>Re-Crop from PDF Page</span>
                                           </button>
                                           <label className="text-[11px] font-bold text-blue-700 hover:text-blue-900 underline flex items-center gap-1 cursor-pointer">
                                             <Upload className="w-3 h-3" />
@@ -5093,12 +5215,8 @@ A B C D A B C D...`}
               triggerToast(`✓ Question #${updatedQ.questionNumber} updated successfully!`);
             }}
             onTriggerReCropFromPdf={(q) => {
-              setTargetQuestionForCrop(q.questionNumber);
-              setCurrentPdfPage(q.pdfPageNumber || 1);
-              setShowManualCropStudio(true);
+              setRecroppingQuestion(q);
               setEditingQuestionForReview(null);
-              setTestQuestionsTab('diagrams');
-              triggerToast(`Ready to crop diagram for Question #${q.questionNumber} from Page ${q.pdfPageNumber || 1}! ✂️`);
             }}
             currentPdfPage={currentPdfPage}
           />
@@ -6115,6 +6233,25 @@ or continuous: A B C D A B C D...`}
         itemType="question"
         title="Delete this question?"
         warningText="This will permanently delete this question and its diagram from the test. Subsequent questions will be renumbered automatically."
+      />
+
+      {/* Interactive Diagram Recropper Modal on original PDF page */}
+      <DiagramRecropModal
+        isOpen={Boolean(recroppingQuestion)}
+        onClose={() => setRecroppingQuestion(null)}
+        question={recroppingQuestion}
+        pdfDocProxy={pdfDocProxy || backgroundPdfParserService.getActiveDocProxy()}
+        onSaveCroppedDiagram={(updatedQ) => {
+          // 1. Update in active test questions
+          if (questions.length > 0) {
+            const updated = questions.map(q => q.questionNumber === updatedQ.questionNumber ? updatedQ : q);
+            handleSaveQuestionsList(updated);
+          }
+          // 2. Update in aiParsedQuestionsList if present
+          setAiParsedQuestionsList(prev => prev.map(q => q.questionNumber === updatedQ.questionNumber ? updatedQ : q));
+          setRecroppingQuestion(null);
+          triggerToast(`✓ Diagram for Question #${updatedQ.questionNumber} recropped & saved!`);
+        }}
       />
 
       {/* Toast Notification */}
