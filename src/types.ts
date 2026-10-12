@@ -426,6 +426,23 @@ export interface MockTest {
   answerKeyStatus?: 'pending' | 'reviewed' | 'published';
 }
 
+export interface MockTestPackagePricing {
+  // 1. Chapter-wise Subject Packages
+  chapterWiseBiologyPrice: number;
+  chapterWiseChemistryPrice: number;
+  chapterWisePhysicsPrice: number;
+  // 2. Whole 3 Subjects (Full Subject Tests - PCB Combined)
+  fullSubjectAll3Price: number;
+  // 3. Full Syllabus Grand Tests
+  fullSyllabusAllPrice: number;
+  // Optional original comparison prices
+  chapterWiseBiologyOriginalPrice?: number;
+  chapterWiseChemistryOriginalPrice?: number;
+  chapterWisePhysicsOriginalPrice?: number;
+  fullSubjectAll3OriginalPrice?: number;
+  fullSyllabusAllOriginalPrice?: number;
+}
+
 export interface MockTestPurchase {
   id: string;
   testId: string;
@@ -437,6 +454,7 @@ export interface MockTestPurchase {
   amount: number;
   purchaseDate: string;
   status: 'active' | 'completed';
+  packageType?: 'individual' | 'chapter_wise_Biology' | 'chapter_wise_Chemistry' | 'chapter_wise_Physics' | 'full_subject' | 'full_syllabus';
 }
 
 export interface SubjectScoreBreakdown {

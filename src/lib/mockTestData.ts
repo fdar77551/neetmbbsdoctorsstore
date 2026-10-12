@@ -5,7 +5,8 @@ import {
   MockTestAttempt, 
   MockTestLeaderboardEntry,
   MockSubject,
-  SubjectScoreBreakdown
+  SubjectScoreBreakdown,
+  MockTestPackagePricing
 } from '../types';
 import { 
   rtdb,
@@ -460,6 +461,82 @@ export function saveStoredMockPurchase(purchase: MockTestPurchase) {
   }
 }
 
+export const MOCK_PRICING_PACKAGES_STORAGE_KEY = 'neetmbbs_mock_packages_pricing_v1';
+
+export const DEFAULT_MOCK_PACKAGES_PRICING: MockTestPackagePricing = {
+  chapterWiseBiologyPrice: 149,
+  chapterWiseChemistryPrice: 149,
+  chapterWisePhysicsPrice: 149,
+  fullSubjectAll3Price: 249,
+  fullSyllabusAllPrice: 349,
+  chapterWiseBiologyOriginalPrice: 399,
+  chapterWiseChemistryOriginalPrice: 399,
+  chapterWisePhysicsOriginalPrice: 399,
+  fullSubjectAll3OriginalPrice: 599,
+  fullSyllabusAllOriginalPrice: 799
+};
+
+export function getMockTestPricingPackages(): MockTestPackagePricing {
+  try {
+    const raw = localStorage.getItem(MOCK_PRICING_PACKAGES_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { ...DEFAULT_MOCK_PACKAGES_PRICING, ...parsed };
+    }
+  } catch (e) {}
+  return DEFAULT_MOCK_PACKAGES_PRICING;
+}
+
+export function saveMockTestPricingPackages(pricing: Partial<MockTestPackagePricing>) {
+  try {
+    const current = getMockTestPricingPackages();
+    const updated = { ...current, ...pricing };
+    localStorage.setItem(MOCK_PRICING_PACKAGES_STORAGE_KEY, JSON.stringify(updated));
+    window.dispatchEvent(new Event('neetmbbs_mock_pricing_updated'));
+
+    // Sync to Cloudflare D1
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/d1/pricing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      }).catch(() => {});
+    }
+
+    // Sync to Firebase RTDB
+    try {
+      if (rtdb) {
+        rtdbSet(ref(rtdb, 'mock_test_packages_pricing'), updated).catch(() => {});
+      }
+      if (typeof fetch !== 'undefined') {
+        fetch(`${FIREBASE_RTDB_BASE}/mock_test_packages_pricing.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updated)
+        }).catch(() => {});
+      }
+    } catch (e) {}
+  } catch (e) {
+    console.error('Error saving mock test pricing packages:', e);
+  }
+}
+
+export function hasUserPurchasedPackage(
+  userId?: string | null,
+  userEmail?: string | null,
+  packageKey?: string
+): boolean {
+  if (!packageKey || (!userId && !userEmail)) return false;
+  const purchases = getStoredMockPurchases();
+  return purchases.some(p => 
+    (p.testId === packageKey || p.packageType === (packageKey as any)) &&
+    (
+      (userId && p.userId === userId) ||
+      (userEmail && p.userEmail.toLowerCase() === userEmail.toLowerCase())
+    )
+  );
+}
+
 export function hasUserPurchasedMockTest(
   param1?: string | null | any,
   param2?: string | null | any,
@@ -492,13 +569,53 @@ export function hasUserPurchasedMockTest(
 
   if (!resolvedUserId && !resolvedUserEmail) return false;
   const purchases = getStoredMockPurchases();
-  return purchases.some(p => 
+
+  // 1. Check direct test purchase
+  const isDirect = purchases.some(p => 
     p.testId === resolvedTestId && 
     (
       (resolvedUserId && p.userId === resolvedUserId) || 
       (resolvedUserEmail && p.userEmail.toLowerCase() === resolvedUserEmail.toLowerCase())
     )
   );
+  if (isDirect) return true;
+
+  if (!test) return false;
+
+  const cat = getTestCategory(test);
+  const userMatches = (p: MockTestPurchase) => (
+    (resolvedUserId && p.userId === resolvedUserId) ||
+    (resolvedUserEmail && p.userEmail.toLowerCase() === resolvedUserEmail.toLowerCase())
+  );
+
+  // 2. All Tests Master Pass
+  if (purchases.some(p => userMatches(p) && (p.testId === 'package:all_tests' || p.testId === 'all_mock_tests'))) {
+    return true;
+  }
+
+  // 3. Category/Subject Package Checks
+  if (cat === 'chapter_wise') {
+    const sub = test.subject || (test.subjects && test.subjects[0]);
+    if (sub === 'Biology' && purchases.some(p => userMatches(p) && (p.testId === 'package:chapter_wise:Biology' || p.packageType === 'chapter_wise_Biology'))) {
+      return true;
+    }
+    if (sub === 'Chemistry' && purchases.some(p => userMatches(p) && (p.testId === 'package:chapter_wise:Chemistry' || p.packageType === 'chapter_wise_Chemistry'))) {
+      return true;
+    }
+    if (sub === 'Physics' && purchases.some(p => userMatches(p) && (p.testId === 'package:chapter_wise:Physics' || p.packageType === 'chapter_wise_Physics'))) {
+      return true;
+    }
+  } else if (cat === 'full_subject') {
+    if (purchases.some(p => userMatches(p) && (p.testId === 'package:full_subject' || p.testId === 'package:full_subject_all3' || p.packageType === 'full_subject'))) {
+      return true;
+    }
+  } else if (cat === 'full_syllabus') {
+    if (purchases.some(p => userMatches(p) && (p.testId === 'package:full_syllabus' || p.packageType === 'full_syllabus'))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 // Student Attempts

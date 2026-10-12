@@ -3412,9 +3412,9 @@ function getGeminiClient(): GoogleGenAI {
 
 // Resilient multi-model fallback chain to handle transient 503 (high demand) and 429 surges
 const GEMINI_MODELS_FALLBACK_CHAIN = [
-  "gemini-2.5-flash",
-  "gemini-3.1-flash-lite",
-  "gemini-2.5-pro"
+  "gemini-3.8-flash",
+  "gemini-flash-latest",
+  "gemini-3.1-flash-lite"
 ];
 
 function extractRetryDelaySeconds(err: any): number {
@@ -3736,34 +3736,35 @@ app.post("/api/ai/parse-neet-page", async (req, res) => {
 Your task is to accurately transcribe and digitize exam questions from this NEET exam page image with 100% fidelity.
 
 CRITICAL RULES:
-1. ONLY DIGITIZE GENUINE EXAM QUESTIONS (NEVER EXTRACT ANSWER KEYS OR SOLUTIONS AS QUESTIONS):
-   - Many NEET PDFs have "Answer Key" grids (e.g. "1. (1), 2. (4)...") or "Hints & Solutions" / "Explanations" (e.g. "Sol: F1 = F2...", "Sol: F = qE_dipole...", "Answer: 1").
+1. ONLY DIGITIZE GENUINE EXAM QUESTIONS (NEVER EXTRACT STANDALONE ANSWER KEYS OR SOLUTIONS AS QUESTIONS):
+   - Many NEET PDFs have "Answer Key" grids at the end (e.g. "1. (1), 2. (4)...") or "Hints & Solutions" / "Explanations" (e.g. "Sol: F1 = F2...", "Sol: F = qE_dipole...").
    - DO NOT extract answer key matrices or solution derivations as new questions!
-   - If this page only contains "Answer Key", "Hints & Solutions", "Explanations", or "Answers", return: {"questions": []}.
-   - NEVER create a question whose text is just "Answer: 1", "Ans: 4", "Sol:", or formula derivations without a question statement.
-   - NEVER output dummy options like "N/A", "Option A", "Option B", or invent fake options.
-   - Every question MUST have all 4 real options (A, B, C, D) printed on the exam paper. If printed as (1), (2), (3), (4), map them to A, B, C, D. NEVER drop the first two options or output only 2 options.
+   - If this entire page contains ONLY an Answer Key table or Solutions without any question statements, return: {"questions": []}.
+   - However, if the page has REAL QUESTIONS with question numbers, statements, and 4 options (A, B, C, D or 1, 2, 3, 4), you MUST digitize ALL OF THEM.
+   - Every question MUST have all 4 real options (A, B, C, D) printed on the exam paper. If printed as (1), (2), (3), (4), map them to A, B, C, D. Never drop options.
 
-2. CRITICAL Question Numbering & Layout (2-Column Bilingual Support):
-   - NEET papers have a TWO-COLUMN layout separated by a central line:
-     * The LEFT COLUMN is 100% ENGLISH.
-     * The RIGHT COLUMN is 100% HINDI (Devanagari) for the exact same questions!
-   - NEVER READ HORIZONTALLY ACROSS BOTH COLUMNS! Reading across columns scrambles English and Hindi words together into corrupted gibberish.
-   - Read the LEFT column first to extract the pure English questionText and all 4 English options (A, B, C, D).
-   - Read the corresponding RIGHT column to extract the pure Hindi questionText and all 4 Hindi options (A, B, C, D).
-   - NEVER place Hindi/Devanagari characters inside the "english" object!
-   - NEVER place English sentences inside the "hindi" object!
+2. INTELLIGENT PAGE LAYOUT DETECTION (CRITICAL FOR CHAPTER-WISE & COACHING PAPERS):
+   NEET and Coaching PDF exam pages appear in 3 distinct formats. DETECT THE LAYOUT FIRST:
+   * FORMAT A: TWO-COLUMN SEQUENTIAL ENGLISH (Extremely common in Chapter-Wise tests & Coaching tests like Allen, Aakash, PW, Resonance):
+     - The page has two vertical columns separated by whitespace or a thin line.
+     - Column 1 (Left) contains Questions 1, 2, 3... in English.
+     - Column 2 (Right) contains Questions 4, 5, 6... in English!
+     - In this format, BOTH COLUMNS CONTAIN INDEPENDENT ENGLISH QUESTIONS!
+     - CRITICAL: Extract EVERY question from Column 1 first, and then EVERY question from Column 2! DO NOT skip Column 2, and DO NOT treat Column 2 as Hindi for Column 1!
+   * FORMAT B: BILINGUAL PARALLEL COLUMNS:
+     - The Left column contains the English question statement and options.
+     - The Right column contains the Hindi (Devanagari) translation for that EXACT SAME question number.
+     - If and only if the questions in the right column have the SAME question numbers and are in Hindi, place English into the "english" object and Hindi into the "hindi" object.
+   * FORMAT C: SINGLE COLUMN (Full-width questions stacked top-to-bottom):
+     - Extract all questions sequentially down the page.
+   CRITICAL: If the document is purely English (e.g. chapter wise English test), populate "english" object for all questions, and leave "hindi" as null or omit it. DO NOT skip any questions!
 
 3. MANDATORY Figures, Diagrams, Circuits, Graphs, and Chemical Structures (Bounding Boxes):
-   - Physics, Chemistry, and Biology questions frequently feature diagrams.
-   - ANY question that contains a drawing, schematic, circuit, graph, sketch, reaction scheme, or visual apparatus MUST be detected:
-     * PHYSICS: circular wire bends (e.g. wire with circular arc of radius a and origin O), moving square/rectangular loops near long conductors (e.g. loop PQRS near wire CD with velocity v), electric circuits, pulleys, spring-mass systems, graphs, ray optics/lenses.
-     * CHEMISTRY: organic reaction mechanisms, benzene rings, aromatic structures, cyclohexanes, skeletal chemical formulas, apparatus sketches (e.g. Clemmensen, Wolff-Kishner, Rosenmund, Etard, Williamson ether).
-     * BIOLOGY: anatomical diagrams, flowcharts, plant/cell structures, cycles, pedigree charts.
-   - If a question references ANY visual ("shown in figure", "as shown", "given diagram", "in the circuit", "in the graph", "structure of", "reaction scheme", "loop PQRS", "radius a", "magnitude of magnetic field") or has ANY drawing:
+   - Physics, Chemistry, and Biology questions frequently feature diagrams, graphs, circuits, reaction schemes, benzene rings, anatomical figures, or experimental setups.
+   - For ANY question with a visual drawing, schematic, circuit, graph, sketch, reaction scheme, or visual apparatus:
      * MUST set "hasFigure": true
-     * "figureDescription": a concise label (e.g. "Magnetic field wire circular bend", "Square loop PQRS near current wire", "Benzene ring reaction mechanism", "RC circuit diagram")
-     * "figureBoundingBox": [ymin, xmin, ymax, xmax] as 4 integers normalized between 0 and 1000 representing the PRECISE bounding box of ONLY the diagram. Include the entire diagram clearly including all labels (P, Q, R, S, I, v, r, a, O) without clipping, and without including the question text.
+     * "figureDescription": a concise label (e.g. "Magnetic field wire circular bend", "Square loop PQRS near current wire", "Benzene ring reaction mechanism", "RC circuit diagram", "Ray optics prism", "Photosynthesis cycle", "Cardiac cycle graph")
+     * "figureBoundingBox": [ymin, xmin, ymax, xmax] as 4 integers normalized between 0 and 1000 representing the PRECISE bounding box of ONLY the diagram. Include the entire diagram clearly including all labels (P, Q, R, S, I, v, r, a, O, axes, arrowheads) without clipping, and without including the question text.
    - If individual options (A, B, C, D) contain diagrams or chemical structures:
      * Include in "optionsWithFigures": [ { "label": "A", "boundingBox": [ymin, xmin, ymax, xmax] }, ... ]
 

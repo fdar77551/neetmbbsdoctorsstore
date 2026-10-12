@@ -30,7 +30,8 @@ import {
   MockTestPurchase, 
   MockTestAttempt, 
   MockSubject, 
-  UserProfile 
+  UserProfile,
+  MockTestPackagePricing 
 } from '../types';
 import { 
   getStoredMockTests, 
@@ -40,7 +41,9 @@ import {
   hasUserPurchasedMockTest,
   getTestCategory,
   getAvailableChaptersForSubject,
-  getStoredMockPurchases
+  getStoredMockPurchases,
+  getMockTestPricingPackages,
+  hasUserPurchasedPackage
 } from '../lib/mockTestData';
 import { getCurrentUser } from '../lib/storage';
 import { MockTestLeaderboardModal } from './MockTestLeaderboardModal';
@@ -113,6 +116,47 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
   const [languageSelectModalTest, setLanguageSelectModalTest] = useState<MockTest | null>(null);
   const [sharedTestModal, setSharedTestModal] = useState<MockTest | null>(null);
   const [shareModalTest, setShareModalTest] = useState<MockTest | null>(null);
+  const [pricingPackages, setPricingPackages] = useState<MockTestPackagePricing>(() => getMockTestPricingPackages());
+
+  // Reactive listener to pricing updates
+  useEffect(() => {
+    const handlePricingUpdate = () => {
+      setPricingPackages(getMockTestPricingPackages());
+    };
+    window.addEventListener('neetmbbs_mock_pricing_updated', handlePricingUpdate);
+    return () => window.removeEventListener('neetmbbs_mock_pricing_updated', handlePricingUpdate);
+  }, []);
+
+  const handleBuyPackage = (packageKey: string, title: string, price: number, originalPrice?: number) => {
+    if (!effectiveUser) {
+      handleAuth();
+      return;
+    }
+    const pseudoTest: MockTest = {
+      id: packageKey,
+      title,
+      testNumber: 'PASS',
+      description: `Complete unlock for all tests in this pass. Immediate access to official NTA CBT interface, timer, and All India Rank leaderboards.`,
+      type: 'chapter_test',
+      subjects: ['Physics', 'Chemistry', 'Biology'],
+      totalQuestions: 180,
+      durationMinutes: 180,
+      maxMarks: 720,
+      correctMarks: 4,
+      negativeMarks: 1,
+      price,
+      originalPrice: originalPrice || (price > 0 ? price + 250 : 399),
+      allowMultipleAttempts: true,
+      showLeaderboard: true,
+      status: 'published',
+      createdAt: new Date().toISOString()
+    };
+    if (onBuyTest) {
+      onBuyTest(pseudoTest);
+    } else {
+      setSharedTestModal(pseudoTest);
+    }
+  };
 
   // Navigate to dedicated page with hash synchronization for browser Back/Forward buttons
   const navigateToPage = (newPage: MockTestPageView) => {
@@ -353,44 +397,51 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4">
 
                 {/* 1️⃣ CHAPTER WISE TESTS PORTAL CARD */}
                 <div
                   onClick={() => navigateToPage('chapter_wise')}
-                  className="group relative overflow-hidden rounded-3xl p-5 sm:p-6 bg-gradient-to-br from-white via-orange-50/20 to-amber-50/40 hover:to-orange-100/50 border border-orange-200/90 shadow-2xs hover:shadow-xl hover:border-orange-400 transition-all duration-300 cursor-pointer flex flex-col justify-between"
+                  className="group relative overflow-hidden rounded-2xl p-4 sm:p-4.5 bg-gradient-to-br from-white via-orange-50/30 to-amber-50/50 hover:to-orange-100/60 border-2 border-orange-200/90 hover:border-orange-500 shadow-2xs hover:shadow-lg transition-all duration-200 cursor-pointer flex flex-col justify-between"
                 >
-                  <div className="space-y-3.5">
+                  <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-rose-500 text-white flex items-center justify-center shadow-md shadow-orange-500/20 group-hover:scale-105 transition-transform">
-                        <BookOpen className="w-6 h-6" />
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 via-orange-500 to-rose-500 text-white flex items-center justify-center shadow-sm shadow-orange-500/20 group-hover:scale-105 transition-transform">
+                        <BookOpen className="w-5 h-5" />
                       </div>
-                      <span className="text-[11px] font-black uppercase px-3 py-1 rounded-full bg-orange-100 text-orange-800 border border-orange-200 shadow-2xs">
-                        {counts.chapterWise} Tests Live
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-orange-100 text-orange-800 border border-orange-200 shadow-2xs">
+                          {counts.chapterWise} Tests
+                        </span>
+                      </div>
                     </div>
 
                     <div>
-                      <h3 className="text-lg sm:text-xl font-black text-slate-900 font-['Outfit',sans-serif] leading-tight group-hover:text-orange-600 transition-colors">
-                        Chapter Wise Tests
-                      </h3>
-                      <p className="text-xs sm:text-sm text-slate-600 mt-1.5 leading-relaxed">
-                        Deep-dive topic by topic. Master individual chapters in Physics, Chemistry, and Biology before taking full mock exams.
+                      <div className="flex items-center justify-between gap-1">
+                        <h3 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit',sans-serif] leading-snug group-hover:text-orange-600 transition-colors">
+                          Chapter Wise Tests
+                        </h3>
+                        <span className="text-[10px] font-black text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md shrink-0">
+                          From ₹{pricingPackages.chapterWiseBiologyPrice}
+                        </span>
+                      </div>
+                      <p className="text-[11.5px] text-slate-600 mt-1 leading-relaxed line-clamp-2">
+                        Deep-dive topic by topic. Master individual chapters in Physics, Chemistry, and Biology.
                       </p>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-slate-600 pt-1">
-                      <span className="px-2 py-0.5 rounded-lg bg-orange-50 text-orange-700 border border-orange-200">⚛️ Physics</span>
-                      <span className="px-2 py-0.5 rounded-lg bg-amber-50 text-amber-700 border border-amber-200">🧪 Chemistry</span>
-                      <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">🧬 Biology</span>
+                    <div className="flex flex-wrap items-center gap-1 text-[10px] font-bold text-slate-600 pt-0.5">
+                      <span className="px-2 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200">⚛️ Physics (₹{pricingPackages.chapterWisePhysicsPrice})</span>
+                      <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200">🧪 Chem (₹{pricingPackages.chapterWiseChemistryPrice})</span>
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">🧬 Bio (₹{pricingPackages.chapterWiseBiologyPrice})</span>
                     </div>
                   </div>
 
-                  <div className="pt-4 mt-4 border-t border-orange-100/90 flex items-center justify-between text-xs font-black">
-                    <span className="text-orange-700">Explore Chapters & Tests</span>
-                    <span className="inline-flex items-center gap-1 text-orange-600 group-hover:translate-x-1 transition-transform">
+                  <div className="pt-2.5 mt-2.5 border-t border-orange-100/90 flex items-center justify-between text-xs font-black">
+                    <span className="text-orange-700 text-[11px]">Explore Chapters &amp; Tests</span>
+                    <span className="inline-flex items-center gap-1 text-orange-600 group-hover:translate-x-1 transition-transform text-xs">
                       <span>Open Page</span>
-                      <ChevronRight className="w-4 h-4" />
+                      <ChevronRight className="w-3.5 h-3.5" />
                     </span>
                   </div>
                 </div>
@@ -398,38 +449,46 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
                 {/* 2️⃣ FULL SUBJECT TESTS PORTAL CARD */}
                 <div
                   onClick={() => navigateToPage('full_subject')}
-                  className="group relative overflow-hidden rounded-3xl p-5 sm:p-6 bg-gradient-to-br from-white via-emerald-50/20 to-teal-50/40 hover:to-emerald-100/50 border border-emerald-200/90 shadow-2xs hover:shadow-xl hover:border-emerald-400 transition-all duration-300 cursor-pointer flex flex-col justify-between"
+                  className="group relative overflow-hidden rounded-2xl p-4 sm:p-4.5 bg-gradient-to-br from-white via-emerald-50/30 to-teal-50/50 hover:to-emerald-100/60 border-2 border-emerald-200/90 hover:border-emerald-500 shadow-2xs hover:shadow-lg transition-all duration-200 cursor-pointer flex flex-col justify-between"
                 >
-                  <div className="space-y-3.5">
+                  <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 via-teal-500 to-cyan-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/20 group-hover:scale-105 transition-transform">
-                        <FlaskConical className="w-6 h-6" />
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 via-teal-500 to-cyan-600 text-white flex items-center justify-center shadow-sm shadow-emerald-500/20 group-hover:scale-105 transition-transform">
+                        <FlaskConical className="w-5 h-5" />
                       </div>
-                      <span className="text-[11px] font-black uppercase px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-2xs">
-                        {counts.fullSubject} Tests Live
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-2xs">
+                          {counts.fullSubject} Tests
+                        </span>
+                      </div>
                     </div>
 
                     <div>
-                      <h3 className="text-lg sm:text-xl font-black text-slate-900 font-['Outfit',sans-serif] leading-tight group-hover:text-emerald-600 transition-colors">
-                        Full Subject Tests
-                      </h3>
-                      <p className="text-xs sm:text-sm text-slate-600 mt-1.5 leading-relaxed">
-                        Complete syllabus tests per subject. Evaluate 100% of Physics, 100% of Chemistry, or 100% of Biology in 180-marks NTA test formats.
+                      <div className="flex items-center justify-between gap-1">
+                        <h3 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit',sans-serif] leading-snug group-hover:text-emerald-600 transition-colors">
+                          Full Subject Tests
+                        </h3>
+                        <span className="text-[10px] font-black text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-md shrink-0">
+                          Pass ₹{pricingPackages.fullSubjectAll3Price}
+                        </span>
+                      </div>
+                      <p className="text-[11.5px] text-slate-600 mt-1 leading-relaxed line-clamp-2">
+                        Complete syllabus tests per subject. 100% of Physics, 100% of Chemistry, or 100% of Biology.
                       </p>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-slate-600 pt-1">
-                      <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">180 Marks / Subject</span>
-                      <span className="px-2 py-0.5 rounded-lg bg-teal-50 text-teal-700 border border-teal-200">45 Questions</span>
+                    <div className="flex flex-wrap items-center gap-1 text-[10px] font-bold text-slate-600 pt-0.5">
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">180 Marks / Subject</span>
+                      <span className="px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200">45 Qs Standard</span>
+                      <span className="px-2 py-0.5 rounded-md bg-cyan-50 text-cyan-800 border border-cyan-200">All 3 Subjects</span>
                     </div>
                   </div>
 
-                  <div className="pt-4 mt-4 border-t border-emerald-100/90 flex items-center justify-between text-xs font-black">
-                    <span className="text-emerald-700">Explore Full Subjects</span>
-                    <span className="inline-flex items-center gap-1 text-emerald-600 group-hover:translate-x-1 transition-transform">
+                  <div className="pt-2.5 mt-2.5 border-t border-emerald-100/90 flex items-center justify-between text-xs font-black">
+                    <span className="text-emerald-700 text-[11px]">Explore Full Subjects</span>
+                    <span className="inline-flex items-center gap-1 text-emerald-600 group-hover:translate-x-1 transition-transform text-xs">
                       <span>Open Page</span>
-                      <ChevronRight className="w-4 h-4" />
+                      <ChevronRight className="w-3.5 h-3.5" />
                     </span>
                   </div>
                 </div>
@@ -437,39 +496,46 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
                 {/* 3️⃣ FULL SYLLABUS TESTS PORTAL CARD */}
                 <div
                   onClick={() => navigateToPage('full_syllabus')}
-                  className="group relative overflow-hidden rounded-3xl p-5 sm:p-6 bg-gradient-to-br from-white via-blue-50/20 to-indigo-50/40 hover:to-blue-100/50 border border-blue-200/90 shadow-2xs hover:shadow-xl hover:border-blue-400 transition-all duration-300 cursor-pointer flex flex-col justify-between"
+                  className="group relative overflow-hidden rounded-2xl p-4 sm:p-4.5 bg-gradient-to-br from-white via-blue-50/30 to-indigo-50/50 hover:to-blue-100/60 border-2 border-blue-200/90 hover:border-blue-500 shadow-2xs hover:shadow-lg transition-all duration-200 cursor-pointer flex flex-col justify-between"
                 >
-                  <div className="space-y-3.5">
+                  <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform">
-                        <Trophy className="w-6 h-6" />
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 text-white flex items-center justify-center shadow-sm shadow-blue-500/20 group-hover:scale-105 transition-transform">
+                        <Trophy className="w-5 h-5" />
                       </div>
-                      <span className="text-[11px] font-black uppercase px-3 py-1 rounded-full bg-blue-100 text-blue-800 border border-blue-200 shadow-2xs">
-                        {counts.fullSyllabus} Tests Live
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200 shadow-2xs">
+                          {counts.fullSyllabus} Tests
+                        </span>
+                      </div>
                     </div>
 
                     <div>
-                      <h3 className="text-lg sm:text-xl font-black text-slate-900 font-['Outfit',sans-serif] leading-tight group-hover:text-blue-600 transition-colors">
-                        Full Syllabus Tests
-                      </h3>
-                      <p className="text-xs sm:text-sm text-slate-600 mt-1.5 leading-relaxed">
-                        The ultimate NEET simulation. Comprehensive 720-marks Grand Tests featuring Physics + Chemistry + Biology with All India Ranking.
+                      <div className="flex items-center justify-between gap-1">
+                        <h3 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit',sans-serif] leading-snug group-hover:text-blue-600 transition-colors">
+                          Full Syllabus Tests
+                        </h3>
+                        <span className="text-[10px] font-black text-indigo-800 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md shrink-0">
+                          Pass ₹{pricingPackages.fullSyllabusAllPrice}
+                        </span>
+                      </div>
+                      <p className="text-[11.5px] text-slate-600 mt-1 leading-relaxed line-clamp-2">
+                        The ultimate NEET simulation. Comprehensive 720-marks Grand Tests featuring PCB with All India Rank.
                       </p>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-slate-600 pt-1">
-                      <span className="px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200">720 Marks NEET</span>
-                      <span className="px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200">PCB Combined</span>
-                      <span className="px-2 py-0.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-200">All India Rank</span>
+                    <div className="flex flex-wrap items-center gap-1 text-[10px] font-bold text-slate-600 pt-0.5">
+                      <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200">720 Marks NEET</span>
+                      <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">PCB Combined</span>
+                      <span className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200">AIR Ranking</span>
                     </div>
                   </div>
 
-                  <div className="pt-4 mt-4 border-t border-blue-100/90 flex items-center justify-between text-xs font-black">
-                    <span className="text-blue-700">Explore Grand Mocks</span>
-                    <span className="inline-flex items-center gap-1 text-blue-600 group-hover:translate-x-1 transition-transform">
+                  <div className="pt-2.5 mt-2.5 border-t border-blue-100/90 flex items-center justify-between text-xs font-black">
+                    <span className="text-blue-700 text-[11px]">Explore Grand Mocks</span>
+                    <span className="inline-flex items-center gap-1 text-blue-600 group-hover:translate-x-1 transition-transform text-xs">
                       <span>Open Page</span>
-                      <ChevronRight className="w-4 h-4" />
+                      <ChevronRight className="w-3.5 h-3.5" />
                     </span>
                   </div>
                 </div>
@@ -797,6 +863,207 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
                 )}
               </div>
             )}
+
+            {/* Dynamic Subject Package Pass Banners for Dedicated Pages */}
+            {pageView === 'chapter_wise' && (() => {
+              const isSubjectUnlocked = hasUserPurchasedPackage(effectiveUser?.uid, effectiveUser?.email, `package:chapter_wise:${chapterSubject}`);
+              const price = chapterSubject === 'Biology' 
+                ? pricingPackages.chapterWiseBiologyPrice 
+                : chapterSubject === 'Chemistry' 
+                ? pricingPackages.chapterWiseChemistryPrice 
+                : pricingPackages.chapterWisePhysicsPrice;
+              const origPrice = chapterSubject === 'Biology'
+                ? (pricingPackages.chapterWiseBiologyOriginalPrice || 399)
+                : chapterSubject === 'Chemistry'
+                ? (pricingPackages.chapterWiseChemistryOriginalPrice || 399)
+                : (pricingPackages.chapterWisePhysicsOriginalPrice || 399);
+
+              return (
+                <div className={`rounded-2xl p-3.5 sm:p-4 border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs ${
+                  isSubjectUnlocked
+                    ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950'
+                    : chapterSubject === 'Biology'
+                    ? 'bg-gradient-to-r from-emerald-50 via-teal-50/40 to-white border-emerald-200'
+                    : chapterSubject === 'Chemistry'
+                    ? 'bg-gradient-to-r from-amber-50 via-orange-50/40 to-white border-amber-200'
+                    : 'bg-gradient-to-r from-blue-50 via-indigo-50/40 to-white border-blue-200'
+                }`}>
+                  <div className="flex items-center gap-3">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-base shrink-0 ${
+                      isSubjectUnlocked
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : chapterSubject === 'Biology'
+                        ? 'bg-emerald-500 text-white'
+                        : chapterSubject === 'Chemistry'
+                        ? 'bg-amber-500 text-white'
+                        : 'bg-blue-600 text-white'
+                    }`}>
+                      {isSubjectUnlocked ? <CheckCircle2 className="w-5 h-5" /> : chapterSubject === 'Biology' ? '🧬' : chapterSubject === 'Chemistry' ? '🧪' : '⚛️'}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-xs sm:text-sm font-black text-slate-900 font-['Outfit',sans-serif]">
+                          {chapterSubject} Chapter Wise Tests Pass
+                        </h4>
+                        {isSubjectUnlocked ? (
+                          <span className="text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md border border-emerald-300">
+                            Active / Unlocked
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-black uppercase bg-rose-100 text-rose-800 px-2 py-0.5 rounded-md">
+                            Subject Pass
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-0.5">
+                        {isSubjectUnlocked
+                          ? `You have full access to all ${chapterSubject} chapter-wise mock tests. Enjoy unlimited NTA CBT attempts!`
+                          : `Unlock all ${chapterSubject} chapter tests at once with NTA timer, answers & detailed explanations.`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {!isSubjectUnlocked && (
+                    <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
+                      <div className="text-right">
+                        <span className="text-[11px] text-slate-400 line-through block">₹{origPrice}</span>
+                        <span className="text-sm font-black text-slate-900 font-['Outfit',sans-serif]">₹{price}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleBuyPackage(`package:chapter_wise:${chapterSubject}`, `NEET 2026 ${chapterSubject} Chapter Wise Tests Pass`, price, origPrice)}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-black text-white shadow-xs transition cursor-pointer flex items-center gap-1.5 ${
+                          chapterSubject === 'Biology'
+                            ? 'bg-emerald-600 hover:bg-emerald-700'
+                            : chapterSubject === 'Chemistry'
+                            ? 'bg-amber-600 hover:bg-amber-700'
+                            : 'bg-blue-600 hover:bg-blue-700'
+                        }`}
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Unlock {chapterSubject} Pass</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {pageView === 'full_subject' && (() => {
+              const isAllSubjectsUnlocked = hasUserPurchasedPackage(effectiveUser?.uid, effectiveUser?.email, 'package:full_subject');
+              const price = pricingPackages.fullSubjectAll3Price;
+              const origPrice = pricingPackages.fullSubjectAll3OriginalPrice || 599;
+
+              return (
+                <div className={`rounded-2xl p-3.5 sm:p-4 border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs ${
+                  isAllSubjectsUnlocked
+                    ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950'
+                    : 'bg-gradient-to-r from-teal-50 via-emerald-50/40 to-white border-teal-200'
+                }`}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-teal-600 text-white flex items-center justify-center font-bold text-base shrink-0 shadow-xs">
+                      {isAllSubjectsUnlocked ? <CheckCircle2 className="w-5 h-5" /> : '🧪'}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-xs sm:text-sm font-black text-slate-900 font-['Outfit',sans-serif]">
+                          All 3 Full Subjects Pass (Physics + Chemistry + Biology)
+                        </h4>
+                        {isAllSubjectsUnlocked ? (
+                          <span className="text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md border border-emerald-300">
+                            Active / Unlocked
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-black uppercase bg-teal-100 text-teal-800 px-2 py-0.5 rounded-md">
+                            All 3 Bundle
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-0.5">
+                        {isAllSubjectsUnlocked
+                          ? 'You have unlocked all 3 Full Subject Tests. Enjoy official 180-marks NTA tests.'
+                          : 'Unlock all 180-marks full subject tests across Physics, Chemistry, and Biology in one pass.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {!isAllSubjectsUnlocked && (
+                    <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
+                      <div className="text-right">
+                        <span className="text-[11px] text-slate-400 line-through block">₹{origPrice}</span>
+                        <span className="text-sm font-black text-slate-900 font-['Outfit',sans-serif]">₹{price}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleBuyPackage('package:full_subject', 'NEET 2026 All 3 Full Subjects Tests Pass (PCB)', price, origPrice)}
+                        className="px-3.5 py-1.5 rounded-xl text-xs font-black text-white bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Unlock All 3 Subjects (₹{price})</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {pageView === 'full_syllabus' && (() => {
+              const isGrandUnlocked = hasUserPurchasedPackage(effectiveUser?.uid, effectiveUser?.email, 'package:full_syllabus');
+              const price = pricingPackages.fullSyllabusAllPrice;
+              const origPrice = pricingPackages.fullSyllabusAllOriginalPrice || 799;
+
+              return (
+                <div className={`rounded-2xl p-3.5 sm:p-4 border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs ${
+                  isGrandUnlocked
+                    ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950'
+                    : 'bg-gradient-to-r from-indigo-50 via-purple-50/40 to-white border-indigo-200'
+                }`}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-base shrink-0 shadow-xs">
+                      {isGrandUnlocked ? <CheckCircle2 className="w-5 h-5" /> : '🏆'}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-xs sm:text-sm font-black text-slate-900 font-['Outfit',sans-serif]">
+                          Full Syllabus NEET Grand Test Series Pass
+                        </h4>
+                        {isGrandUnlocked ? (
+                          <span className="text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md border border-emerald-300">
+                            Active / Unlocked
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-black uppercase bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-md">
+                            Grand Pass
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-0.5">
+                        {isGrandUnlocked
+                          ? 'You have unlocked all 720-marks Grand Mock Tests. Compete for All India Rank!'
+                          : 'Unlock all 720-marks full PCB grand tests with live AIR leaderboards and solutions.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {!isGrandUnlocked && (
+                    <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
+                      <div className="text-right">
+                        <span className="text-[11px] text-slate-400 line-through block">₹{origPrice}</span>
+                        <span className="text-sm font-black text-slate-900 font-['Outfit',sans-serif]">₹{price}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleBuyPackage('package:full_syllabus', 'NEET 2026 Full Syllabus Grand Mock Test Series Pass', price, origPrice)}
+                        className="px-3.5 py-1.5 rounded-xl text-xs font-black text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Unlock Grand Pass (₹{price})</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* ATTEMPT HISTORY SECTION */}
             {pageView === 'history' && (
@@ -1153,6 +1420,86 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
           test={shareModalTest}
           onClose={() => setShareModalTest(null)}
         />
+      )}
+
+      {/* Bilingual CBT Language Selection Modal */}
+      {languageSelectModalTest && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <span className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-sm">
+                  🌐
+                </span>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 font-['Outfit',sans-serif]">
+                    Select Test Medium
+                  </h3>
+                  <p className="text-xs text-slate-500">Official NTA Bilingual CBT Engine</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLanguageSelectModalTest(null)}
+                className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              <strong className="text-slate-900">{languageSelectModalTest.title}</strong> is prepared in both English and Hindi. Select your primary language to enter the CBT exam room:
+            </p>
+
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  const t = languageSelectModalTest;
+                  setLanguageSelectModalTest(null);
+                  onStartTest(t, 'en');
+                }}
+                className="w-full p-3.5 rounded-2xl border-2 border-blue-500 bg-blue-50/60 hover:bg-blue-100 text-left transition flex items-center justify-between cursor-pointer group"
+              >
+                <div>
+                  <span className="text-[10px] font-black uppercase text-blue-700 tracking-wider block">Medium 01</span>
+                  <span className="text-sm font-black text-slate-900">English Medium</span>
+                  <p className="text-[11px] text-slate-500 mt-0.5">NTA NEET standard English text &amp; diagrams</p>
+                </div>
+                <span className="px-3 py-1.5 rounded-xl bg-blue-600 group-hover:bg-blue-700 text-white font-black text-xs flex items-center gap-1 shrink-0 shadow-xs">
+                  <Play className="w-3 h-3 fill-white" />
+                  <span>Start (EN)</span>
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const t = languageSelectModalTest;
+                  setLanguageSelectModalTest(null);
+                  onStartTest(t, 'hi');
+                }}
+                className="w-full p-3.5 rounded-2xl border-2 border-emerald-400 bg-emerald-50/60 hover:bg-emerald-100 text-left transition flex items-center justify-between cursor-pointer group"
+              >
+                <div>
+                  <span className="text-[10px] font-black uppercase text-emerald-700 tracking-wider block">Medium 02</span>
+                  <span className="text-sm font-black text-slate-900">हिंदी माध्यम (Hindi Medium)</span>
+                  <p className="text-[11px] text-slate-500 mt-0.5">शुद्ध देवनागरी हिंदी अनुवाद सहित प्रश्न पत्र</p>
+                </div>
+                <span className="px-3 py-1.5 rounded-xl bg-emerald-600 group-hover:bg-emerald-700 text-white font-black text-xs flex items-center gap-1 shrink-0 shadow-xs">
+                  <Play className="w-3 h-3 fill-white" />
+                  <span>शुरू करें (HI)</span>
+                </span>
+              </button>
+            </div>
+
+            <div className="pt-2 text-center border-t border-slate-100">
+              <span className="text-[11px] text-slate-400 font-medium">
+                Tip: You can switch between English and Hindi anytime during the test in the top exam bar.
+              </span>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

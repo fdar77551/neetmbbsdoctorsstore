@@ -20,7 +20,12 @@ import {
   repairDevanagariText,
   sendPageToGeminiParser
 } from './geminiPdfParser';
-import { saveStoredMockQuestions, saveStoredMockTests, getStoredMockTests } from './mockTestData';
+import { 
+  saveStoredMockQuestions, 
+  saveStoredMockTests, 
+  getStoredMockTests,
+  parseQuestionsFromRawText 
+} from './mockTestData';
 
 class BackgroundPdfParserManager {
   private activeJobId: string | null = null;
@@ -179,6 +184,54 @@ class BackgroundPdfParserManager {
           modelUsed = parseResult.modelUsed || 'Gemini Vision';
         } catch (pageErr) {
           console.warn(`[Background Parser] Page ${p} parse note:`, pageErr);
+        }
+
+        // Automatic Vector Text Layer Fallback: If Gemini quota was reached or no questions returned,
+        // extract directly from the PDF vector text stream so zero questions are lost!
+        if (pageQuestions.length === 0 && pdfDoc) {
+          try {
+            const pageObj = await pdfDoc.getPage(p);
+            const textContent = await pageObj.getTextContent();
+            let pageRawText = '';
+            let lastY: number | null = null;
+            for (const item of (textContent.items || []) as any[]) {
+              const itemY = item.transform?.[5];
+              if (lastY !== null && itemY !== undefined && Math.abs(itemY - lastY) > 5) {
+                pageRawText += '\n';
+              } else if (item.hasEOL) {
+                pageRawText += '\n';
+              } else if (pageRawText.length > 0 && !pageRawText.endsWith(' ') && !pageRawText.endsWith('\n')) {
+                pageRawText += ' ';
+              }
+              pageRawText += item.str || '';
+              if (itemY !== undefined) lastY = itemY;
+            }
+
+            if (pageRawText.trim().length > 40) {
+              const defaultSubj: MockSubject = p <= 12 ? 'Physics' : p <= 24 ? 'Chemistry' : 'Biology';
+              const textQs = parseQuestionsFromRawText(pageRawText, defaultSubj);
+              if (textQs.length > 0) {
+                pageQuestions = textQs.map((tq, tIdx) => ({
+                  questionNumber: tq.questionNumber || (accumulatedQuestions.length + tIdx + 1),
+                  subject: tq.subject,
+                  chapter: tq.chapter,
+                  english: {
+                    questionText: tq.questionText,
+                    options: tq.options.map(o => ({ label: o.label, text: o.value }))
+                  },
+                  hindi: tq.languages?.hi ? {
+                    questionText: tq.languages.hi.questionText,
+                    options: tq.languages.hi.options?.map(o => ({ label: o.label, text: o.value }))
+                  } : undefined,
+                  correctAnswer: tq.correctAnswer,
+                  hasFigure: false
+                }));
+                modelUsed = 'High-Precision Vector Text Layer';
+              }
+            }
+          } catch (textExtractErr) {
+            console.warn(`[Background Parser] Vector text fallback note for page ${p}:`, textExtractErr);
+          }
         }
 
         // 5. Crop diagrams directly from canvas

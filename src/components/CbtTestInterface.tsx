@@ -18,7 +18,14 @@ import {
   Sparkles
 } from 'lucide-react';
 import { MockTest, MockQuestion, MockTestAttempt, MockSubject } from '../types';
-import { saveStoredMockAttempt, getStoredMockQuestions, getMockTestAttempt, getQuestionDisplayContent } from '../lib/mockTestData';
+import { 
+  saveStoredMockAttempt, 
+  getStoredMockQuestions, 
+  getMockTestAttempt, 
+  getQuestionDisplayContent,
+  fetchMockQuestionsFromAnySource
+} from '../lib/mockTestData';
+import { idbGetQuestions } from '../lib/idbStorage';
 import { cleanQuestionTextForMatchTable } from '../lib/geminiPdfParser';
 
 interface CbtTestInterfaceProps {
@@ -42,10 +49,66 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
   onExitTest,
   initialLanguage = 'en'
 }) => {
-  const questions = useMemo(() => {
+  const [questions, setQuestions] = useState<MockQuestion[]>(() => {
     if (passedQuestions && passedQuestions.length > 0) return passedQuestions;
+    if (test.questions && test.questions.length > 0) return test.questions;
     return getStoredMockQuestions(test.id);
-  }, [passedQuestions, test.id]);
+  });
+  const [isLoadingQuestions, setIsLoadingQuestions] = useState<boolean>(() => questions.length === 0);
+
+  // Reactive question synchronization & loader for IndexedDB / Cloudflare D1 / Firebase
+  useEffect(() => {
+    let isCancelled = false;
+
+    // Listen for storage updates
+    const handleUpdate = (e: any) => {
+      const updatedTestId = e?.detail?.testId;
+      if (!updatedTestId || updatedTestId === test.id) {
+        const fresh = getStoredMockQuestions(test.id);
+        if (fresh.length > 0 && !isCancelled) {
+          setQuestions(fresh);
+          setIsLoadingQuestions(false);
+        }
+      }
+    };
+    window.addEventListener('neetmbbs_mock_questions_updated', handleUpdate);
+
+    // If initial questions were empty, actively fetch from IndexedDB and all sources
+    if (questions.length === 0) {
+      (async () => {
+        try {
+          // 1. Try IndexedDB
+          const fromIdb = await idbGetQuestions(test.id);
+          if (fromIdb && fromIdb.length > 0 && !isCancelled) {
+            setQuestions(fromIdb);
+            setIsLoadingQuestions(false);
+            return;
+          }
+
+          // 2. Try universal sources (Cloudflare D1 / Firebase RTDB)
+          const fromRemote = await fetchMockQuestionsFromAnySource(test.id);
+          if (fromRemote && fromRemote.length > 0 && !isCancelled) {
+            setQuestions(fromRemote);
+            setIsLoadingQuestions(false);
+            return;
+          }
+        } catch (e) {
+          console.warn('Questions fetch error in CBT:', e);
+        } finally {
+          if (!isCancelled) {
+            setIsLoadingQuestions(false);
+          }
+        }
+      })();
+    } else {
+      setIsLoadingQuestions(false);
+    }
+
+    return () => {
+      isCancelled = true;
+      window.removeEventListener('neetmbbs_mock_questions_updated', handleUpdate);
+    };
+  }, [test.id, questions.length]);
 
   const testDuration = test.durationMinutes && test.durationMinutes > 0 ? test.durationMinutes : 180;
   const totalDurationSeconds = testDuration * 60;
@@ -323,6 +386,29 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
       return item.q.subject === selectedSubjectTab;
     });
   }, [questions, selectedSubjectTab]);
+
+  if (isLoadingQuestions) {
+    return (
+      <div className="fixed inset-0 z-50 bg-slate-900 text-white flex flex-col items-center justify-center p-6 text-center space-y-4 font-['Plus_Jakarta_Sans',sans-serif]">
+        <div className="relative">
+          <div className="w-16 h-16 rounded-2xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+            <Sparkles className="w-8 h-8 animate-spin" />
+          </div>
+        </div>
+        <div className="space-y-1.5 max-w-sm">
+          <h2 className="text-lg font-black text-white font-['Outfit',sans-serif]">
+            Preparing NEET CBT Environment...
+          </h2>
+          <p className="text-xs text-slate-400">
+            Loading verified questions, diagrams, and official NTA timer for <span className="text-blue-400 font-bold">{test.title}</span>
+          </p>
+        </div>
+        <div className="w-48 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+          <div className="h-full bg-blue-500 animate-[pulse_1s_ease-in-out_infinite] w-3/4 rounded-full" />
+        </div>
+      </div>
+    );
+  }
 
   if (!questions || questions.length === 0) {
     return (

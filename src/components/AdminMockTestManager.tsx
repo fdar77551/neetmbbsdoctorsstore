@@ -61,7 +61,8 @@ import {
   MockTestType,
   MockQuestionDifficulty,
   MockMatchTable,
-  MockTestCategory
+  MockTestCategory,
+  MockTestPackagePricing
 } from '../types';
 import { 
   getStoredMockTests, 
@@ -73,7 +74,9 @@ import {
   getStoredMockAttempts,
   SCIENTIFIC_SAMPLE_DIAGRAMS,
   getTestCategory,
-  getAvailableChaptersForSubject
+  getAvailableChaptersForSubject,
+  getMockTestPricingPackages,
+  saveMockTestPricingPackages
 } from '../lib/mockTestData';
 import { 
   loadPdfDocument, 
@@ -127,7 +130,8 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
 }) => {
   const [tests, setTests] = useState<MockTest[]>(() => getStoredMockTests());
   const [selectedTest, setSelectedTest] = useState<MockTest | null>(null);
-  const [activeTab, setActiveTab] = useState<'tests' | 'questions' | 'copypaste' | 'pdf_import' | 'purchases'>('tests');
+  const [activeTab, setActiveTab] = useState<'tests' | 'questions' | 'copypaste' | 'pdf_import' | 'purchases' | 'pricing_packages'>('tests');
+  const [pricingPackages, setPricingPackages] = useState<MockTestPackagePricing>(() => getMockTestPricingPackages());
 
   // Question editing states
   const [questions, setQuestions] = useState<MockQuestion[]>([]);
@@ -2143,6 +2147,19 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
               </button>
             </>
           )}
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('pricing_packages')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+              activeTab === 'pricing_packages' 
+                ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white shadow-md font-black' 
+                : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <span>💰 Test Pricing &amp; Subject Packages</span>
+          </button>
 
           <button
             type="button"
@@ -6137,6 +6154,312 @@ or continuous: A B C D A B C D...`}
               )}
             </div>
 
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* TAB 6: TEST PRICING & SUBJECT PACKAGES */}
+        {/* ============================================================ */}
+        {activeTab === 'pricing_packages' && (
+          <div className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-7 space-y-6 shadow-2xs">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-5 border-b border-slate-100">
+              <div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-black uppercase tracking-wider mb-2 border border-emerald-200">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Real Razorpay / UPI Pass Management</span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-black text-slate-900 font-['Outfit',sans-serif]">
+                  Mock Test Pricing &amp; Subject Packages
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-500 mt-0.5 max-w-2xl">
+                  Configure package unlock pricing for Chapter Wise Subject Passes (Biology, Chemistry, Physics), Whole Three Subjects Full Tests, and Full Syllabus Grand Tests.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  saveMockTestPricingPackages(pricingPackages);
+                  triggerToast('🎉 Mock Test pricing packages saved & synced to Firebase and Cloudflare D1!');
+                }}
+                className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-2 shrink-0 self-start sm:self-auto"
+              >
+                <Check className="w-4 h-4" />
+                <span>Save All Pricing Changes</span>
+              </button>
+            </div>
+
+            {/* 1. Chapter Wise Subject Pricing Section */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 font-['Outfit',sans-serif] flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-orange-500" />
+                    <span>1. Chapter Wise Tests: Subject-Wise Package Pricing</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    When a student purchases a subject package, all chapter-wise tests of that subject become permanently unlocked.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Biology Chapter Wise Card */}
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-50/40 via-white to-teal-50/30 border-2 border-emerald-200 shadow-2xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                        🧬
+                      </span>
+                      <span className="text-xs font-black text-slate-900 font-['Outfit',sans-serif]">
+                        Biology Subject Pass
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-black uppercase text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
+                      Chapter Wise
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Unlocks Botany &amp; Zoology chapter-wise mock tests (Cell, Genetics, Plant Physio, Ecology, etc.).
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div>
+                      <label className="text-[10px] font-black text-slate-700 uppercase block mb-1">Selling Price (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={pricingPackages.chapterWiseBiologyPrice}
+                        onChange={e => setPricingPackages({ ...pricingPackages, chapterWiseBiologyPrice: Math.max(0, Number(e.target.value)) })}
+                        className="w-full px-3 py-2 text-xs font-black text-emerald-900 bg-white border border-emerald-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Original (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={pricingPackages.chapterWiseBiologyOriginalPrice ?? 399}
+                        onChange={e => setPricingPackages({ ...pricingPackages, chapterWiseBiologyOriginalPrice: Math.max(0, Number(e.target.value)) })}
+                        className="w-full px-3 py-2 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Chemistry Chapter Wise Card */}
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-50/40 via-white to-orange-50/30 border-2 border-amber-200 shadow-2xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                        🧪
+                      </span>
+                      <span className="text-xs font-black text-slate-900 font-['Outfit',sans-serif]">
+                        Chemistry Subject Pass
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-black uppercase text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">
+                      Chapter Wise
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Unlocks Organic, Inorganic &amp; Physical Chemistry tests with mechanisms &amp; molecular structures.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div>
+                      <label className="text-[10px] font-black text-slate-700 uppercase block mb-1">Selling Price (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={pricingPackages.chapterWiseChemistryPrice}
+                        onChange={e => setPricingPackages({ ...pricingPackages, chapterWiseChemistryPrice: Math.max(0, Number(e.target.value)) })}
+                        className="w-full px-3 py-2 text-xs font-black text-amber-900 bg-white border border-amber-300 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Original (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={pricingPackages.chapterWiseChemistryOriginalPrice ?? 399}
+                        onChange={e => setPricingPackages({ ...pricingPackages, chapterWiseChemistryOriginalPrice: Math.max(0, Number(e.target.value)) })}
+                        className="w-full px-3 py-2 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Physics Chapter Wise Card */}
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-50/40 via-white to-indigo-50/30 border-2 border-blue-200 shadow-2xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                        ⚛️
+                      </span>
+                      <span className="text-xs font-black text-slate-900 font-['Outfit',sans-serif]">
+                        Physics Subject Pass
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-black uppercase text-blue-800 bg-blue-100 px-2 py-0.5 rounded-md">
+                      Chapter Wise
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Unlocks Mechanics, Electrodynamics, Optics &amp; Modern Physics tests with circuit diagrams.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div>
+                      <label className="text-[10px] font-black text-slate-700 uppercase block mb-1">Selling Price (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={pricingPackages.chapterWisePhysicsPrice}
+                        onChange={e => setPricingPackages({ ...pricingPackages, chapterWisePhysicsPrice: Math.max(0, Number(e.target.value)) })}
+                        className="w-full px-3 py-2 text-xs font-black text-blue-900 bg-white border border-blue-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Original (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={pricingPackages.chapterWisePhysicsOriginalPrice ?? 399}
+                        onChange={e => setPricingPackages({ ...pricingPackages, chapterWisePhysicsOriginalPrice: Math.max(0, Number(e.target.value)) })}
+                        className="w-full px-3 py-2 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Whole Three Subjects (Full Subject Tests) & Full Syllabus Grand Tests */}
+            <div className="space-y-4 pt-4 border-t border-slate-100">
+              <h3 className="text-sm font-black text-slate-900 font-['Outfit',sans-serif] flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-indigo-600" />
+                <span>2. Multi-Subject &amp; Grand Full Syllabus Packages</span>
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Whole 3 Subjects (Full Subject Tests) */}
+                <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-teal-50/40 via-white to-emerald-50/30 border-2 border-teal-300 shadow-2xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-9 h-9 rounded-xl bg-gradient-to-tr from-teal-600 to-cyan-600 text-white flex items-center justify-center font-bold text-base shadow-xs">
+                        🧪
+                      </span>
+                      <div>
+                        <span className="text-sm font-black text-slate-900 font-['Outfit',sans-serif] block">
+                          Whole Three Subjects Pass (Full Subject Tests)
+                        </span>
+                        <span className="text-[10.5px] text-teal-700 font-bold">Physics + Chemistry + Biology (All 3)</span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-black uppercase text-teal-800 bg-teal-100 px-2.5 py-0.5 rounded-full">
+                      All 3 Subjects
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Student pays once to unlock all comprehensive 180-marks Full Subject Tests across Physics, Chemistry, and Biology.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="text-[10px] font-black text-slate-700 uppercase block mb-1">Bundle Price (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={pricingPackages.fullSubjectAll3Price}
+                        onChange={e => setPricingPackages({ ...pricingPackages, fullSubjectAll3Price: Math.max(0, Number(e.target.value)) })}
+                        className="w-full px-3 py-2 text-xs font-black text-teal-900 bg-white border border-teal-300 rounded-xl focus:ring-2 focus:ring-teal-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Original Price (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={pricingPackages.fullSubjectAll3OriginalPrice ?? 599}
+                        onChange={e => setPricingPackages({ ...pricingPackages, fullSubjectAll3OriginalPrice: Math.max(0, Number(e.target.value)) })}
+                        className="w-full px-3 py-2 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Full Syllabus Grand Mock Tests */}
+                <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-indigo-50/40 via-white to-purple-50/30 border-2 border-indigo-300 shadow-2xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center font-bold text-base shadow-xs">
+                        🏆
+                      </span>
+                      <div>
+                        <span className="text-sm font-black text-slate-900 font-['Outfit',sans-serif] block">
+                          Full Syllabus Grand Tests Pass
+                        </span>
+                        <span className="text-[10.5px] text-indigo-700 font-bold">720 Marks Full NEET Exam Simulation</span>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-black uppercase text-indigo-800 bg-indigo-100 px-2.5 py-0.5 rounded-full">
+                      Grand Tests
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Student unlocks all 720-marks Grand Tests featuring complete Physics + Chemistry + Biology syllabus with All India Rank percentiles.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="text-[10px] font-black text-slate-700 uppercase block mb-1">Grand Pass Price (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={pricingPackages.fullSyllabusAllPrice}
+                        onChange={e => setPricingPackages({ ...pricingPackages, fullSyllabusAllPrice: Math.max(0, Number(e.target.value)) })}
+                        className="w-full px-3 py-2 text-xs font-black text-indigo-900 bg-white border border-indigo-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Original Price (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={pricingPackages.fullSyllabusAllOriginalPrice ?? 799}
+                        onChange={e => setPricingPackages({ ...pricingPackages, fullSyllabusAllOriginalPrice: Math.max(0, Number(e.target.value)) })}
+                        className="w-full px-3 py-2 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Save Action Bar */}
+            <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+              <span className="text-xs text-slate-400 font-medium">
+                Pricing is synchronized across Cloudflare Workers, Cloudflare D1, and Firebase Realtime Database.
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  saveMockTestPricingPackages(pricingPackages);
+                  triggerToast('🎉 Mock Test pricing packages saved & synced to Firebase and Cloudflare D1!');
+                }}
+                className="px-6 py-2.5 bg-slate-900 hover:bg-black text-white font-black text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-2"
+              >
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span>Save All Package Prices</span>
+              </button>
+            </div>
           </div>
         )}
 
