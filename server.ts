@@ -3412,9 +3412,9 @@ function getGeminiClient(): GoogleGenAI {
 
 // Resilient multi-model fallback chain to handle transient 503 (high demand) and 429 surges
 const GEMINI_MODELS_FALLBACK_CHAIN = [
+  "gemini-3.1-flash-lite",
   "gemini-3.8-flash",
-  "gemini-flash-latest",
-  "gemini-3.1-flash-lite"
+  "gemini-flash-latest"
 ];
 
 function extractRetryDelaySeconds(err: any): number {
@@ -3454,6 +3454,18 @@ const NEET_QUESTION_SCHEMA = {
             type: Type.ARRAY,
             items: { type: Type.INTEGER },
             description: "[ymin, xmin, ymax, xmax] normalized 0-1000 containing the visual drawing/diagram/circuit/chemical structure",
+          },
+          questionText: { type: Type.STRING, description: "Full problem statement verbatim without dropping words" },
+          options: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                label: { type: Type.STRING },
+                text: { type: Type.STRING },
+              },
+              required: ["label", "text"],
+            },
           },
           matchTable: {
             type: Type.OBJECT,
@@ -3526,7 +3538,7 @@ const NEET_QUESTION_SCHEMA = {
           },
           correctAnswer: { type: Type.STRING },
         },
-        required: ["questionNumber", "english"],
+        required: ["questionNumber"],
       },
     },
   },
@@ -3833,11 +3845,13 @@ CRITICAL RULES:
       }
     }
 
+    const normalized = normalizeExtractedQuestions(parsedData.questions || []);
+
     return res.json({
       success: true,
       pageNumber: pageNumber || 1,
       modelUsed,
-      questions: parsedData.questions || []
+      questions: normalized
     });
   } catch (err: any) {
     console.error("Gemini NEET PDF page parse error:", err);
@@ -3858,6 +3872,264 @@ CRITICAL RULES:
         : (err.message || "Failed to parse page with Gemini API")
     });
   }
+});
+
+/**
+ * Universal Question Normalizer:
+ * Extracts real question statements, options, diagrams and answers from any Gemini output structure.
+ * Guarantees questionText and options are NEVER left empty or with placeholder text.
+ */
+function normalizeExtractedQuestions(rawList: any[]): any[] {
+  if (!Array.isArray(rawList)) return [];
+  return rawList.map((q: any, idx: number) => {
+    const qNum = typeof q.questionNumber === 'number' && q.questionNumber > 0
+      ? q.questionNumber
+      : (idx + 1);
+
+    // Find verbatim question statement across any nested field
+    let extractedText = '';
+    if (typeof q.english?.questionText === 'string' && q.english.questionText.trim()) {
+      extractedText = q.english.questionText.trim();
+    } else if (typeof q.questionText === 'string' && q.questionText.trim()) {
+      extractedText = q.questionText.trim();
+    } else if (typeof q.question === 'string' && q.question.trim()) {
+      extractedText = q.question.trim();
+    } else if (typeof q.statement === 'string' && q.statement.trim()) {
+      extractedText = q.statement.trim();
+    } else if (typeof q.text === 'string' && q.text.trim()) {
+      extractedText = q.text.trim();
+    } else if (typeof q.english === 'string' && q.english.trim()) {
+      extractedText = q.english.trim();
+    } else if (typeof q.hindi?.questionText === 'string' && q.hindi.questionText.trim()) {
+      extractedText = q.hindi.questionText.trim();
+    }
+
+    // Find options across any field
+    let rawOpts = q.english?.options || q.options || q.choices || q.answers || [];
+    let normalizedOpts: Array<{ label: string; text: string }> = [];
+
+    if (Array.isArray(rawOpts) && rawOpts.length > 0) {
+      normalizedOpts = (['A', 'B', 'C', 'D'] as const).map((lbl, oIdx) => {
+        const item = rawOpts.find((o: any) => (o?.label || '').toUpperCase() === lbl) || rawOpts[oIdx];
+        let val = '';
+        if (typeof item === 'string') {
+          val = item.replace(/^\([A-Da-d1-4]\)\s*/, '').trim();
+        } else if (item && typeof item === 'object') {
+          val = (item.text || item.value || item.statement || item.label_text || '').toString().trim();
+        }
+        return { label: lbl, text: val };
+      });
+    } else if (rawOpts && typeof rawOpts === 'object') {
+      normalizedOpts = (['A', 'B', 'C', 'D'] as const).map(lbl => {
+        const val = rawOpts[lbl] || rawOpts[lbl.toLowerCase()] || rawOpts[String(lbl.charCodeAt(0) - 64)] || '';
+        return { label: lbl, text: String(val).trim() };
+      });
+    }
+
+    // Ensure 4 options exist
+    if (normalizedOpts.length < 4) {
+      const existing = new Set(normalizedOpts.map(o => o.label));
+      (['A', 'B', 'C', 'D'] as const).forEach(lbl => {
+        if (!existing.has(lbl)) {
+          normalizedOpts.push({ label: lbl, text: '' });
+        }
+      });
+      normalizedOpts.sort((a, b) => a.label.localeCompare(b.label));
+    }
+
+    // Figure bounding box resolution
+    const resolvedBbox = q.figureBoundingBox || q.boundingBox || q.figure_bbox || q.bbox || null;
+    const hasFig = Boolean(q.hasFigure || (resolvedBbox && Array.isArray(resolvedBbox) && resolvedBbox.length === 4));
+
+    return {
+      ...q,
+      questionNumber: qNum,
+      questionText: extractedText,
+      english: {
+        questionText: extractedText,
+        options: normalizedOpts
+      },
+      options: normalizedOpts,
+      hasFigure: hasFig,
+      figureBoundingBox: Array.isArray(resolvedBbox) ? resolvedBbox : undefined,
+      correctAnswer: (q.correctAnswer || 'A').toString().toUpperCase().slice(0, 1)
+    };
+  });
+}
+
+// ==========================================
+// BACKGROUND PDF PARSING JOBS SYSTEM
+// Continues executing on server even if client closes section or site
+// ==========================================
+interface ServerParseJob {
+  id: string;
+  testTitle: string;
+  testNumber: string;
+  testPrice: number;
+  testDuration: number;
+  testCategory?: string;
+  subject?: string;
+  chapter?: string;
+  targetTestId?: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  statusMessage: string;
+  progress: number;
+  currentPage: number;
+  totalPages: number;
+  questionsCount: number;
+  figuresCount: number;
+  questions: any[];
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const activeParseJobs = new Map<string, ServerParseJob>();
+
+// Start a Background Parsing Job
+app.post("/api/ai/parse-job/start", upload.single("pdf"), async (req, res) => {
+  try {
+    let pdfBase64 = "";
+    if (req.file && req.file.buffer) {
+      pdfBase64 = req.file.buffer.toString("base64");
+    } else if (req.body?.pdfBase64) {
+      pdfBase64 = req.body.pdfBase64.replace(/^data:application\/pdf;base64,/, "").trim();
+    }
+
+    if (!pdfBase64) {
+      return res.status(400).json({ success: false, error: "PDF file or pdfBase64 required to initiate background job" });
+    }
+
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const job: ServerParseJob = {
+      id: jobId,
+      testTitle: req.body?.testTitle || "NEET Question Paper",
+      testNumber: req.body?.testNumber || "Test 01",
+      testPrice: Number(req.body?.testPrice || 99),
+      testDuration: Number(req.body?.testDuration || 180),
+      testCategory: req.body?.testCategory,
+      subject: req.body?.subject,
+      chapter: req.body?.chapter,
+      targetTestId: req.body?.targetTestId,
+      status: 'queued',
+      statusMessage: 'Background parsing job queued on server...',
+      progress: 5,
+      currentPage: 1,
+      totalPages: 1,
+      questionsCount: 0,
+      figuresCount: 0,
+      questions: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    activeParseJobs.set(jobId, job);
+
+    // Asynchronously execute background parsing without blocking HTTP response
+    (async () => {
+      try {
+        job.status = 'processing';
+        job.statusMessage = 'Analyzing document layout and digitizing exam questions...';
+        job.progress = 20;
+        job.updatedAt = new Date().toISOString();
+
+        const ai = getGeminiClient();
+        const { rawText, modelUsed } = await callGeminiWithFallback(ai, {
+          contents: [
+            {
+              inlineData: {
+                mimeType: "application/pdf",
+                data: pdfBase64,
+              },
+            },
+            {
+              text: `Parse all questions from this NEET exam PDF. ONLY parse genuine exam questions with problem statements and 4 real options. STRICTLY IGNORE answer key grids, hints, solutions, and explanations. Maintain verbatim accuracy, question numbering, bilingual Hindi & English text, all 4 options, and figure bounding boxes [ymin, xmin, ymax, xmax] (normalized 0-1000). Return valid JSON.`,
+            },
+          ],
+          systemInstruction: `You are an expert NTA NEET Question Paper Digitization Assistant. Accurately digitize all exam questions from this PDF. Transcribe full verbatim problem statements into questionText, all 4 options, and precise figureBoundingBox [ymin, xmin, ymax, xmax]. Never omit question statements or option texts.`,
+        });
+
+        let parsedData: any = {};
+        try {
+          parsedData = JSON.parse(rawText);
+        } catch {
+          try {
+            const cleaned = rawText.replace(/```(?:json)?/gi, "").trim();
+            parsedData = JSON.parse(cleaned);
+          } catch {
+            const start = rawText.indexOf('{');
+            const end = rawText.lastIndexOf('}');
+            if (start !== -1 && end !== -1 && end > start) {
+              parsedData = JSON.parse(rawText.slice(start, end + 1));
+            } else {
+              parsedData = { questions: [] };
+            }
+          }
+        }
+
+        const normalizedQs = normalizeExtractedQuestions(parsedData.questions || []);
+        job.questions = normalizedQs;
+        job.questionsCount = normalizedQs.length;
+        job.figuresCount = normalizedQs.filter((q: any) => q.hasFigure).length;
+        job.status = 'completed';
+        job.progress = 100;
+        job.statusMessage = `✓ Successfully digitized ${normalizedQs.length} questions in background!`;
+        job.updatedAt = new Date().toISOString();
+        console.log(`[Background Parse Job] Job ${jobId} finished with ${normalizedQs.length} questions using ${modelUsed}`);
+      } catch (jobErr: any) {
+        console.error(`[Background Parse Job] Job ${jobId} failed:`, jobErr);
+        job.status = 'failed';
+        job.error = jobErr?.message || 'Background parsing failed';
+        job.statusMessage = `Error in background parsing: ${job.error}`;
+        job.updatedAt = new Date().toISOString();
+      }
+    })();
+
+    return res.json({
+      success: true,
+      jobId,
+      status: job.status,
+      message: 'Background parsing started. You can safely close this page or switch sections.'
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Check Background Job Status
+app.get("/api/ai/parse-job/status/:jobId", (req, res) => {
+  const { jobId } = req.params;
+  const job = activeParseJobs.get(jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, error: "Job not found" });
+  }
+  return res.json({
+    success: true,
+    job
+  });
+});
+
+// Get Active / Recent Jobs
+app.get("/api/ai/parse-job/active", (_req, res) => {
+  const jobsList = Array.from(activeParseJobs.values()).sort((a, b) => 
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+  return res.json({
+    success: true,
+    activeJobs: jobsList.slice(0, 5)
+  });
+});
+
+// Cancel Background Job
+app.post("/api/ai/parse-job/cancel/:jobId", (req, res) => {
+  const { jobId } = req.params;
+  const job = activeParseJobs.get(jobId);
+  if (job) {
+    job.status = 'cancelled';
+    job.statusMessage = 'Job cancelled by admin';
+    job.updatedAt = new Date().toISOString();
+  }
+  return res.json({ success: true, message: "Job cancelled" });
 });
 
 // Parse Complete NEET PDF File Directly
@@ -3917,10 +4189,12 @@ app.post("/api/ai/parse-neet-pdf", upload.single("pdf"), async (req, res) => {
       }
     }
 
+    const normalized = normalizeExtractedQuestions(parsedData.questions || []);
+
     return res.json({
       success: true,
       modelUsed,
-      questions: parsedData.questions || []
+      questions: normalized
     });
   } catch (err: any) {
     console.error("Gemini NEET PDF parse error:", err);

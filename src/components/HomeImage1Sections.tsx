@@ -297,14 +297,14 @@ export const PopularPhysicalBooksSection: React.FC<PopularPhysicalBooksProps> = 
         </button>
       </div>
 
-      {/* Horizontal Scroll / Desktop Grid of Books matching Image 1 */}
-      <div className="flex gap-2.5 sm:gap-3 overflow-x-auto pb-2 scrollbar-none sm:grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+      {/* 2-per-horizontal-row Flipkart Grid of Books */}
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-3 lg:grid-cols-4">
         {books.map(book => {
           return (
             <div
               key={book.id}
               onClick={() => onSelectProduct(book)}
-              className="bg-white rounded-xl sm:rounded-2xl border border-slate-200/80 p-2.5 sm:p-3.5 shadow-2xs hover:shadow-md transition-all duration-200 flex flex-col justify-between w-[160px] sm:w-auto shrink-0 cursor-pointer group"
+              className="bg-white rounded-xl sm:rounded-2xl border border-slate-200/80 p-2.5 sm:p-3.5 shadow-2xs hover:shadow-md transition-all duration-200 flex flex-col justify-between cursor-pointer group"
             >
               <div>
                 {/* Book Cover Thumbnail */}
@@ -415,8 +415,8 @@ export const DigitalStudyMaterialSection: React.FC<DigitalStudyMaterialProps> = 
         </button>
       </div>
 
-      {/* Horizontal Scroll / Desktop Grid of PDFs matching Image 1 */}
-      <div className="flex gap-2.5 sm:gap-3 overflow-x-auto pb-2 scrollbar-none sm:grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+      {/* 2-per-horizontal-row Flipkart Grid of PDFs */}
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-3 lg:grid-cols-4">
         {pdfs.map(pdf => {
           const isPurchased = purchasedProductIds.includes(pdf.id);
 
@@ -424,7 +424,7 @@ export const DigitalStudyMaterialSection: React.FC<DigitalStudyMaterialProps> = 
             <div
               key={pdf.id}
               onClick={() => onSelectProduct(pdf)}
-              className="bg-white rounded-xl sm:rounded-2xl border border-slate-200/80 p-2.5 sm:p-3.5 shadow-2xs hover:shadow-md transition-all duration-200 flex flex-col justify-between w-[160px] sm:w-auto shrink-0 cursor-pointer group"
+              className="bg-white rounded-xl sm:rounded-2xl border border-slate-200/80 p-2.5 sm:p-3.5 shadow-2xs hover:shadow-md transition-all duration-200 flex flex-col justify-between cursor-pointer group"
             >
               <div>
                 {/* PDF Cover / Icon Thumbnail */}

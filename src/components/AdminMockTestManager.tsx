@@ -235,12 +235,59 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
   const [editingTestId, setEditingTestId] = useState<string | null>(null);
   const [deleteConfirmTest, setDeleteConfirmTest] = useState<MockTest | null>(null);
   const [deleteConfirmQuestion, setDeleteConfirmQuestion] = useState<MockQuestion | null>(null);
+  const [quickDeleteConfirmQ, setQuickDeleteConfirmQ] = useState<MockQuestion | null>(null);
+  const [selectedQuestionNums, setSelectedQuestionNums] = useState<number[]>([]);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [deleteAllConfirmOpen, setDeleteAllConfirmOpen] = useState(false);
+  
+  // Background Parsing on Server states
+  const [activeServerJob, setActiveServerJob] = useState<any | null>(null);
+  const [isStartingServerJob, setIsStartingServerJob] = useState(false);
+
   const [adminToast, setAdminToast] = useState<string | null>(null);
 
   const triggerToast = (msg: string) => {
     setAdminToast(msg);
     setTimeout(() => setAdminToast(null), 3000);
   };
+
+  // Poll server for active background parsing jobs so progress continues even if user closed section/site
+  useEffect(() => {
+    let isMounted = true;
+    const pollServerJobs = async () => {
+      try {
+        const savedJobId = localStorage.getItem('neet_active_parse_job_id');
+        if (savedJobId) {
+          const res = await fetch(`/api/ai/parse-job/status/${savedJobId}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.job && isMounted) {
+              setActiveServerJob(data.job);
+              if (data.job.status === 'completed' && data.job.questions && data.job.questions.length > 0) {
+                const importedKey = `neet_job_imported_${savedJobId}`;
+                if (!localStorage.getItem(importedKey)) {
+                  localStorage.setItem(importedKey, 'true');
+                  localStorage.removeItem('neet_active_parse_job_id');
+                  handleImportCompletedServerJob(data.job);
+                }
+              } else if (data.job.status === 'failed' || data.job.status === 'cancelled') {
+                localStorage.removeItem('neet_active_parse_job_id');
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Poll server parse job note:', err);
+      }
+    };
+
+    pollServerJobs();
+    const interval = setInterval(pollServerJobs, 3500);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [selectedTest, tests]);
 
   // Dynamically derive chapters created by admin for the currently active subject in the form
   const availableChaptersForForm = useMemo(() => {
@@ -978,6 +1025,148 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     triggerToast('Question saved successfully!');
   };
 
+  // Import completed background parse job from server
+  const handleImportCompletedServerJob = (job: any) => {
+    if (!job.questions || job.questions.length === 0) return;
+    if (selectedTest && job.targetTestId === selectedTest.id) {
+      const existing = [...questions];
+      const newQs: MockQuestion[] = job.questions.map((q: any, idx: number) => ({
+        ...q,
+        testId: selectedTest.id,
+        id: `q-${selectedTest.id}-${Date.now()}-${idx + 1}`,
+        questionNumber: q.questionNumber || (existing.length + idx + 1)
+      }));
+      const merged = [...existing, ...newQs];
+      merged.sort((a, b) => a.questionNumber - b.questionNumber);
+      handleSaveQuestionsList(merged);
+      setQuestions(merged);
+      setActiveTab('questions');
+      setTestQuestionsTab('all');
+      triggerToast(`🎉 Background parsing complete! Added ${newQs.length} questions to "${selectedTest.title}"`);
+    } else {
+      const { test: newCreatedTest, questions: savedQuestions } = createAndSaveCompleteNeetTest(
+        {
+          title: job.testTitle || `NEET Mock Test (${job.questions.length} Qs)`,
+          testNumber: job.testNumber || `Test 0${tests.length + 1}`,
+          price: job.testPrice || 99,
+          durationMinutes: job.testDuration || 180,
+          totalQuestions: job.questions.length
+        },
+        job.questions
+      );
+      setTests(getStoredMockTests());
+      setSelectedTest(newCreatedTest);
+      setQuestions(savedQuestions);
+      setActiveTab('questions');
+      setTestQuestionsTab('all');
+      triggerToast(`🎉 Background parsing complete! Created test "${newCreatedTest.title}" with ${savedQuestions.length} questions!`);
+    }
+  };
+
+  // Start background parsing job on server
+  const handleStartBackgroundParseJob = async () => {
+    if (!pdfFile) {
+      triggerToast('Please upload a PDF file first');
+      return;
+    }
+    setIsStartingServerJob(true);
+    try {
+      const formData = new FormData();
+      formData.append('pdf', pdfFile);
+      formData.append('testTitle', aiTestTitle.trim() || `NEET Mock Test (${pdfFile.name})`);
+      formData.append('testNumber', aiTestNumber.trim() || `Test 0${tests.length + 1}`);
+      formData.append('testPrice', String(aiTestPrice));
+      formData.append('testDuration', String(aiTestDuration));
+      if (selectedTest) {
+        formData.append('targetTestId', selectedTest.id);
+        formData.append('subject', selectedTest.subject || 'Biology');
+        formData.append('chapter', selectedTest.chapter || '');
+      }
+
+      const res = await fetch('/api/ai/parse-job/start', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success && data.jobId) {
+        localStorage.setItem('neet_active_parse_job_id', data.jobId);
+        triggerToast('🚀 Background parsing started on server! You can switch sections or close the site anytime.');
+        setActiveServerJob({
+          id: data.jobId,
+          status: 'processing',
+          statusMessage: 'Background parsing started on server...',
+          progress: 10
+        });
+      } else {
+        triggerToast('Failed to start background job: ' + (data.error || 'Server error'));
+      }
+    } catch (err: any) {
+      triggerToast('Error starting background parsing: ' + err.message);
+    } finally {
+      setIsStartingServerJob(false);
+    }
+  };
+
+  const handleCancelBackgroundParseJob = async (jobId: string) => {
+    try {
+      await fetch(`/api/ai/parse-job/cancel/${jobId}`, { method: 'POST' });
+      localStorage.removeItem('neet_active_parse_job_id');
+      setActiveServerJob(null);
+      triggerToast('Background parsing job cancelled');
+    } catch (err) {
+      console.warn('Cancel job note:', err);
+    }
+  };
+
+  // Toggle selection for bulk actions
+  const handleToggleSelectQuestion = (qNum: number) => {
+    setSelectedQuestionNums(prev =>
+      prev.includes(qNum) ? prev.filter(n => n !== qNum) : [...prev, qNum]
+    );
+  };
+
+  const handleSelectAllQuestions = () => {
+    if (selectedQuestionNums.length === questions.length) {
+      setSelectedQuestionNums([]);
+    } else {
+      setSelectedQuestionNums(questions.map(q => q.questionNumber));
+    }
+  };
+
+  // Delete Selected Questions
+  const handleDeleteSelectedQuestions = () => {
+    if (selectedQuestionNums.length === 0) return;
+    const setNums = new Set(selectedQuestionNums);
+    const updated = questions
+      .filter(q => !setNums.has(q.questionNumber))
+      .map((q, idx) => ({ ...q, questionNumber: idx + 1 }));
+    handleSaveQuestionsList(updated);
+    setQuestions(updated);
+    setSelectedQuestionNums([]);
+    setBulkDeleteConfirmOpen(false);
+    triggerToast(`✓ Deleted ${setNums.size} questions and renumbered remaining!`);
+  };
+
+  // Delete All Questions
+  const handleDeleteAllQuestions = () => {
+    handleSaveQuestionsList([]);
+    setQuestions([]);
+    setSelectedQuestionNums([]);
+    setDeleteAllConfirmOpen(false);
+    triggerToast(`✓ All questions deleted from "${selectedTest?.title || 'test'}"`);
+  };
+
+  // Quick Delete Single Question
+  const handleQuickDeleteQuestion = (qNum: number) => {
+    const updated = questions
+      .filter(q => q.questionNumber !== qNum)
+      .map((q, idx) => ({ ...q, questionNumber: idx + 1 }));
+    handleSaveQuestionsList(updated);
+    setQuestions(updated);
+    setQuickDeleteConfirmQ(null);
+    triggerToast(`✓ Question #${qNum} deleted and questions re-indexed!`);
+  };
+
   // Handle PDF file upload
   const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1475,8 +1664,28 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
           }
 
           // Clean verbatim question texts, strictly separate bilingual columns, and strip duplicate table rows
-          const rawEnText = rawQ.english?.questionText || `Question ${qNum}`;
-          const rawHiText = rawQ.hindi && rawQ.hindi.questionText ? rawQ.hindi.questionText : undefined;
+          let rawEnText = '';
+          if (typeof rawQ.english?.questionText === 'string' && rawQ.english.questionText.trim()) {
+            rawEnText = rawQ.english.questionText.trim();
+          } else if (typeof rawQ.questionText === 'string' && rawQ.questionText.trim()) {
+            rawEnText = rawQ.questionText.trim();
+          } else if (typeof rawQ.question === 'string' && rawQ.question.trim()) {
+            rawEnText = rawQ.question.trim();
+          } else if (typeof rawQ.statement === 'string' && rawQ.statement.trim()) {
+            rawEnText = rawQ.statement.trim();
+          } else if (typeof rawQ.text === 'string' && rawQ.text.trim()) {
+            rawEnText = rawQ.text.trim();
+          } else if (typeof rawQ.english === 'string' && rawQ.english.trim()) {
+            rawEnText = rawQ.english.trim();
+          } else if (typeof rawQ.hindi?.questionText === 'string' && rawQ.hindi.questionText.trim()) {
+            rawEnText = rawQ.hindi.questionText.trim();
+          } else {
+            rawEnText = `Question ${qNum}`;
+          }
+
+          const rawHiText = rawQ.hindi && typeof rawQ.hindi.questionText === 'string' && rawQ.hindi.questionText.trim() 
+            ? rawQ.hindi.questionText.trim() 
+            : undefined;
           
           // Separate languages and eliminate Hindi from English question text
           const separatedTexts = separateBilingualAndCleanQuestion(rawEnText, rawHiText);
@@ -1486,9 +1695,20 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             : undefined;
 
           // Parse and separate options safely
-          const rawEnOpts = (rawQ.english?.options && rawQ.english.options.length > 0) 
-            ? rawQ.english.options 
-            : (rawQ.options || []);
+          let rawEnOpts: any[] = [];
+          if (Array.isArray(rawQ.english?.options) && rawQ.english.options.length > 0) {
+            rawEnOpts = rawQ.english.options;
+          } else if (Array.isArray(rawQ.options) && rawQ.options.length > 0) {
+            rawEnOpts = rawQ.options;
+          } else if (Array.isArray(rawQ.choices) && rawQ.choices.length > 0) {
+            rawEnOpts = rawQ.choices;
+          } else if (rawQ.options && typeof rawQ.options === 'object') {
+            rawEnOpts = (['A', 'B', 'C', 'D'] as const).map(lbl => ({
+              label: lbl,
+              text: rawQ.options[lbl] || rawQ.options[lbl.toLowerCase()] || ''
+            }));
+          }
+
           const rawHiOpts = (rawQ.hindi?.options && rawQ.hindi.options.length > 0)
             ? rawQ.hindi.options
             : [];
@@ -3721,6 +3941,52 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                           </div>
                         </div>
 
+                        {/* ================= BULK ACTIONS & SELECTION TOOLBAR ================= */}
+                        <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+                          <div className="flex items-center gap-3">
+                            <label className="inline-flex items-center gap-2 text-xs font-black text-slate-800 hover:text-blue-600 transition cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={selectedQuestionNums.length === questions.length && questions.length > 0}
+                                onChange={handleSelectAllQuestions}
+                                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 cursor-pointer"
+                              />
+                              <span>Select All ({questions.length})</span>
+                            </label>
+
+                            {selectedQuestionNums.length > 0 && (
+                              <span className="text-xs font-bold text-blue-700 bg-blue-100/70 border border-blue-200 px-2 py-0.5 rounded-md">
+                                {selectedQuestionNums.length} selected
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {selectedQuestionNums.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setBulkDeleteConfirmOpen(true)}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Delete Selected ({selectedQuestionNums.length})</span>
+                              </button>
+                            )}
+
+                            {questions.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setDeleteAllConfirmOpen(true)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-600 border border-slate-200 hover:border-rose-200 text-xs font-bold rounded-xl transition cursor-pointer"
+                                title="Delete all questions in this test"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                                <span>Delete All Questions</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
                         {/* Questions Cards Grid with Smooth Scrolling */}
                         <div className="space-y-3 pb-24">
                           {questions
@@ -3737,15 +4003,26 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                             .map((q, idx) => {
                               const hasFig = Boolean(q.figureUrl || q.questionImageUrl || (q.figures && q.figures.length > 0));
                               const figUrl = q.figureUrl || q.questionImageUrl || q.figures?.[0];
+                              const isSelected = selectedQuestionNums.includes(q.questionNumber);
 
                               return (
                                 <div
                                   key={q.id ? `${q.id}-${idx}` : `test-q-${q.questionNumber}-${idx}`}
-                                  className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/90 hover:border-slate-300 transition space-y-3 shadow-2xs"
+                                  className={`bg-white p-4 sm:p-5 rounded-2xl border transition space-y-3 shadow-2xs ${
+                                    isSelected ? 'border-blue-500 ring-2 ring-blue-100 bg-blue-50/20' : 'border-slate-200/90 hover:border-slate-300'
+                                  }`}
                                 >
                                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
-                                    <div className="flex items-center gap-2">
-                                      <span className="w-7 h-7 rounded-xl bg-blue-600 text-white font-black text-xs flex items-center justify-center font-mono">
+                                    <div className="flex items-center gap-2.5">
+                                      {/* Individual Select Checkbox */}
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={() => handleToggleSelectQuestion(q.questionNumber)}
+                                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 cursor-pointer"
+                                        title={`Select Question #${q.questionNumber}`}
+                                      />
+                                      <span className="w-7 h-7 rounded-xl bg-blue-600 text-white font-black text-xs flex items-center justify-center font-mono shadow-2xs">
                                         Q{q.questionNumber}
                                       </span>
                                       <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
@@ -3789,9 +4066,9 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                                       </button>
                                       <button
                                         type="button"
-                                        onClick={() => setDeleteConfirmQuestion(q)}
+                                        onClick={() => setQuickDeleteConfirmQ(q)}
                                         className="p-1.5 hover:bg-rose-50 text-rose-500 rounded-lg transition cursor-pointer"
-                                        title="Delete Question"
+                                        title="Delete this question"
                                       >
                                         <Trash2 className="w-3.5 h-3.5" />
                                       </button>
@@ -4550,12 +4827,28 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                                   )}
                                   <button
                                     type="button"
+                                    disabled={!pdfDocProxy || isStartingServerJob}
+                                    onClick={handleStartBackgroundParseJob}
+                                    className="flex-1 py-2.5 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 disabled:opacity-40 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
+                                    title="Continues digitizing questions on server even if you close section or leave site"
+                                  >
+                                    {isStartingServerJob ? (
+                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                      <Play className="w-4 h-4 text-emerald-300" />
+                                    )}
+                                    <span>⚡ Parse in Background on Server (Safe to Close Site)</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
                                     disabled={!pdfDocProxy}
                                     onClick={handleStartAiParsing}
-                                    className={`${aiParsedQuestionsList.length > 0 ? 'sm:w-auto px-4' : 'flex-1'} py-2.5 bg-gradient-to-r from-purple-700 to-indigo-600 hover:from-purple-800 hover:to-indigo-700 disabled:opacity-40 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer`}
+                                    className="py-2.5 px-4 bg-purple-700 hover:bg-purple-800 disabled:opacity-40 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                                    title="Parses directly in browser session"
                                   >
                                     <Sparkles className="w-4 h-4 text-amber-300" />
-                                    <span>{aiParsedQuestionsList.length > 0 ? 'Re-scan / Parse Another PDF' : 'Start AI Parsing with Gemini'}</span>
+                                    <span>Direct Tab Parse</span>
                                   </button>
                                 </>
                               ) : (
@@ -4571,6 +4864,66 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                             </div>
                           </div>
                         </div>
+
+                        {/* Active Server Background Parsing Job Card */}
+                        {activeServerJob && (
+                          <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl space-y-3 animate-in fade-in">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse" />
+                                <span className="text-xs font-black text-blue-950 uppercase tracking-wide">
+                                  Server Background Parsing Job ({activeServerJob.id})
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                                  activeServerJob.status === 'completed' ? 'bg-emerald-100 text-emerald-800' :
+                                  activeServerJob.status === 'failed' ? 'bg-rose-100 text-rose-800' :
+                                  'bg-blue-100 text-blue-800'
+                                }`}>
+                                  {activeServerJob.status}
+                                </span>
+                                {activeServerJob.status === 'processing' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCancelBackgroundParseJob(activeServerJob.id)}
+                                    className="text-[10px] font-bold text-rose-600 hover:text-rose-700 underline cursor-pointer"
+                                  >
+                                    Cancel Job
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                              {activeServerJob.statusMessage || 'Processing on server...'}
+                            </p>
+
+                            {activeServerJob.status === 'processing' && (
+                              <div className="w-full h-2 bg-blue-200/60 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-blue-600 transition-all duration-300"
+                                  style={{ width: `${activeServerJob.progress || 25}%` }}
+                                />
+                              </div>
+                            )}
+
+                            {activeServerJob.status === 'completed' && (
+                              <div className="flex items-center justify-between pt-1">
+                                <span className="text-xs font-bold text-emerald-700">
+                                  ✓ {activeServerJob.questionsCount || activeServerJob.questions?.length || 0} Questions Ready
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleImportCompletedServerJob(activeServerJob)}
+                                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer"
+                                >
+                                  Import &amp; View Questions →
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
                         {/* Live AI Parsing Progress Bar */}
                         {isAiParsing && (
@@ -6539,24 +6892,146 @@ or continuous: A B C D A B C D...`}
         warningText="This will permanently remove this mock test from the catalogue and erase all its questions and student attempts."
       />
 
-      {/* Delete Question Confirmation Dialog (Requires typing "delete") */}
-      <AdminDeleteConfirmModal
-        isOpen={Boolean(deleteConfirmQuestion)}
-        onClose={() => setDeleteConfirmQuestion(null)}
-        onConfirm={() => {
-          if (!deleteConfirmQuestion) return;
-          const updated = questions
-            .filter(item => item.questionNumber !== deleteConfirmQuestion.questionNumber)
-            .map((item, idx) => ({ ...item, questionNumber: idx + 1 }));
-          handleSaveQuestionsList(updated);
-          triggerToast('Question removed and numbers re-indexed');
-          setDeleteConfirmQuestion(null);
-        }}
-        itemName={deleteConfirmQuestion ? `Question #${deleteConfirmQuestion.questionNumber}` : ''}
-        itemType="question"
-        title="Delete this question?"
-        warningText="This will permanently delete this question and its diagram from the test. Subsequent questions will be renumbered automatically."
-      />
+      {/* Fast 1-Click Single Question Delete Confirmation Modal */}
+      {quickDeleteConfirmQ && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="fixed inset-0" onClick={() => setQuickDeleteConfirmQ(null)} />
+          <div className="relative bg-white rounded-3xl p-5 sm:p-6 max-w-sm w-full shadow-2xl border border-rose-200 space-y-4 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuickDeleteConfirmQ(null)}
+                className="p-1 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-black text-slate-900 font-['Outfit',sans-serif]">
+                Delete Question #{quickDeleteConfirmQ.questionNumber}?
+              </h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                This question and its diagram will be permanently removed from this test. All subsequent questions will be renumbered automatically.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setQuickDeleteConfirmQ(null)}
+                className="flex-1 py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickDeleteQuestion(quickDeleteConfirmQ.questionNumber)}
+                className="flex-1 py-2.5 px-3 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer"
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Selected Questions Modal */}
+      {bulkDeleteConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="fixed inset-0" onClick={() => setBulkDeleteConfirmOpen(false)} />
+          <div className="relative bg-white rounded-3xl p-5 sm:p-6 max-w-sm w-full shadow-2xl border border-rose-200 space-y-4 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setBulkDeleteConfirmOpen(false)}
+                className="p-1 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-black text-slate-900 font-['Outfit',sans-serif]">
+                Delete {selectedQuestionNums.length} Selected Questions?
+              </h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Are you sure you want to delete these {selectedQuestionNums.length} questions? All remaining questions will be automatically renumbered (1, 2, 3...).
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setBulkDeleteConfirmOpen(false)}
+                className="flex-1 py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteSelectedQuestions}
+                className="flex-1 py-2.5 px-3 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer"
+              >
+                Delete Selected ({selectedQuestionNums.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete All Questions Modal */}
+      {deleteAllConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="fixed inset-0" onClick={() => setDeleteAllConfirmOpen(false)} />
+          <div className="relative bg-white rounded-3xl p-5 sm:p-6 max-w-sm w-full shadow-2xl border border-rose-300 space-y-4 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeleteAllConfirmOpen(false)}
+                className="p-1 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-black text-rose-950 font-['Outfit',sans-serif]">
+                Delete ALL {questions.length} Questions?
+              </h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                This will clear every question and diagram currently attached to &ldquo;{selectedTest?.title}&rdquo;. You will be able to upload a fresh PDF or paste new questions.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteAllConfirmOpen(false)}
+                className="flex-1 py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteAllQuestions}
+                className="flex-1 py-2.5 px-3 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer"
+              >
+                Yes, Delete All
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Interactive Diagram Recropper Modal on original PDF page */}
       <DiagramRecropModal
