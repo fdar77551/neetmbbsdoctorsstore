@@ -286,16 +286,48 @@ class BackgroundPdfParserManager {
             }
           }
 
-          // Build clean question
+          // Extract true question text across any nested property
+          let finalQText = '';
+          if (typeof rawQ.english?.questionText === 'string' && rawQ.english.questionText.trim()) {
+            finalQText = rawQ.english.questionText.trim();
+          } else if (typeof rawQ.questionText === 'string' && rawQ.questionText.trim()) {
+            finalQText = rawQ.questionText.trim();
+          } else if (typeof rawQ.question === 'string' && rawQ.question.trim()) {
+            finalQText = rawQ.question.trim();
+          } else if (typeof rawQ.statement === 'string' && rawQ.statement.trim()) {
+            finalQText = rawQ.statement.trim();
+          } else if (typeof rawQ.text === 'string' && rawQ.text.trim()) {
+            finalQText = rawQ.text.trim();
+          } else if (typeof rawQ.english === 'string' && rawQ.english.trim()) {
+            finalQText = rawQ.english.trim();
+          }
+
+          // If no problem text was extracted, never save a blank placeholder question
+          if (!finalQText || finalQText.toLowerCase() === `question ${qNum}`.toLowerCase()) {
+            continue;
+          }
+
           const defaultSubject: MockSubject = p <= 10 ? 'Physics' : p <= 20 ? 'Chemistry' : 'Biology';
           const resolvedSubject: MockSubject = (rawQ.subject as MockSubject) || defaultSubject;
 
-          const cleanedOptions = (['A', 'B', 'C', 'D'] as const).map(label => {
-            const rawOpt = rawQ.english?.options?.find((o: any) => o.label?.toUpperCase() === label);
+          // Extract real option values
+          const rawOpts = rawQ.english?.options || rawQ.options || rawQ.choices || [];
+          const cleanedOptions = (['A', 'B', 'C', 'D'] as const).map((label, optIdx) => {
+            let val = '';
+            if (Array.isArray(rawOpts)) {
+              const found = rawOpts.find((o: any) => (o?.label || '').toUpperCase() === label) || rawOpts[optIdx];
+              if (typeof found === 'string') {
+                val = found.replace(/^\([A-Da-d1-4]\)\s*/, '').trim();
+              } else if (found && typeof found === 'object') {
+                val = (found.text || found.value || found.statement || '').trim();
+              }
+            } else if (rawOpts && typeof rawOpts === 'object') {
+              val = (rawOpts[label] || rawOpts[label.toLowerCase()] || '').trim();
+            }
             return {
               label,
               type: 'text' as const,
-              value: rawOpt?.text || `Option ${label}`
+              value: val || `Option (${label})`
             };
           });
 
@@ -305,7 +337,7 @@ class BackgroundPdfParserManager {
             questionNumber: qNum,
             subject: resolvedSubject,
             chapter: rawQ.chapter || `${resolvedSubject} Chapter`,
-            questionText: rawQ.english?.questionText || '',
+            questionText: finalQText,
             options: cleanedOptions,
             figures: figureDataUrl ? [figureDataUrl] : [],
             figureUrl: figureDataUrl,

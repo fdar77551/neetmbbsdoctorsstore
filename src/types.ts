@@ -158,6 +158,9 @@ export interface CloudflareR2Config {
   publicDevUrl: string;
   customCdnDomain?: string;
   storageMode?: 'proxy' | 'direct_r2' | 'custom_cdn';
+  apiToken?: string;
+  d1DatabaseId?: string;
+  d1Name?: string;
 }
 
 export interface StoreConfig {

@@ -433,6 +433,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [r2PublicDomain, setR2PublicDomainState] = useState(getR2PublicDomain());
   const [r2DomainStatus, setR2DomainStatus] = useState<string | null>(null);
   const [isTestingR2, setIsTestingR2] = useState(false);
+  const [showApiToken, setShowApiToken] = useState(false);
+  const [isSyncingD1, setIsSyncingD1] = useState(false);
+  const [isTestingD1, setIsTestingD1] = useState(false);
 
   // Delete Surety / Confirmation Modal State
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -757,6 +760,65 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setIsFixingImages(false);
       setTimeout(() => setCfTestOutput(null), 6000);
     }
+  };
+
+  const handleSyncProductsToD1 = async () => {
+    setIsSyncingD1(true);
+    setCfTestOutput(null);
+    try {
+      const res = await fetch('/api/cloudflare/d1/sync-products', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setCfTestOutput({
+          type: 'success',
+          message: data.message || `Successfully synced ${data.syncedCount} products to Cloudflare D1!`
+        });
+      } else {
+        setCfTestOutput({
+          type: 'error',
+          message: data.error || 'Failed to sync products to Cloudflare D1'
+        });
+      }
+    } catch (err: any) {
+      setCfTestOutput({
+        type: 'error',
+        message: `Network error syncing to Cloudflare D1: ${err.message}`
+      });
+    } finally {
+      setIsSyncingD1(false);
+    }
+  };
+
+  const handleTestD1Query = async () => {
+    setIsTestingD1(true);
+    setCfTestOutput(null);
+    try {
+      const res = await fetch('/api/cloudflare/d1/test');
+      const data = await res.json();
+      if (data.success) {
+        setCfTestOutput({
+          type: 'success',
+          message: data.message,
+          details: [`Total products in D1: ${data.count}`, `Database ID: ${data.databaseId}`]
+        });
+      } else {
+        setCfTestOutput({
+          type: 'error',
+          message: data.message || data.error || 'Cloudflare D1 query failed'
+        });
+      }
+    } catch (err: any) {
+      setCfTestOutput({
+        type: 'error',
+        message: `Error querying Cloudflare D1: ${err.message}`
+      });
+    } finally {
+      setIsTestingD1(false);
+    }
+  };
+
+  const handleExportD1Sql = () => {
+    window.open('/api/cloudflare/d1/export-sql', '_blank');
   };
 
   const handleSaveR2Domain = () => {
@@ -4083,6 +4145,74 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* 8. Cloudflare D1 Database ID */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-slate-700">Cloudflare D1 Database ID</label>
+                  {copiedField === 'd1DatabaseId' && (
+                    <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-0.5">
+                      <Check className="w-3 h-3" /> Copied!
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={cfConfig.d1DatabaseId || 'daf5a141-af4a-4db6-b10d-ac3bbab28b72'}
+                    onChange={(e) => setCfConfig(prev => ({ ...prev, d1DatabaseId: e.target.value }))}
+                    placeholder="daf5a141-af4a-4db6-b10d-ac3bbab28b72"
+                    className="flex-1 text-xs bg-white border border-slate-300 rounded-xl px-3 py-2 font-mono text-slate-800 focus:ring-2 focus:ring-orange-500 focus:outline-hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleCopyText(cfConfig.d1DatabaseId || 'daf5a141-af4a-4db6-b10d-ac3bbab28b72', 'd1DatabaseId')}
+                    className="p-2 bg-white hover:bg-slate-100 text-slate-600 border border-slate-300 rounded-xl transition cursor-pointer"
+                    title="Copy D1 Database ID"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* 9. Cloudflare API Token (for D1 SQL Queries & Table Sync) */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-slate-700">
+                    Cloudflare API Token <span className="text-blue-600 font-semibold">(Requires D1:Edit permissions)</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowApiToken(!showApiToken)}
+                    className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+                  >
+                    {showApiToken ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                    <span>{showApiToken ? 'Hide Token' : 'Show Token'}</span>
+                  </button>
+                </div>
+                <div className="flex gap-1.5">
+                  <input
+                    type={showApiToken ? 'text' : 'password'}
+                    value={cfConfig.apiToken || ''}
+                    onChange={(e) => setCfConfig(prev => ({ ...prev, apiToken: e.target.value }))}
+                    placeholder="Paste Cloudflare API Token (Bearer token with D1 Read/Write)"
+                    className="flex-1 text-xs bg-white border border-slate-300 rounded-xl px-3 py-2 font-mono text-slate-800 focus:ring-2 focus:ring-orange-500 focus:outline-hidden"
+                  />
+                  {cfConfig.apiToken && (
+                    <button
+                      type="button"
+                      onClick={() => handleCopyText(cfConfig.apiToken || '', 'apiToken')}
+                      className="p-2 bg-white hover:bg-slate-100 text-slate-600 border border-slate-300 rounded-xl transition cursor-pointer"
+                      title="Copy API Token"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500 leading-snug">
+                  Get your token from <strong className="text-slate-700">Cloudflare Dashboard → My Profile → API Tokens → Create Token → D1:Edit template</strong>.
+                </p>
+              </div>
             </div>
 
             {/* Test & Status Feedback Banner */}
@@ -4104,9 +4234,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <div className="space-y-1 min-w-0 flex-1">
                   <p className="font-bold leading-snug">{cfTestOutput.message}</p>
                   {cfTestOutput.details && Array.isArray(cfTestOutput.details) && (
-                    <div className="text-[10px] font-mono opacity-80 pt-1">
-                      <span>Sample files found: </span>
-                      {cfTestOutput.details.join(', ')}
+                    <div className="text-[10px] font-mono opacity-80 pt-1 space-y-0.5">
+                      {cfTestOutput.details.map((d: any, i: number) => (
+                        <div key={i}>{typeof d === 'object' ? JSON.stringify(d) : String(d)}</div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -4122,6 +4253,56 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               >
                 <Save className="w-4 h-4" />
                 <span>Save &amp; Sync Cloudflare Details</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isSyncingD1}
+                onClick={handleSyncProductsToD1}
+                className="px-3.5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                title="Pushes all products from local database into Cloudflare D1 products table"
+              >
+                {isSyncingD1 ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Syncing Products to D1...</span>
+                  </>
+                ) : (
+                  <>
+                    <Database className="w-3.5 h-3.5" />
+                    <span>⚡ Sync All Products to Cloudflare D1</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                disabled={isTestingD1}
+                onClick={handleTestD1Query}
+                className="px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                title="Executes SELECT count(*) as products FROM products on Cloudflare D1"
+              >
+                {isTestingD1 ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Running D1 Query...</span>
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-3.5 h-3.5" />
+                    <span>Test D1 (SELECT count(*) FROM products)</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportD1Sql}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center gap-1.5 shadow-sm"
+                title="Download .sql migration file with CREATE TABLE & INSERT statements for all products"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Download D1 SQL Migration (.sql)</span>
               </button>
 
               <button
@@ -4170,13 +4351,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   saveStoredCloudflareConfig(DEFAULT_CLOUDFLARE_CONFIG);
                   setCfTestOutput({
                     type: 'info',
-                    message: 'Restored verified default Cloudflare R2 credentials (Bucket: ncertify).'
+                    message: 'Restored verified default Cloudflare credentials.'
                   });
                   setTimeout(() => setCfTestOutput(null), 4000);
                 }}
                 className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition cursor-pointer"
               >
-                Reset to Verified Defaults
+                Reset Defaults
               </button>
             </div>
 

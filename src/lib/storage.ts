@@ -262,7 +262,10 @@ export const DEFAULT_CLOUDFLARE_CONFIG: CloudflareR2Config = {
   s3Endpoint: "https://d715d090a75efd8790b9a6da1e2f42d4.r2.cloudflarestorage.com",
   publicDevUrl: "https://pub-fe249f0325e741c9bb12b22f8850f331.r2.dev",
   customCdnDomain: "",
-  storageMode: "proxy" // 'proxy' serves through Express backend with S3 credentials (solves CORS & Jio/Airtel blocking)
+  storageMode: "proxy", // 'proxy' serves through Express backend with S3 credentials (solves CORS & Jio/Airtel blocking)
+  apiToken: "",
+  d1DatabaseId: "daf5a141-af4a-4db6-b10d-ac3bbab28b72",
+  d1Name: "neetmbbsdoctorsstore"
 };
 
 export function getStoredCloudflareConfig(): CloudflareR2Config {
@@ -280,7 +283,10 @@ export function getStoredCloudflareConfig(): CloudflareR2Config {
         secretAccessKey: (parsed.secretAccessKey && parsed.secretAccessKey.length === 64) ? parsed.secretAccessKey : DEFAULT_CLOUDFLARE_CONFIG.secretAccessKey,
         s3Endpoint: parsed.s3Endpoint || DEFAULT_CLOUDFLARE_CONFIG.s3Endpoint,
         publicDevUrl: isBadPubDev ? DEFAULT_CLOUDFLARE_CONFIG.publicDevUrl : parsed.publicDevUrl,
-        storageMode: parsed.storageMode || DEFAULT_CLOUDFLARE_CONFIG.storageMode
+        storageMode: parsed.storageMode || DEFAULT_CLOUDFLARE_CONFIG.storageMode,
+        apiToken: parsed.apiToken !== undefined ? parsed.apiToken : DEFAULT_CLOUDFLARE_CONFIG.apiToken,
+        d1DatabaseId: parsed.d1DatabaseId || DEFAULT_CLOUDFLARE_CONFIG.d1DatabaseId,
+        d1Name: parsed.d1Name || DEFAULT_CLOUDFLARE_CONFIG.d1Name
       };
     }
   } catch (e) {}

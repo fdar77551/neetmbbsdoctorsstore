@@ -1679,8 +1679,11 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             rawEnText = rawQ.english.trim();
           } else if (typeof rawQ.hindi?.questionText === 'string' && rawQ.hindi.questionText.trim()) {
             rawEnText = rawQ.hindi.questionText.trim();
-          } else {
-            rawEnText = `Question ${qNum}`;
+          }
+
+          // STRICT VALIDATION: If no valid problem text was extracted, skip this item! Never add blank or placeholder questions!
+          if (!rawEnText || rawEnText.toLowerCase() === `question ${qNum}`.toLowerCase()) {
+            continue;
           }
 
           const rawHiText = rawQ.hindi && typeof rawQ.hindi.questionText === 'string' && rawQ.hindi.questionText.trim() 
@@ -1778,6 +1781,22 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
 
         accumulatedQuestions.sort((a, b) => a.questionNumber - b.questionNumber);
         setAiParsedQuestionsList([...accumulatedQuestions]);
+
+        // Real-time Per-Page Autosave: If editing an existing test, update test questions in storage immediately
+        if (selectedTest && accumulatedQuestions.length > 0) {
+          const mergedWithExisting = [...questions];
+          for (const newQ of accumulatedQuestions) {
+            const mIdx = mergedWithExisting.findIndex(m => m.questionNumber === newQ.questionNumber);
+            if (mIdx > -1) {
+              mergedWithExisting[mIdx] = { ...newQ, testId: selectedTest.id };
+            } else {
+              mergedWithExisting.push({ ...newQ, testId: selectedTest.id });
+            }
+          }
+          mergedWithExisting.sort((a, b) => a.questionNumber - b.questionNumber);
+          handleSaveQuestionsList(mergedWithExisting);
+          setQuestions(mergedWithExisting);
+        }
 
         setAiParseProgress(prev => ({
           ...prev,

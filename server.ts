@@ -260,10 +260,32 @@ function saveDatabase(db: DatabaseSchema) {
   }
 }
 
+function restoreCloudflareSettingsFromDb() {
+  try {
+    const db = loadDatabase();
+    const savedCf = db.settings?.cloudflare;
+    if (savedCf) {
+      if (savedCf.accountId) CF_ACCOUNT_ID = savedCf.accountId;
+      if (savedCf.bucketName) CLOUDFLARE_R2_BUCKET = savedCf.bucketName;
+      if (savedCf.accessKeyId) CLOUDFLARE_R2_ACCESS_KEY = savedCf.accessKeyId;
+      if (savedCf.secretAccessKey) CLOUDFLARE_R2_SECRET_KEY = savedCf.secretAccessKey;
+      if (savedCf.s3Endpoint) CLOUDFLARE_R2_ENDPOINT = savedCf.s3Endpoint;
+      if (savedCf.publicDevUrl) CLOUDFLARE_R2_PUBLIC_DEV_URL = savedCf.publicDevUrl;
+      if (savedCf.customCdnDomain !== undefined) CLOUDFLARE_CUSTOM_CDN = savedCf.customCdnDomain;
+      if (savedCf.apiToken) CF_API_TOKEN = savedCf.apiToken;
+      if (savedCf.d1DatabaseId) CF_D1_DATABASE_ID = savedCf.d1DatabaseId;
+      if (savedCf.d1Name) CF_D1_NAME = savedCf.d1Name;
+    }
+  } catch (e) {
+    console.warn("Could not restore Cloudflare settings from DB:", e);
+  }
+}
+restoreCloudflareSettingsFromDb();
+
 // Cloudflare D1 REST API Helper
 async function queryCloudflareD1(sql: string, params: any[] = []) {
   if (!CF_API_TOKEN) {
-    return { success: false, message: "Cloudflare API Token not set. Using local database storage engine." };
+    return { success: false, message: "Cloudflare API Token not set. Please provide API Token in Cloudflare settings." };
   }
 
   try {
@@ -296,7 +318,9 @@ async function initD1Tables() {
     `CREATE TABLE IF NOT EXISTS banners (id TEXT PRIMARY KEY, titleLine1 TEXT, titleLine2 TEXT, titleLine3 TEXT, subtitle TEXT, buttonText TEXT, badge TEXT, type TEXT, imageUrl TEXT, active INTEGER);`,
     `CREATE TABLE IF NOT EXISTS coupons (code TEXT PRIMARY KEY, discountType TEXT, discountValue REAL, minAmount REAL, active INTEGER);`,
     `CREATE TABLE IF NOT EXISTS reviews (id TEXT PRIMARY KEY, productId TEXT, userEmail TEXT, userName TEXT, rating REAL, comment TEXT, createdAt TEXT);`,
-    `CREATE TABLE IF NOT EXISTS support_messages (id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, subject TEXT, message TEXT, status TEXT, createdAt TEXT);`
+    `CREATE TABLE IF NOT EXISTS support_messages (id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, subject TEXT, message TEXT, status TEXT, createdAt TEXT);`,
+    `CREATE TABLE IF NOT EXISTS mock_tests (id TEXT PRIMARY KEY, testNumber TEXT, title TEXT, subject TEXT, totalQuestions INTEGER, durationMinutes INTEGER, price REAL, isFree INTEGER, createdAt TEXT);`,
+    `CREATE TABLE IF NOT EXISTS mock_questions (id TEXT PRIMARY KEY, testId TEXT, questionNumber INTEGER, subject TEXT, chapter TEXT, questionText TEXT, options TEXT, correctAnswer TEXT, figureUrl TEXT, createdAt TEXT);`
   ];
 
   for (const sql of schemas) {
@@ -1579,16 +1603,20 @@ app.get("/api/cloudflare/config", (_req, res) => {
       s3Endpoint: savedCf.s3Endpoint || CLOUDFLARE_R2_ENDPOINT,
       publicDevUrl: savedCf.publicDevUrl || CLOUDFLARE_R2_PUBLIC_DEV_URL,
       customCdnDomain: savedCf.customCdnDomain !== undefined ? savedCf.customCdnDomain : CLOUDFLARE_CUSTOM_CDN,
-      isConfigured: Boolean(r2Client)
+      apiToken: savedCf.apiToken || CF_API_TOKEN,
+      d1DatabaseId: savedCf.d1DatabaseId || CF_D1_DATABASE_ID,
+      d1Name: savedCf.d1Name || CF_D1_NAME,
+      isConfigured: Boolean(r2Client),
+      isD1Configured: Boolean(CF_API_TOKEN)
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
 
-app.post("/api/cloudflare/config", (req, res) => {
+app.post("/api/cloudflare/config", async (req, res) => {
   try {
-    const { accountId, bucketName, accessKeyId, secretAccessKey, s3Endpoint, publicDevUrl, customCdnDomain } = req.body;
+    const { accountId, bucketName, accessKeyId, secretAccessKey, s3Endpoint, publicDevUrl, customCdnDomain, apiToken, d1DatabaseId, d1Name } = req.body;
     if (accountId && typeof accountId === "string") CF_ACCOUNT_ID = accountId.trim();
     if (bucketName && typeof bucketName === "string") CLOUDFLARE_R2_BUCKET = bucketName.trim();
     if (accessKeyId && typeof accessKeyId === "string") CLOUDFLARE_R2_ACCESS_KEY = accessKeyId.trim();
@@ -1596,6 +1624,9 @@ app.post("/api/cloudflare/config", (req, res) => {
     if (s3Endpoint && typeof s3Endpoint === "string") CLOUDFLARE_R2_ENDPOINT = s3Endpoint.trim();
     if (publicDevUrl && typeof publicDevUrl === "string") CLOUDFLARE_R2_PUBLIC_DEV_URL = publicDevUrl.trim();
     if (customCdnDomain !== undefined) CLOUDFLARE_CUSTOM_CDN = String(customCdnDomain || "").trim();
+    if (apiToken !== undefined) CF_API_TOKEN = String(apiToken || "").trim();
+    if (d1DatabaseId && typeof d1DatabaseId === "string") CF_D1_DATABASE_ID = d1DatabaseId.trim();
+    if (d1Name && typeof d1Name === "string") CF_D1_NAME = d1Name.trim();
 
     // Re-initialize AWS S3 Client with updated credentials
     initR2Client();
@@ -1611,14 +1642,23 @@ app.post("/api/cloudflare/config", (req, res) => {
         secretAccessKey: CLOUDFLARE_R2_SECRET_KEY,
         s3Endpoint: CLOUDFLARE_R2_ENDPOINT,
         publicDevUrl: CLOUDFLARE_R2_PUBLIC_DEV_URL,
-        customCdnDomain: CLOUDFLARE_CUSTOM_CDN
+        customCdnDomain: CLOUDFLARE_CUSTOM_CDN,
+        apiToken: CF_API_TOKEN,
+        d1DatabaseId: CF_D1_DATABASE_ID,
+        d1Name: CF_D1_NAME
       }
     };
     saveDatabase(db);
 
+    // If API Token is present, automatically initialize D1 tables
+    if (CF_API_TOKEN) {
+      initD1Tables().catch(err => console.warn("D1 tables init note:", err));
+    }
+
     return res.json({
       success: true,
-      message: "Cloudflare R2 details successfully saved and S3 client reconnected!"
+      message: "Cloudflare R2 and D1 credentials successfully saved!",
+      isD1Configured: Boolean(CF_API_TOKEN)
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -1654,6 +1694,152 @@ app.post("/api/cloudflare/test", async (_req, res) => {
       success: false,
       error: `Cloudflare R2 connection error: ${err.message}`
     });
+  }
+});
+
+// CLOUDFLARE D1 DATABASE MANAGEMENT APIS
+// 1. Sync All Local Products into Cloudflare D1
+app.post("/api/cloudflare/d1/sync-products", async (_req, res) => {
+  try {
+    if (!CF_API_TOKEN) {
+      return res.status(400).json({
+        success: false,
+        error: "Cloudflare API Token is not set. Please enter your Cloudflare API Token in Admin Settings > Cloudflare R2 & D1 Database."
+      });
+    }
+
+    const db = loadDatabase();
+    await initD1Tables();
+
+    let syncedCount = 0;
+    const errors: string[] = [];
+
+    for (const product of db.products) {
+      if (!product || !product.id) continue;
+      const result = await queryCloudflareD1(
+        `INSERT OR REPLACE INTO products (id, title, author, type, category, price, originalPrice, rating, reviewsCount, coverImage, sampleImages, pdfUrl, description, features, tags, pages, edition, isbn, inStock, isBestSeller, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          product.id,
+          product.title || '',
+          product.author || 'Verified Specialists',
+          product.type || 'book',
+          product.category || 'General',
+          Number(product.price || 0),
+          Number(product.originalPrice || 0),
+          Number(product.rating || 4.8),
+          Number(product.reviewsCount || 0),
+          typeof product.coverImage === 'string' && !product.coverImage.startsWith('data:') ? product.coverImage : '',
+          JSON.stringify(product.sampleImages || []),
+          typeof product.pdfUrl === 'string' && !product.pdfUrl.startsWith('data:') ? product.pdfUrl : '',
+          product.description || '',
+          JSON.stringify(product.features || []),
+          JSON.stringify(product.tags || []),
+          Number(product.pages || 0),
+          product.edition || '',
+          product.isbn || '',
+          product.inStock !== false ? 1 : 0,
+          product.isBestSeller ? 1 : 0,
+          product.createdAt || new Date().toISOString()
+        ]
+      );
+      if (result && result.success !== false) {
+        syncedCount++;
+      } else if (result?.errors && result.errors.length > 0) {
+        errors.push(result.errors[0]?.message || 'Query error');
+      }
+    }
+
+    return res.json({
+      success: syncedCount > 0 || errors.length === 0,
+      syncedCount,
+      totalProducts: db.products.length,
+      errors: errors.slice(0, 3),
+      message: `Successfully synchronized ${syncedCount} of ${db.products.length} products to Cloudflare D1 (${CF_D1_NAME || CF_D1_DATABASE_ID})!`
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 2. Execute SQL query on Cloudflare D1
+app.post("/api/cloudflare/d1/query", async (req, res) => {
+  try {
+    const { sql, params = [] } = req.body;
+    if (!sql || typeof sql !== 'string') {
+      return res.status(400).json({ success: false, error: "SQL query string is required" });
+    }
+    if (!CF_API_TOKEN) {
+      return res.status(400).json({
+        success: false,
+        error: "Cloudflare API Token not configured. Please add your token in Cloudflare Settings."
+      });
+    }
+
+    const d1Result = await queryCloudflareD1(sql, params);
+    return res.json(d1Result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. Test Cloudflare D1: SELECT count(*) as products FROM products;
+app.get("/api/cloudflare/d1/test", async (_req, res) => {
+  try {
+    if (!CF_API_TOKEN) {
+      return res.json({
+        success: false,
+        isConfigured: false,
+        message: "Cloudflare API Token is not set. Enter your Cloudflare API Token in the Admin Settings tab to enable D1 Database sync.",
+        databaseId: CF_D1_DATABASE_ID,
+        accountId: CF_ACCOUNT_ID
+      });
+    }
+
+    await initD1Tables();
+    const result = await queryCloudflareD1("SELECT count(*) as products FROM products;");
+    
+    // Cloudflare D1 response format: { result: [ { results: [ { products: 8 } ] } ], success: true }
+    let count = 0;
+    if (result && Array.isArray(result.result) && result.result[0]?.results?.[0]) {
+      const row = result.result[0].results[0];
+      count = Number(row.products ?? row["count(*)"] ?? 0);
+    }
+
+    return res.json({
+      success: Boolean(result?.success),
+      isConfigured: true,
+      count,
+      databaseId: CF_D1_DATABASE_ID,
+      accountId: CF_ACCOUNT_ID,
+      raw: result,
+      message: result?.success 
+        ? `Connected to Cloudflare D1! "SELECT count(*) FROM products;" returned ${count} product(s).` 
+        : `Cloudflare D1 query returned: ${JSON.stringify(result?.errors || result?.message || result)}`
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 4. Download D1 Seed SQL (.sql) Migration file
+app.get("/api/cloudflare/d1/export-sql", (_req, res) => {
+  try {
+    const db = loadDatabase();
+    let sqlContent = `-- NEET MBBS Doctors Store - Cloudflare D1 Schema & Data Migration\n-- Database: ${CF_D1_NAME} (${CF_D1_DATABASE_ID})\n\n`;
+    sqlContent += `CREATE TABLE IF NOT EXISTS products (id TEXT PRIMARY KEY, title TEXT, author TEXT, type TEXT, category TEXT, price REAL, originalPrice REAL, rating REAL, reviewsCount INTEGER, coverImage TEXT, sampleImages TEXT, pdfUrl TEXT, description TEXT, features TEXT, tags TEXT, pages INTEGER, edition TEXT, isbn TEXT, inStock INTEGER, isBestSeller INTEGER, createdAt TEXT);\n\n`;
+
+    for (const p of db.products) {
+      if (!p || !p.id) continue;
+      const escape = (val: any) => `'${String(val || '').replace(/'/g, "''")}'`;
+      const num = (val: any) => Number(val || 0);
+      sqlContent += `INSERT OR REPLACE INTO products (id, title, author, type, category, price, originalPrice, rating, reviewsCount, coverImage, sampleImages, pdfUrl, description, features, tags, pages, edition, isbn, inStock, isBestSeller, createdAt) VALUES (${escape(p.id)}, ${escape(p.title)}, ${escape(p.author || 'Verified Specialists')}, ${escape(p.type || 'book')}, ${escape(p.category || 'General')}, ${num(p.price)}, ${num(p.originalPrice)}, ${num(p.rating || 4.8)}, ${num(p.reviewsCount)}, ${escape(p.coverImage)}, ${escape(JSON.stringify(p.sampleImages || []))}, ${escape(p.pdfUrl)}, ${escape(p.description)}, ${escape(JSON.stringify(p.features || []))}, ${escape(JSON.stringify(p.tags || []))}, ${num(p.pages)}, ${escape(p.edition)}, ${escape(p.isbn)}, ${p.inStock !== false ? 1 : 0}, ${p.isBestSeller ? 1 : 0}, ${escape(p.createdAt || new Date().toISOString())});\n`;
+    }
+
+    res.setHeader("Content-Type", "application/sql");
+    res.setHeader("Content-Disposition", `attachment; filename="cloudflare_d1_products.sql"`);
+    return res.send(sqlContent);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -1734,7 +1920,37 @@ app.put("/api/db/products/:id", async (req, res) => {
     const idx = db.products.findIndex(p => p.id === id);
     if (idx >= 0) {
       db.products[idx] = { ...db.products[idx], ...update };
+      const updatedP = db.products[idx];
       saveDatabase(db);
+      
+      // Sync with Cloudflare D1
+      queryCloudflareD1(
+        `INSERT OR REPLACE INTO products (id, title, author, type, category, price, originalPrice, rating, reviewsCount, coverImage, sampleImages, pdfUrl, description, features, tags, pages, edition, isbn, inStock, isBestSeller, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          updatedP.id,
+          updatedP.title || '',
+          updatedP.author || 'Verified Specialists',
+          updatedP.type || 'book',
+          updatedP.category || 'General',
+          Number(updatedP.price || 0),
+          Number(updatedP.originalPrice || 0),
+          Number(updatedP.rating || 4.8),
+          Number(updatedP.reviewsCount || 0),
+          typeof updatedP.coverImage === 'string' && !updatedP.coverImage.startsWith('data:') ? updatedP.coverImage : '',
+          JSON.stringify(updatedP.sampleImages || []),
+          typeof updatedP.pdfUrl === 'string' && !updatedP.pdfUrl.startsWith('data:') ? updatedP.pdfUrl : '',
+          updatedP.description || '',
+          JSON.stringify(updatedP.features || []),
+          JSON.stringify(updatedP.tags || []),
+          Number(updatedP.pages || 0),
+          updatedP.edition || '',
+          updatedP.isbn || '',
+          updatedP.inStock !== false ? 1 : 0,
+          updatedP.isBestSeller ? 1 : 0,
+          updatedP.createdAt || new Date().toISOString()
+        ]
+      ).catch(err => console.warn("D1 sync notice:", err));
+
       syncToFirebaseRTDB("products", db.products).catch(e => console.warn(e));
       return res.json({ success: true, product: db.products[idx] });
     }
@@ -3412,6 +3628,7 @@ function getGeminiClient(): GoogleGenAI {
 
 // Resilient multi-model fallback chain to handle transient 503 (high demand) and 429 surges
 const GEMINI_MODELS_FALLBACK_CHAIN = [
+  "gemini-2.5-flash",
   "gemini-3.1-flash-lite",
   "gemini-3.8-flash",
   "gemini-flash-latest"
@@ -3538,7 +3755,7 @@ const NEET_QUESTION_SCHEMA = {
           },
           correctAnswer: { type: Type.STRING },
         },
-        required: ["questionNumber"],
+        required: ["questionNumber", "questionText", "options"],
       },
     },
   },
