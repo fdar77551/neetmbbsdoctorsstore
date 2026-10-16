@@ -172,18 +172,18 @@ export const Header: React.FC<HeaderProps> = ({
             type="button"
             id="header-wishlist-btn"
             onClick={onOpenWishlist}
-            className="relative hidden sm:flex flex-col items-center justify-center p-1 sm:px-1.5 rounded-xl text-slate-600 hover:text-rose-500 hover:bg-rose-50/50 transition cursor-pointer"
+            className="relative flex flex-col items-center justify-center p-1 sm:px-1.5 rounded-xl text-slate-600 hover:text-rose-500 hover:bg-rose-50/50 transition cursor-pointer"
             title="Wishlist"
           >
-            <div className="w-6 h-6 flex items-center justify-center relative">
-              <Heart className="w-4 h-4" />
+            <div className="w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center relative">
+              <Heart className={`w-4 h-4 sm:w-4.5 sm:h-4.5 ${wishlistCount > 0 ? 'text-rose-500 fill-rose-500' : 'text-slate-600'}`} />
               {wishlistCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 bg-rose-500 text-white text-[8px] font-black min-w-3.5 h-3.5 px-0.5 rounded-full flex items-center justify-center border border-white shadow-2xs">
+                <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[7.5px] sm:text-[8px] font-black min-w-3.5 h-3.5 px-0.5 rounded-full flex items-center justify-center border border-white shadow-2xs">
                   {wishlistCount}
                 </span>
               )}
             </div>
-            <span className="text-[8.5px] font-bold text-slate-600 mt-0.5 leading-none">
+            <span className="text-[7.5px] sm:text-[8.5px] font-bold text-slate-600 mt-0.5 leading-none">
               Wishlist
             </span>
           </button>

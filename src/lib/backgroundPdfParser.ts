@@ -303,7 +303,7 @@ class BackgroundPdfParserManager {
           }
 
           // If no problem text was extracted, never save a blank placeholder question
-          if (!finalQText || finalQText.toLowerCase() === `question ${qNum}`.toLowerCase()) {
+          if (!finalQText || finalQText.trim().length < 3 || /^Question\s*\d+$/i.test(finalQText.trim())) {
             continue;
           }
 
@@ -330,6 +330,17 @@ class BackgroundPdfParserManager {
               value: val || `Option (${label})`
             };
           });
+
+          // Ensure option values are populated if raw options had plain strings
+          const hasRealOption = cleanedOptions.some(o => o.value && !/^Option\s*\([A-D]\)$/i.test(o.value));
+          if (!hasRealOption && Array.isArray(rawQ.options)) {
+            rawQ.options.forEach((ro: any, roIdx: number) => {
+              if (cleanedOptions[roIdx]) {
+                const textVal = typeof ro === 'string' ? ro : (ro?.text || ro?.value || '');
+                if (textVal) cleanedOptions[roIdx].value = textVal.trim();
+              }
+            });
+          }
 
           const formattedQ: MockQuestion = {
             id: `q_${jobId}_${qNum}`,

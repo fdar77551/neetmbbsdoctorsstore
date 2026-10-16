@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, Trophy, Medal, Clock, Target, CheckCircle2 } from 'lucide-react';
-import { MockTest } from '../types';
+import { MockTest, MockTestLeaderboardEntry } from '../types';
 import { getMockTestLeaderboard } from '../lib/mockTestData';
 
 interface MockTestLeaderboardModalProps {
@@ -25,6 +25,34 @@ export const MockTestLeaderboardModal: React.FC<MockTestLeaderboardModalProps> =
     const mins = Math.floor((seconds % 3600) / 60);
     if (hrs > 0) return `${hrs}h ${mins}m`;
     return `${mins}m`;
+  };
+
+  const renderUserAvatar = (entry?: MockTestLeaderboardEntry, size: 'sm' | 'md' | 'lg' = 'sm') => {
+    if (!entry) return null;
+    const dim = size === 'lg' ? 'w-10 h-10' : size === 'md' ? 'w-8 h-8' : 'w-7 h-7';
+    if (entry.photoURL) {
+      return (
+        <img
+          src={entry.photoURL}
+          alt={entry.userName}
+          className={`${dim} rounded-full object-cover border border-amber-300 shrink-0 shadow-2xs`}
+          referrerPolicy="no-referrer"
+        />
+      );
+    }
+    if (entry.avatarUrl) {
+      return (
+        <span className={`${dim} ${size === 'lg' ? 'text-xl' : 'text-sm'} rounded-full bg-amber-100 flex items-center justify-center border border-amber-200 shrink-0`}>
+          {entry.avatarUrl}
+        </span>
+      );
+    }
+    const initial = entry.userName ? entry.userName.charAt(0).toUpperCase() : 'A';
+    return (
+      <div className={`${dim} ${size === 'lg' ? 'text-sm' : 'text-xs'} rounded-full bg-gradient-to-tr from-amber-500 to-orange-600 text-white font-black flex items-center justify-center shrink-0 shadow-2xs`}>
+        {initial}
+      </div>
+    );
   };
 
   return (
@@ -63,8 +91,11 @@ export const MockTestLeaderboardModal: React.FC<MockTestLeaderboardModalProps> =
           <div className="bg-amber-50/70 border-b border-amber-100/80 p-3 sm:p-4 grid grid-cols-3 gap-2 text-center">
             {/* 2nd Place */}
             <div className="bg-white rounded-xl p-2.5 shadow-2xs border border-slate-200 flex flex-col items-center">
-              <div className="w-7 h-7 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center text-xs font-black mb-1 border border-slate-300">
-                #2
+              <div className="relative mb-1">
+                {renderUserAvatar(entries[1], 'md')}
+                <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-slate-200 text-slate-700 text-[9px] font-black flex items-center justify-center border border-white">
+                  2
+                </span>
               </div>
               <span className="text-xs font-bold text-slate-800 line-clamp-1">{entries[1]?.userName}</span>
               <span className="text-sm font-black text-blue-600 mt-0.5">{entries[1]?.score} <span className="text-[10px] text-slate-400">pts</span></span>
@@ -73,8 +104,12 @@ export const MockTestLeaderboardModal: React.FC<MockTestLeaderboardModalProps> =
 
             {/* 1st Place */}
             <div className="bg-gradient-to-b from-amber-100 to-amber-50 rounded-xl p-2.5 shadow-xs border border-amber-300 flex flex-col items-center -translate-y-1">
-              <div className="w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center text-sm font-black mb-1 shadow-xs ring-2 ring-yellow-300">
-                👑
+              <div className="relative mb-1">
+                {renderUserAvatar(entries[0], 'lg')}
+                <span className="absolute -top-2.5 -right-1 text-sm">👑</span>
+                <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-white text-[9px] font-black flex items-center justify-center border border-white">
+                  1
+                </span>
               </div>
               <span className="text-xs font-black text-amber-900 line-clamp-1">{entries[0]?.userName}</span>
               <span className="text-base font-black text-amber-600 mt-0.5">{entries[0]?.score} <span className="text-[10px] text-amber-700">pts</span></span>
@@ -83,8 +118,11 @@ export const MockTestLeaderboardModal: React.FC<MockTestLeaderboardModalProps> =
 
             {/* 3rd Place */}
             <div className="bg-white rounded-xl p-2.5 shadow-2xs border border-slate-200 flex flex-col items-center">
-              <div className="w-7 h-7 rounded-full bg-orange-100 text-orange-700 flex items-center justify-center text-xs font-black mb-1 border border-orange-300">
-                #3
+              <div className="relative mb-1">
+                {renderUserAvatar(entries[2], 'md')}
+                <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-amber-700 text-white text-[9px] font-black flex items-center justify-center border border-white">
+                  3
+                </span>
               </div>
               <span className="text-xs font-bold text-slate-800 line-clamp-1">{entries[2]?.userName}</span>
               <span className="text-sm font-black text-blue-600 mt-0.5">{entries[2]?.score} <span className="text-[10px] text-slate-400">pts</span></span>
@@ -120,6 +158,9 @@ export const MockTestLeaderboardModal: React.FC<MockTestLeaderboardModalProps> =
                     }`}>
                       #{entry.rank}
                     </span>
+
+                    {/* Profile Picture / Avatar */}
+                    {renderUserAvatar(entry, 'sm')}
 
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">

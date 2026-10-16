@@ -747,6 +747,31 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     if (selectedTest?.id === test.id) setSelectedTest({ ...selectedTest, status: nextStatus });
   };
 
+  // Toggle Free / Premium (Paid) status
+  const handleToggleFreePaid = (test: MockTest) => {
+    const isCurrentlyFree = test.isFree || test.price === 0;
+    const nextFree = !isCurrentlyFree;
+    const nextPrice = nextFree ? 0 : (test.originalPrice && test.originalPrice > 0 ? test.originalPrice : 99);
+    const updated = tests.map(t => t.id === test.id ? {
+      ...t,
+      isFree: nextFree,
+      isPaid: !nextFree,
+      price: nextPrice,
+      discountedPrice: nextPrice
+    } as MockTest : t);
+    handleSaveTestsList(updated);
+    if (selectedTest?.id === test.id) {
+      setSelectedTest({
+        ...selectedTest,
+        isFree: nextFree,
+        isPaid: !nextFree,
+        price: nextPrice,
+        discountedPrice: nextPrice
+      });
+    }
+    triggerToast(nextFree ? `✓ "${test.title}" set to Free Sample Test` : `🔒 "${test.title}" set to Premium (₹${nextPrice})`);
+  };
+
   // Reorder Tests (Move Up / Move Down)
   const handleMoveTestUp = (testId: string) => {
     const idx = tests.findIndex(t => t.id === testId);
@@ -1697,6 +1722,18 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             ? repairDevanagariText(cleanQuestionTextForMatchTable(separatedTexts.hiText, parsedMatchTable)) 
             : undefined;
 
+          // Ensure English question text is never left empty
+          let finalEnText = cleanedEnText;
+          if (!finalEnText || finalEnText.trim().length === 0) {
+            finalEnText = cleanedHiText || rawEnText || (rawQ.questionText || '').trim();
+          }
+
+          // STRICT VALIDATION: If no valid problem text was extracted, skip this item! Never add blank or placeholder questions!
+          if (!finalEnText || finalEnText.trim().length < 3 || /^Question\s*\d+$/i.test(finalEnText.trim())) {
+            console.warn(`[Skip Blank Question] Question ${qNum} has no valid problem text. Skipping.`);
+            continue;
+          }
+
           // Parse and separate options safely
           let rawEnOpts: any[] = [];
           if (Array.isArray(rawQ.english?.options) && rawQ.english.options.length > 0) {
@@ -1725,6 +1762,17 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             imageUrl: optionFigures[opt.label]
           }));
 
+          // If options have no actual text, search rawQ.options for real strings
+          const hasOptionText = cleanedOptions.some(o => o.value && !/^Option\s*\([A-D]\)$/i.test(o.value) && !/^Option\s*[A-D]$/i.test(o.value));
+          if (!hasOptionText && Array.isArray(rawQ.options) && rawQ.options.length > 0) {
+            rawQ.options.forEach((ro: any, roIdx: number) => {
+              if (cleanedOptions[roIdx]) {
+                const textVal = typeof ro === 'string' ? ro : (ro?.text || ro?.value || '');
+                if (textVal) cleanedOptions[roIdx].value = textVal.trim();
+              }
+            });
+          }
+
           const cleanedHiOptions = baseHiOpts.map((opt) => ({
             label: opt.label,
             type: (optionFigures[opt.label]) ? 'image' as const : 'text' as const,
@@ -1741,7 +1789,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             difficulty: 'Moderate',
             languages: {
               en: {
-                questionText: cleanedEnText,
+                questionText: finalEnText,
                 options: cleanedOptions,
                 figureUrl: figureDataUrl,
                 matchTable: parsedMatchTable
@@ -1753,7 +1801,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                 matchTable: parsedMatchTable
               } : undefined
             },
-            questionText: cleanedEnText,
+            questionText: finalEnText,
             options: cleanedOptions,
             figures: figureDataUrl ? [figureDataUrl] : [],
             figureUrl: figureDataUrl,
@@ -3366,17 +3414,35 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                               {test.status === 'published' ? 'PUBLISHED' : 'DRAFT'}
                             </span>
 
-                            {/* Access Badge: FREE ACCESS vs PREMIUM (₹Price) */}
+                            {/* Access Badge: FREE ACCESS vs PREMIUM (₹Price) - Click to toggle */}
                             {isFree ? (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase bg-emerald-50 text-emerald-700 border border-emerald-300 px-2.5 py-0.5 rounded-full">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleToggleFreePaid(test);
+                                }}
+                                title="Click to toggle to Premium (Paid) test"
+                                className="inline-flex items-center gap-1 text-[10px] font-black uppercase bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-700 border border-emerald-300 px-2.5 py-0.5 rounded-full transition cursor-pointer shadow-2xs"
+                              >
                                 <CheckCircle className="w-3 h-3 text-emerald-600" />
                                 <span>FREE ACCESS</span>
-                              </span>
+                                <span className="text-[9px] text-emerald-500 underline ml-0.5 font-normal">Switch</span>
+                              </button>
                             ) : (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase bg-amber-50 text-amber-800 border border-amber-300 px-2.5 py-0.5 rounded-full">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleToggleFreePaid(test);
+                                }}
+                                title="Click to toggle to Free Sample test"
+                                className="inline-flex items-center gap-1 text-[10px] font-black uppercase bg-amber-50 hover:bg-amber-100 active:scale-95 text-amber-800 border border-amber-300 px-2.5 py-0.5 rounded-full transition cursor-pointer shadow-2xs"
+                              >
                                 <Lock className="w-3 h-3 text-amber-600" />
                                 <span>PREMIUM (₹{test.price})</span>
-                              </span>
+                                <span className="text-[9px] text-amber-600 underline ml-0.5 font-normal">Switch</span>
+                              </button>
                             )}
                           </div>
                         </div>

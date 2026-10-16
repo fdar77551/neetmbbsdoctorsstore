@@ -42,6 +42,7 @@ import { InvoiceModal } from './components/InvoiceModal';
 import { PdfReaderModal } from './components/PdfReaderModal';
 import { SupportModal } from './components/SupportModal';
 import { WishlistModal } from './components/WishlistModal';
+import { WishlistSectionView } from './components/WishlistSectionView';
 import { SoftCopyPdfPortal } from './components/SoftCopyPdfPortal';
 import { HomeHeroSection } from './components/HomeHeroSection';
 import { HomeCategoryCards } from './components/HomeCategoryCards';
@@ -577,7 +578,7 @@ export default function App() {
             cartCount={cartTotalItems}
             wishlistCount={wishlist.length}
             onOpenCart={() => setIsCartOpen(true)}
-            onOpenWishlist={() => setIsWishlistOpen(true)}
+            onOpenWishlist={() => handleNavigateScreen('wishlist')}
             onOpenAuth={() => {
               setAuthInitialMode('login');
               setIsAuthOpen(true);
@@ -792,6 +793,27 @@ export default function App() {
             </div>
           )}
 
+          {/* ================= 2B. DEDICATED WISHLIST SCREEN ================= */}
+          {currentScreen === 'wishlist' && (
+            <WishlistSectionView
+              wishlistIds={wishlist}
+              products={products}
+              onToggleWishlist={handleToggleWishlist}
+              onAddToCart={handleAddToCart}
+              onInstantBuy={(p) => {
+                handleAddToCart(p);
+                setIsCartOpen(true);
+              }}
+              onOpenProduct={(p) => setSelectedProduct(p)}
+              onBackToHome={() => handleNavigateScreen('home')}
+              onClearWishlist={() => {
+                setWishlist([]);
+                saveStoredWishlist([]);
+                showToast('Wishlist cleared');
+              }}
+            />
+          )}
+
           {/* ================= 3. ORDERS SCREEN ================= */}
           {currentScreen === 'orders' && (
             <OrdersView
@@ -852,7 +874,7 @@ export default function App() {
               }}
               onSignOut={handleSignOut}
               onNavigateToOrders={() => setCurrentScreen('orders')}
-              onOpenWishlist={() => setIsWishlistOpen(true)}
+              onOpenWishlist={() => handleNavigateScreen('wishlist')}
               onOpenSupport={() => setIsSupportOpen(true)}
               onNavigateToAdmin={() => setCurrentScreen('admin')}
               onOpenPdfLibrary={() => setCurrentScreen('pdfs')}
@@ -905,6 +927,7 @@ export default function App() {
             currentScreen={currentScreen}
             onNavigate={handleNavigateScreen}
             isAdmin={isAdmin}
+            wishlistBadgeCount={wishlist.length}
             orderBadgeCount={orders.filter(o => o.status === 'new' && (o.items || []).some(it => it.type !== 'pdf')).length}
           />
         )}

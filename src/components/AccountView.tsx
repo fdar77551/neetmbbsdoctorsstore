@@ -72,6 +72,17 @@ export const AccountView: React.FC<AccountViewProps> = ({
       avatarUrl: avatar,
       photoURL: undefined
     });
+    fetch('/api/user/sync-profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        uid: userProfile.uid,
+        email: userProfile.email,
+        displayName: userProfile.displayName,
+        avatarUrl: avatar,
+        photoURL: ''
+      })
+    }).catch(() => {});
     setShowAvatarPicker(false);
   };
 
@@ -102,6 +113,20 @@ export const AccountView: React.FC<AccountViewProps> = ({
           photoURL: finalUrl,
           avatarUrl: undefined
         });
+
+        // Sync to Cloudflare D1 for real-time leaderboard display
+        fetch('/api/user/sync-profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            uid: userProfile.uid,
+            email: userProfile.email,
+            displayName: userProfile.displayName,
+            photoURL: finalUrl,
+            avatarUrl: ''
+          })
+        }).catch(() => {});
+
         setUploadingAvatar(false);
         setShowAvatarPicker(false);
       };

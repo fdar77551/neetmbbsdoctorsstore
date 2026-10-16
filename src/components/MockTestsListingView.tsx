@@ -22,7 +22,11 @@ import {
   History,
   Check,
   CheckCircle,
-  Award
+  Award,
+  RefreshCw,
+  Gift,
+  Flame,
+  UserCheck
 } from 'lucide-react';
 import { 
   MockTest, 
@@ -43,14 +47,15 @@ import {
   getAvailableChaptersForSubject,
   getStoredMockPurchases,
   getMockTestPricingPackages,
-  hasUserPurchasedPackage
+  hasUserPurchasedPackage,
+  getCombinedMockTestLeaderboard
 } from '../lib/mockTestData';
 import { getCurrentUser } from '../lib/storage';
 import { MockTestLeaderboardModal } from './MockTestLeaderboardModal';
 import { MockTestDetailModal } from './MockTestDetailModal';
 import { MockTestShareModal } from './MockTestShareModal';
 
-export type MockTestPageView = 'portal' | 'chapter_wise' | 'full_subject' | 'full_syllabus' | 'purchased' | 'history';
+export type MockTestPageView = 'portal' | 'chapter_wise' | 'full_subject' | 'full_syllabus' | 'purchased' | 'history' | 'free_sample' | 'leaderboard';
 
 interface MockTestsListingViewProps {
   userProfile?: UserProfile | null;
@@ -88,6 +93,8 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
   // 'full_syllabus' = Dedicated Page for Full Syllabus Tests
   // 'purchased' = Dedicated Page for Purchased Tests
   // 'history' = Dedicated Page for Attempt History
+  // 'free_sample' = Quick Portal for All Free Sample Tests
+  // 'leaderboard' = Real-Time All India Leaderboard
   const [pageView, setPageView] = useState<MockTestPageView>(() => {
     if (initialPageView) return initialPageView;
     if (typeof window !== 'undefined') {
@@ -97,6 +104,8 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
       if (hash.includes('full-syllabus')) return 'full_syllabus';
       if (hash.includes('purchased')) return 'purchased';
       if (hash.includes('history')) return 'history';
+      if (hash.includes('leaderboard')) return 'leaderboard';
+      if (hash.includes('free-sample') || hash.includes('free-tests')) return 'free_sample';
     }
     return 'portal';
   });
@@ -110,6 +119,12 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
 
   // Free vs Premium Quick Toggle
   const [priceFilter, setPriceFilter] = useState<'all' | 'free' | 'premium'>('all');
+
+  // Real-Time Cloudflare D1 Leaderboard State
+  const [leaderboardCategory, setLeaderboardCategory] = useState<'all' | 'chapter_wise' | 'full_subject' | 'full_syllabus'>('all');
+  const [leaderboardEntries, setLeaderboardEntries] = useState<any[]>([]);
+  const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
+  const [isD1Connected, setIsD1Connected] = useState(true);
 
   const [activeLeaderboardTest, setActiveLeaderboardTest] = useState<MockTest | null>(null);
   const [attemptsUpdateTrigger, setAttemptsUpdateTrigger] = useState(0);
@@ -338,9 +353,297 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
         return hasUserPurchasedMockTest(effectiveUser?.uid, effectiveUser?.email, test.id);
       }
 
+      // 5. Free Sample Tests Page Filter
+      if (pageView === 'free_sample') {
+        return test.isFree || test.price === 0;
+      }
+
       return true;
     });
   }, [publishedTests, pageView, chapterSubject, selectedChapter, fullSubjectSubFilter, priceFilter, searchQuery, effectiveUser]);
+
+  // Free sample test counts per category
+  const freeCounts = useMemo(() => {
+    let chapterWiseFree = 0;
+    let fullSubjectFree = 0;
+    let fullSyllabusFree = 0;
+    let totalFree = 0;
+    publishedTests.forEach(t => {
+      if (t.isFree || t.price === 0) {
+        totalFree++;
+        const cat = getTestCategory(t);
+        if (cat === 'chapter_wise') chapterWiseFree++;
+        else if (cat === 'full_subject') fullSubjectFree++;
+        else fullSyllabusFree++;
+      }
+    });
+    return { chapterWiseFree, fullSubjectFree, fullSyllabusFree, totalFree };
+  }, [publishedTests]);
+
+  // Fetch real-time Cloudflare D1 leaderboard
+  const fetchRealTimeLeaderboard = async (cat: string = leaderboardCategory) => {
+    setLoadingLeaderboard(true);
+    try {
+      const res = await fetch(`/api/leaderboard?category=${cat}&limit=50`);
+      const data = await res.json();
+      if (data && data.success && Array.isArray(data.entries) && data.entries.length > 0) {
+        setLeaderboardEntries(data.entries);
+        setIsD1Connected(data.source === 'cloudflare_d1');
+      } else {
+        const local = getCombinedMockTestLeaderboard({ timePeriod: 'all' });
+        setLeaderboardEntries(local.map((item, idx) => ({
+          rank: idx + 1,
+          id: `local_${idx}`,
+          userId: item.userId,
+          userName: item.userName,
+          photoURL: item.photoURL,
+          avatarUrl: item.avatarUrl,
+          score: item.bestScore,
+          maxMarks: 720,
+          accuracy: item.accuracy,
+          timeSpentSeconds: 0,
+          testTitle: `${item.testsAttempted} Tests Taken`,
+          testTypeCategory: cat,
+          submittedAt: item.lastAttemptDate
+        })));
+        setIsD1Connected(true);
+      }
+    } catch {
+      const local = getCombinedMockTestLeaderboard({ timePeriod: 'all' });
+      setLeaderboardEntries(local.map((item, idx) => ({
+        rank: idx + 1,
+        id: `local_${idx}`,
+        userId: item.userId,
+        userName: item.userName,
+        photoURL: item.photoURL,
+        avatarUrl: item.avatarUrl,
+        score: item.bestScore,
+        maxMarks: 720,
+        accuracy: item.accuracy,
+        timeSpentSeconds: 0,
+        testTitle: `${item.testsAttempted} Tests Taken`,
+        testTypeCategory: cat,
+        submittedAt: item.lastAttemptDate
+      })));
+    } finally {
+      setLoadingLeaderboard(false);
+    }
+  };
+
+  useEffect(() => {
+    if (pageView === 'leaderboard') {
+      fetchRealTimeLeaderboard(leaderboardCategory);
+    }
+  }, [pageView, leaderboardCategory, attemptsUpdateTrigger]);
+
+  const renderLeaderboardUserAvatar = (entry: any, size: 'sm' | 'md' | 'lg' = 'sm') => {
+    const dim = size === 'lg' ? 'w-14 h-14' : size === 'md' ? 'w-10 h-10' : 'w-8 h-8';
+    if (entry.photoURL) {
+      return (
+        <img
+          src={entry.photoURL}
+          alt={entry.userName || 'Aspirant'}
+          className={`${dim} rounded-full object-cover border-2 border-amber-300 shrink-0 shadow-2xs`}
+          referrerPolicy="no-referrer"
+        />
+      );
+    }
+    if (entry.avatarUrl) {
+      return (
+        <span className={`${dim} ${size === 'lg' ? 'text-2xl' : 'text-base'} rounded-full bg-amber-100 flex items-center justify-center border border-amber-200 shrink-0`}>
+          {entry.avatarUrl}
+        </span>
+      );
+    }
+    const initial = (entry.userName || 'A').charAt(0).toUpperCase();
+    return (
+      <div className={`${dim} ${size === 'lg' ? 'text-base' : 'text-xs'} rounded-full bg-gradient-to-tr from-amber-500 via-orange-500 to-rose-600 text-white font-black flex items-center justify-center shrink-0 shadow-2xs`}>
+        {initial}
+      </div>
+    );
+  };
+
+  // Unified Test Card Renderer
+  const renderTestCard = (test: MockTest, isSampleFreeSection?: boolean) => {
+    const isPurchased = hasUserPurchasedMockTest(effectiveUser?.uid, effectiveUser?.email, test.id);
+    const isCompleted = userAttempts.some(a => a.testId === test.id);
+    const testCat = getTestCategory(test);
+    const isFree = test.isFree || test.price === 0;
+
+    const cardTheme = testCat === 'chapter_wise'
+      ? {
+          border: 'hover:border-orange-400',
+          badge: 'bg-orange-50 text-orange-700 border-orange-200'
+        }
+      : testCat === 'full_subject'
+      ? {
+          border: 'hover:border-emerald-400',
+          badge: 'bg-emerald-50 text-emerald-700 border-emerald-200'
+        }
+      : {
+          border: 'hover:border-blue-400',
+          badge: 'bg-blue-50 text-blue-700 border-blue-200'
+        };
+
+    return (
+      <div
+        key={test.id}
+        className={`bg-white rounded-2xl border ${isFree ? 'border-emerald-200/90 shadow-2xs hover:border-emerald-400 hover:shadow-md' : 'border-slate-200/90 shadow-2xs hover:shadow-md'} transition-all overflow-hidden flex flex-col justify-between ${cardTheme.border} group`}
+      >
+        {/* Top Content Area */}
+        <div className="p-4 sm:p-5 space-y-2.5">
+          {/* Header Badges */}
+          <div className="flex items-center justify-between gap-1.5">
+            <div className="flex items-center gap-1.5 overflow-hidden">
+              <span className="text-[10.5px] font-black text-slate-900 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md font-['Outfit',sans-serif]">
+                {test.testNumber || 'NEET'}
+              </span>
+              <span className={`text-[9.5px] font-black uppercase px-2 py-0.5 rounded-md border ${cardTheme.badge} truncate`}>
+                {testCat === 'chapter_wise' 
+                  ? (test.subject || 'Chapter Test') 
+                  : testCat === 'full_subject' 
+                  ? (test.subject ? `${test.subject} Full` : 'Full Subject')
+                  : 'Full PCB (720M)'}
+              </span>
+            </div>
+
+            {/* Access Badge */}
+            <div className="shrink-0">
+              {isCompleted ? (
+                <span className="inline-flex items-center gap-1 text-[9.5px] font-black text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Done
+                </span>
+              ) : isPurchased ? (
+                <span className="inline-flex items-center gap-1 text-[9.5px] font-black text-blue-800 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                  <ShieldCheck className="w-3 h-3 text-blue-600" /> Unlocked
+                </span>
+              ) : isFree ? (
+                <span className="inline-flex items-center gap-1 text-[9.5px] font-black text-emerald-700 bg-emerald-100/90 border border-emerald-300 px-2.5 py-0.5 rounded-full shadow-2xs">
+                  <Sparkles className="w-3 h-3 text-emerald-600" /> Free Sample Test
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[9.5px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full">
+                  <Lock className="w-2.5 h-2.5 text-amber-500" /> ₹{test.price}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Chapter indicator if Chapter Wise */}
+          {testCat === 'chapter_wise' && test.chapter && (
+            <div className="inline-flex items-center gap-1 text-[10px] font-bold text-orange-700 bg-orange-50/80 border border-orange-200/80 px-2 py-0.5 rounded-md">
+              <BookOpen className="w-3 h-3 text-orange-600" />
+              <span className="truncate max-w-[220px]">{test.chapter}</span>
+            </div>
+          )}
+
+          {/* Title */}
+          <h3 
+            onClick={() => setSharedTestModal(test)}
+            className="text-sm font-black text-slate-900 font-['Outfit',sans-serif] leading-snug line-clamp-2 group-hover:text-blue-600 transition cursor-pointer"
+            title="Click to view test syllabus & details"
+          >
+            {test.title}
+          </h3>
+
+          {/* Description */}
+          <p className="text-[11px] text-slate-500 leading-relaxed line-clamp-2">
+            {test.description || test.shortDescription || (isFree ? 'Official Free Sample Mock Test for students to practice CBT test interface.' : 'NEET pattern questions with detailed answer keys and explanations.')}
+          </p>
+
+          {/* Metrics Bar */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[10.5px] font-bold text-slate-600">
+            <span className="inline-flex items-center gap-1 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-md">
+              <HelpCircle className="w-3 h-3 text-blue-600" />
+              <span>{test.totalQuestions} Qs</span>
+            </span>
+            <span className="inline-flex items-center gap-1 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-md">
+              <Clock className="w-3 h-3 text-indigo-600" />
+              <span>{test.durationMinutes}m</span>
+            </span>
+            <span className="inline-flex items-center gap-1 bg-emerald-50/70 border border-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md">
+              <span>+4/-1 Marks</span>
+            </span>
+            <span className="inline-flex items-center gap-1 bg-purple-50/70 border border-purple-100 text-purple-800 px-2 py-0.5 rounded-md">
+              <span>{test.maxMarks || 720}M</span>
+            </span>
+          </div>
+        </div>
+
+        {/* Card Action Buttons Toolbar */}
+        <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => onOpenLeaderboard ? onOpenLeaderboard(test) : setActiveLeaderboardTest(test)}
+              className="p-2 hover:bg-white text-slate-500 hover:text-amber-600 rounded-xl transition cursor-pointer border border-transparent hover:border-slate-200"
+              title="View Leaderboard & Rankings"
+            >
+              <Trophy className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShareModalTest(test)}
+              className="p-2 hover:bg-white text-slate-500 hover:text-blue-600 rounded-xl transition cursor-pointer border border-transparent hover:border-slate-200"
+              title="Share this test"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSharedTestModal(test)}
+              className="text-[11px] font-bold text-slate-600 hover:text-blue-600 px-2 py-1 rounded-lg transition cursor-pointer"
+            >
+              Syllabus
+            </button>
+          </div>
+
+          {/* Primary Start / Unlock Button */}
+          <div>
+            {isCompleted ? (
+              <button
+                type="button"
+                onClick={() => handleTestStartClick(test)}
+                className="px-3.5 py-1.5 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1 active:scale-98"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Reattempt</span>
+              </button>
+            ) : isPurchased ? (
+              <button
+                type="button"
+                onClick={() => handleTestStartClick(test)}
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1 active:scale-98"
+              >
+                <Play className="w-3 h-3 fill-white" />
+                <span>Start Test</span>
+              </button>
+            ) : isFree ? (
+              <button
+                type="button"
+                onClick={() => handleTestStartClick(test)}
+                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1"
+              >
+                <Play className="w-3 h-3 fill-white" />
+                <span>Start Free Test</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onBuyTest ? onBuyTest(test) : setSharedTestModal(test)}
+                className="px-4 py-1.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 active:scale-98 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1"
+              >
+                <Lock className="w-3 h-3" />
+                <span>Unlock ₹{test.price}</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 py-3 sm:py-6 px-2 sm:px-6 font-['Plus_Jakarta_Sans',sans-serif]">
@@ -348,35 +651,63 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
 
         {/* ============================================================== */}
         {/* VIEW 1: MAIN TEST CATEGORIES PORTAL PAGE (When pageView === 'portal') */}
-        {/* Shows ONLY the 3 Category Cards & Quick Access Portal. */}
-        {/* DOES NOT show the tests on the bottom of these types! */}
+        {/* Shows the Category Cards & Fast Access Portal. */}
         {/* ============================================================== */}
         {pageView === 'portal' && (
-          <div className="space-y-5 sm:space-y-7 animate-in fade-in duration-200">
-            {/* Top Portal Hero */}
-            <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-7 border border-slate-200/90 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-[11px] font-black uppercase tracking-wider mb-2 border border-blue-100">
-                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                  <span>NTA NEET CBT Official Engine • 2025-2026</span>
-                </div>
-                <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight font-['Outfit',sans-serif] leading-tight">
-                  NEET Mock Tests Portal
-                </h1>
-                <p className="text-xs sm:text-sm text-slate-500 font-medium tracking-wide mt-1 max-w-2xl">
-                  Choose a mock test category below to open its dedicated testing environment with official NTA timer, marking scheme, and All India Rank analytics.
-                </p>
+          <div className="space-y-5 sm:space-y-6 animate-in fade-in duration-200">
+            {/* Top Fast Access Pill Navigation Bar */}
+            <div className="bg-white rounded-2xl p-2.5 sm:p-3 border border-slate-200/90 shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex items-center gap-1.5 overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => navigateToPage('portal')}
+                  className="px-3.5 py-1.5 rounded-xl text-xs font-black bg-blue-600 text-white shadow-2xs cursor-pointer flex items-center gap-1.5 shrink-0"
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>All Categories</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigateToPage('free_sample')}
+                  className="px-3.5 py-1.5 rounded-xl text-xs font-black bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition cursor-pointer flex items-center gap-1.5 shrink-0"
+                >
+                  <Gift className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Free Sample Tests</span>
+                  <span className="px-1.5 py-0.2 bg-emerald-600 text-white text-[9px] rounded-full font-bold">{freeCounts.totalFree}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigateToPage('leaderboard')}
+                  className="px-3.5 py-1.5 rounded-xl text-xs font-black bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 transition cursor-pointer flex items-center gap-1.5 shrink-0"
+                >
+                  <Trophy className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Real-Time Leaderboard</span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigateToPage('purchased')}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition cursor-pointer flex items-center gap-1 shrink-0"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>My Purchased ({userPurchases.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigateToPage('history')}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition cursor-pointer flex items-center gap-1 shrink-0"
+                >
+                  <History className="w-3.5 h-3.5 text-purple-600" />
+                  <span>Attempt History ({userAttempts.length})</span>
+                </button>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold shrink-0">
-                <span className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> +4 / -1 Marking
+              <div className="hidden md:flex items-center gap-2 text-xs font-bold text-slate-500">
+                <span className="flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-[11px]">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" /> +4 / -1 Marking
                 </span>
-                <span className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-blue-50 text-blue-800 border border-blue-200 text-xs font-bold">
-                  <Clock className="w-3.5 h-3.5 text-blue-600" /> Real CBT Timer
-                </span>
-                <span className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-purple-50 text-purple-800 border border-purple-200 text-xs font-bold">
-                  <Trophy className="w-3.5 h-3.5 text-purple-600" /> All India Rank
+                <span className="flex items-center gap-1 text-blue-700 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200 text-[11px]">
+                  <Clock className="w-3 h-3 text-blue-600" /> Real CBT Timer
                 </span>
               </div>
             </div>
@@ -1165,226 +1496,371 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
               </div>
             )}
 
-            {/* TESTS GRID (For Chapter Wise, Full Subject, Full Syllabus, Purchased) */}
-            {pageView !== 'history' && (
-              <div className="space-y-3">
-                {displayedTests.length === 0 ? (
-                  <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200/90 p-8 sm:p-12 text-center space-y-3 shadow-2xs">
-                    <div className="w-12 h-12 rounded-2xl bg-orange-50 border border-orange-200 flex items-center justify-center text-orange-600 mx-auto">
-                      <BookOpen className="w-6 h-6" />
+            {/* ================= VIEW: REAL-TIME LEADERBOARD ================= */}
+            {pageView === 'leaderboard' && (
+              <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-200">
+                {/* Leaderboard Header Card */}
+                <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-600 text-white rounded-2xl sm:rounded-3xl p-5 sm:p-7 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="space-y-1.5">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/20 backdrop-blur-xs text-yellow-200 text-xs font-black uppercase tracking-wider border border-white/20">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>Live All India Rank Leaderboard</span>
+                      <span className="text-[10px] text-white/80">• Cloudflare D1 Synced</span>
                     </div>
-                    <h3 className="text-sm sm:text-base font-bold text-slate-800">
-                      {pageView === 'chapter_wise'
-                        ? `No chapter tests published for ${chapterSubject} ${selectedChapter !== 'all' ? `(${selectedChapter})` : ''} yet`
-                        : pageView === 'full_subject'
-                        ? `No full subject tests published yet`
-                        : pageView === 'full_syllabus'
-                        ? `No full syllabus tests published yet`
-                        : `No purchased tests found`}
-                    </h3>
-                    <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-                      {pageView === 'chapter_wise'
-                        ? `The admin has not uploaded tests for this chapter yet. Once published by the admin, they will automatically synchronize to Firebase and appear here.`
-                        : `Tests will appear here once published by the admin.`}
+                    <h2 className="text-2xl sm:text-3xl font-black font-['Outfit',sans-serif] tracking-tight">
+                      NEET Aspirants All India Rankings
+                    </h2>
+                    <p className="text-xs sm:text-sm text-amber-100 max-w-xl leading-relaxed">
+                      Real-time test rankings computed from authentic completed CBT attempts with verified student profile pictures from Cloudflare storage.
                     </p>
-                    <div className="pt-2 flex flex-wrap justify-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => navigateToPage('portal')}
-                        className="px-4 py-2 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl transition cursor-pointer"
-                      >
-                        ← Back to Test Categories
-                      </button>
-                    </div>
                   </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4">
-                    {displayedTests.map((test) => {
-                      const isPurchased = hasUserPurchasedMockTest(effectiveUser?.uid, effectiveUser?.email, test.id);
-                      const isCompleted = userAttempts.some(a => a.testId === test.id);
-                      const testCat = getTestCategory(test);
 
-                      const cardTheme = testCat === 'chapter_wise'
-                        ? {
-                            border: 'hover:border-orange-400',
-                            badge: 'bg-orange-50 text-orange-700 border-orange-200'
-                          }
-                        : testCat === 'full_subject'
-                        ? {
-                            border: 'hover:border-emerald-400',
-                            badge: 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                          }
-                        : {
-                            border: 'hover:border-blue-400',
-                            badge: 'bg-blue-50 text-blue-700 border-blue-200'
-                          };
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => fetchRealTimeLeaderboard(leaderboardCategory)}
+                      disabled={loadingLeaderboard}
+                      className="px-4 py-2.5 bg-white text-slate-900 hover:bg-amber-50 active:scale-98 text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-2"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 text-amber-600 ${loadingLeaderboard ? 'animate-spin' : ''}`} />
+                      <span>{loadingLeaderboard ? 'Updating...' : 'Refresh Live'}</span>
+                    </button>
+                  </div>
+                </div>
 
-                      return (
-                        <div
-                          key={test.id}
-                          className={`bg-white rounded-2xl border border-slate-200/90 shadow-2xs hover:shadow-md transition-all overflow-hidden flex flex-col justify-between ${cardTheme.border} group`}
-                        >
-                          {/* Top Content Area */}
-                          <div className="p-4 sm:p-5 space-y-2.5">
-                            {/* Header Badges */}
-                            <div className="flex items-center justify-between gap-1.5">
-                              <div className="flex items-center gap-1.5 overflow-hidden">
-                                <span className="text-[10.5px] font-black text-slate-900 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md font-['Outfit',sans-serif]">
-                                  {test.testNumber || 'NEET'}
-                                </span>
-                                <span className={`text-[9.5px] font-black uppercase px-2 py-0.5 rounded-md border ${cardTheme.badge} truncate`}>
-                                  {testCat === 'chapter_wise' 
-                                    ? (test.subject || 'Chapter Test') 
-                                    : testCat === 'full_subject' 
-                                    ? (test.subject ? `${test.subject} Full` : 'Full Subject')
-                                    : 'Full PCB (720M)'}
-                                </span>
-                              </div>
+                {/* Leaderboard Filter Switcher */}
+                <div className="bg-white rounded-2xl p-2.5 sm:p-3 border border-slate-200 shadow-2xs flex items-center justify-between gap-2 overflow-x-auto">
+                  <div className="flex items-center gap-1.5 overflow-x-auto">
+                    {[
+                      { key: 'all', label: '🏆 Overall AIR (All Tests)' },
+                      { key: 'chapter_wise', label: '1️⃣ Chapter Wise Mocks' },
+                      { key: 'full_subject', label: '2️⃣ Full Subject Tests' },
+                      { key: 'full_syllabus', label: '3️⃣ Full Syllabus Grand' }
+                    ].map(f => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => {
+                          setLeaderboardCategory(f.key as any);
+                          fetchRealTimeLeaderboard(f.key);
+                        }}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition cursor-pointer shrink-0 ${
+                          leaderboardCategory === f.key
+                            ? 'bg-amber-500 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
 
-                              {/* Access Badge */}
-                              <div className="shrink-0">
-                                {isCompleted ? (
-                                  <span className="inline-flex items-center gap-1 text-[9.5px] font-black text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                                    <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Done
-                                  </span>
-                                ) : isPurchased ? (
-                                  <span className="inline-flex items-center gap-1 text-[9.5px] font-black text-blue-800 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
-                                    <ShieldCheck className="w-3 h-3 text-blue-600" /> Unlocked
-                                  </span>
-                                ) : test.price === 0 || test.isFree ? (
-                                  <span className="inline-flex items-center gap-1 text-[9.5px] font-black text-emerald-700 bg-emerald-100/80 border border-emerald-300 px-2 py-0.5 rounded-full">
-                                    Free Test
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 text-[9.5px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
-                                    <Lock className="w-2.5 h-2.5 text-amber-500" /> ₹{test.price}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
+                  <span className="text-[11px] font-bold text-slate-500 shrink-0 hidden sm:inline">
+                    {leaderboardEntries.length} Ranked Aspirants
+                  </span>
+                </div>
 
-                            {/* Chapter indicator if Chapter Wise */}
-                            {testCat === 'chapter_wise' && test.chapter && (
-                              <div className="inline-flex items-center gap-1 text-[10px] font-bold text-orange-700 bg-orange-50/80 border border-orange-200/80 px-2 py-0.5 rounded-md">
-                                <BookOpen className="w-3 h-3 text-orange-600" />
-                                <span className="truncate max-w-[220px]">{test.chapter}</span>
-                              </div>
-                            )}
-
-                            {/* Title */}
-                            <h3 
-                              onClick={() => setSharedTestModal(test)}
-                              className="text-sm font-black text-slate-900 font-['Outfit',sans-serif] leading-snug line-clamp-2 group-hover:text-blue-600 transition cursor-pointer"
-                              title="Click to view test syllabus & details"
-                            >
-                              {test.title}
-                            </h3>
-
-                            {/* Description */}
-                            <p className="text-[11px] text-slate-500 leading-relaxed line-clamp-2">
-                              {test.description || test.shortDescription || 'NEET pattern questions with detailed answer keys and explanations.'}
-                            </p>
-
-                            {/* Metrics Bar */}
-                            <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[10.5px] font-bold text-slate-600">
-                              <span className="inline-flex items-center gap-1 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-md">
-                                <HelpCircle className="w-3 h-3 text-blue-600" />
-                                <span>{test.totalQuestions} Qs</span>
-                              </span>
-                              <span className="inline-flex items-center gap-1 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-md">
-                                <Clock className="w-3 h-3 text-indigo-600" />
-                                <span>{test.durationMinutes}m</span>
-                              </span>
-                              <span className="inline-flex items-center gap-1 bg-emerald-50/70 border border-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md">
-                                <span>+4/-1 Marks</span>
-                              </span>
-                              <span className="inline-flex items-center gap-1 bg-purple-50/70 border border-purple-100 text-purple-800 px-2 py-0.5 rounded-md">
-                                <span>{test.maxMarks || 720}M</span>
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Card Action Buttons Toolbar */}
-                          <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => onOpenLeaderboard ? onOpenLeaderboard(test) : setActiveLeaderboardTest(test)}
-                                className="p-2 hover:bg-white text-slate-500 hover:text-amber-600 rounded-xl transition cursor-pointer border border-transparent hover:border-slate-200"
-                                title="View Leaderboard & Rankings"
-                              >
-                                <Trophy className="w-3.5 h-3.5" />
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => setShareModalTest(test)}
-                                className="p-2 hover:bg-white text-slate-500 hover:text-blue-600 rounded-xl transition cursor-pointer border border-transparent hover:border-slate-200"
-                                title="Share this test"
-                              >
-                                <Share2 className="w-3.5 h-3.5" />
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => setSharedTestModal(test)}
-                                className="text-[11px] font-bold text-slate-600 hover:text-blue-600 px-2 py-1 rounded-lg transition"
-                              >
-                                Syllabus
-                              </button>
-                            </div>
-
-                            {/* Primary Start / Unlock Button */}
-                            <div>
-                              {isCompleted ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleTestStartClick(test)}
-                                  className="px-3.5 py-1.5 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1"
-                                >
-                                  <RotateCcw className="w-3 h-3" />
-                                  <span>Reattempt</span>
-                                </button>
-                              ) : isPurchased || test.price === 0 || test.isFree ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleTestStartClick(test)}
-                                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1"
-                                >
-                                  <Play className="w-3 h-3 fill-white" />
-                                  <span>Start Test</span>
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => onBuyTest ? onBuyTest(test) : setSharedTestModal(test)}
-                                  className="px-4 py-1.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1"
-                                >
-                                  <Lock className="w-3 h-3" />
-                                  <span>Unlock ₹{test.price}</span>
-                                </button>
-                              )}
-                            </div>
-                          </div>
+                {/* Top 3 Podium Cards */}
+                {leaderboardEntries.length >= 3 && (
+                  <div className="grid grid-cols-3 gap-2 sm:gap-4 max-w-2xl mx-auto pt-2 pb-2">
+                    {/* Rank 2 (Silver) */}
+                    <div className="bg-white rounded-2xl p-3 sm:p-4 border-2 border-slate-200 shadow-2xs flex flex-col items-center text-center justify-between">
+                      <div className="flex flex-col items-center">
+                        <div className="relative mb-2">
+                          {renderLeaderboardUserAvatar(leaderboardEntries[1], 'md')}
+                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-slate-300 text-slate-800 text-[10px] font-black flex items-center justify-center border-2 border-white shadow-xs">
+                            2
+                          </span>
                         </div>
-                      );
-                    })}
+                        <h4 className="text-xs sm:text-sm font-black text-slate-900 truncate max-w-[100px] sm:max-w-[140px]">
+                          {leaderboardEntries[1].userName}
+                        </h4>
+                        <span className="text-[10px] text-slate-500 truncate max-w-[110px] mt-0.5">
+                          {leaderboardEntries[1].testTitle || 'NEET Test'}
+                        </span>
+                      </div>
+                      <div className="mt-2 pt-2 border-t border-slate-100 w-full">
+                        <span className="text-sm sm:text-base font-black text-slate-700 block">
+                          {leaderboardEntries[1].score} <span className="text-[10px] text-slate-400 font-normal">pts</span>
+                        </span>
+                        <span className="text-[10px] font-bold text-emerald-600 block">
+                          {leaderboardEntries[1].accuracy}% acc
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Rank 1 (Gold - Center & Elevated) */}
+                    <div className="bg-gradient-to-b from-amber-100 via-amber-50 to-white rounded-2xl p-3.5 sm:p-5 border-2 border-amber-400 shadow-md flex flex-col items-center text-center justify-between -translate-y-2 relative">
+                      <span className="absolute -top-3 text-lg sm:text-xl">👑</span>
+                      <div className="flex flex-col items-center mt-1">
+                        <div className="relative mb-2">
+                          {renderLeaderboardUserAvatar(leaderboardEntries[0], 'lg')}
+                          <span className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-amber-500 text-white text-[11px] font-black flex items-center justify-center border-2 border-white shadow-xs">
+                            1
+                          </span>
+                        </div>
+                        <h4 className="text-xs sm:text-sm font-black text-amber-950 truncate max-w-[110px] sm:max-w-[150px]">
+                          {leaderboardEntries[0].userName}
+                        </h4>
+                        <span className="text-[10px] text-amber-700 font-medium truncate max-w-[120px] mt-0.5">
+                          {leaderboardEntries[0].testTitle || 'NEET Test'}
+                        </span>
+                      </div>
+                      <div className="mt-2 pt-2 border-t border-amber-200/60 w-full">
+                        <span className="text-base sm:text-xl font-black text-amber-700 block">
+                          {leaderboardEntries[0].score} <span className="text-xs text-amber-600/70 font-normal">pts</span>
+                        </span>
+                        <span className="text-[10.5px] font-bold text-amber-800 block">
+                          {leaderboardEntries[0].accuracy}% acc
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Rank 3 (Bronze) */}
+                    <div className="bg-white rounded-2xl p-3 sm:p-4 border-2 border-amber-200 shadow-2xs flex flex-col items-center text-center justify-between">
+                      <div className="flex flex-col items-center">
+                        <div className="relative mb-2">
+                          {renderLeaderboardUserAvatar(leaderboardEntries[2], 'md')}
+                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-amber-700 text-white text-[10px] font-black flex items-center justify-center border-2 border-white shadow-xs">
+                            3
+                          </span>
+                        </div>
+                        <h4 className="text-xs sm:text-sm font-black text-slate-900 truncate max-w-[100px] sm:max-w-[140px]">
+                          {leaderboardEntries[2].userName}
+                        </h4>
+                        <span className="text-[10px] text-slate-500 truncate max-w-[110px] mt-0.5">
+                          {leaderboardEntries[2].testTitle || 'NEET Test'}
+                        </span>
+                      </div>
+                      <div className="mt-2 pt-2 border-t border-slate-100 w-full">
+                        <span className="text-sm sm:text-base font-black text-slate-700 block">
+                          {leaderboardEntries[2].score} <span className="text-[10px] text-slate-400 font-normal">pts</span>
+                        </span>
+                        <span className="text-[10px] font-bold text-emerald-600 block">
+                          {leaderboardEntries[2].accuracy}% acc
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 )}
 
-                {/* Back to Categories Footer Link */}
-                <div className="pt-4 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={() => navigateToPage('portal')}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-black rounded-2xl shadow-2xs transition cursor-pointer"
-                  >
-                    <ArrowLeft className="w-4 h-4" />
-                    <span>Return to All Test Categories Portal</span>
-                  </button>
+                {/* Complete Rankings List */}
+                <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200 shadow-2xs overflow-hidden">
+                  <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs font-black text-slate-600 uppercase tracking-wider">
+                    <div className="flex items-center gap-3">
+                      <span className="w-8 text-center">Rank</span>
+                      <span>Aspirant</span>
+                    </div>
+                    <div className="flex items-center gap-6 sm:gap-10">
+                      <span className="hidden sm:inline">Test Paper</span>
+                      <span>Score</span>
+                      <span className="hidden sm:inline">Accuracy</span>
+                    </div>
+                  </div>
+
+                  <div className="divide-y divide-slate-100">
+                    {leaderboardEntries.length === 0 ? (
+                      <div className="text-center py-12 p-4 space-y-2">
+                        <Trophy className="w-10 h-10 text-slate-300 mx-auto" />
+                        <h3 className="text-sm font-bold text-slate-700">No attempts logged yet</h3>
+                        <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                          Be the first aspirant to complete a mock test and lead the All India Rankings!
+                        </p>
+                      </div>
+                    ) : (
+                      leaderboardEntries.map((entry, idx) => {
+                        const isSelf = effectiveUser && (
+                          (entry.userId && entry.userId.toLowerCase() === (effectiveUser.uid || '').toLowerCase()) ||
+                          (entry.userEmail && entry.userEmail.toLowerCase() === (effectiveUser.email || '').toLowerCase())
+                        );
+
+                        return (
+                          <div
+                            key={entry.id || idx}
+                            className={`p-3.5 sm:p-4 flex items-center justify-between gap-3 transition ${
+                              isSelf ? 'bg-amber-50/60 border-l-4 border-amber-500' : 'hover:bg-slate-50/80'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black shrink-0 ${
+                                entry.rank === 1 ? 'bg-amber-500 text-white shadow-xs' :
+                                entry.rank === 2 ? 'bg-slate-300 text-slate-800' :
+                                entry.rank === 3 ? 'bg-amber-700 text-white' :
+                                'bg-slate-100 text-slate-600'
+                              }`}>
+                                #{entry.rank}
+                              </span>
+
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                {renderLeaderboardUserAvatar(entry, 'sm')}
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-xs sm:text-sm font-black text-slate-900 truncate">
+                                      {entry.userName}
+                                    </span>
+                                    {isSelf && (
+                                      <span className="px-1.5 py-0.2 rounded bg-amber-500 text-white text-[9px] font-black uppercase">
+                                        You
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] text-slate-400 block truncate sm:hidden">
+                                    {entry.testTitle || 'NEET Test'}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-4 sm:gap-10 shrink-0 text-right">
+                              <span className="hidden sm:inline text-xs text-slate-600 max-w-[140px] truncate font-medium">
+                                {entry.testTitle || 'NEET Test'}
+                              </span>
+                              <div>
+                                <span className="text-xs sm:text-sm font-black text-blue-600 font-['Outfit',sans-serif]">
+                                  {entry.score} <span className="text-[10px] text-slate-400 font-normal">/ {entry.maxMarks || 720}</span>
+                                </span>
+                              </div>
+                              <span className="hidden sm:inline-block text-xs font-bold text-emerald-600 w-12 text-center">
+                                {entry.accuracy}%
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
               </div>
             )}
+
+            {/* ================= VIEW: DEDICATED TESTS GRIDS (With Free Tests Section) ================= */}
+            {pageView !== 'history' && pageView !== 'leaderboard' && (() => {
+              const freeTests = displayedTests.filter(t => t.isFree || t.price === 0);
+              const paidTests = displayedTests.filter(t => !t.isFree && t.price > 0);
+              const isCategoryView = pageView === 'chapter_wise' || pageView === 'full_subject' || pageView === 'full_syllabus';
+
+              return (
+                <div className="space-y-6 sm:space-y-8">
+                  {/* Empty State */}
+                  {displayedTests.length === 0 ? (
+                    <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200/90 p-8 sm:p-12 text-center space-y-3 shadow-2xs">
+                      <div className="w-12 h-12 rounded-2xl bg-orange-50 border border-orange-200 flex items-center justify-center text-orange-600 mx-auto">
+                        <BookOpen className="w-6 h-6" />
+                      </div>
+                      <h3 className="text-sm sm:text-base font-bold text-slate-800">
+                        {pageView === 'chapter_wise'
+                          ? `No chapter tests published for ${chapterSubject} ${selectedChapter !== 'all' ? `(${selectedChapter})` : ''} yet`
+                          : pageView === 'full_subject'
+                          ? `No full subject tests published yet`
+                          : pageView === 'full_syllabus'
+                          ? `No full syllabus tests published yet`
+                          : pageView === 'free_sample'
+                          ? `No free sample tests published yet`
+                          : `No purchased tests found`}
+                      </h3>
+                      <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                        Tests uploaded by the admin will appear here automatically.
+                      </p>
+                      <div className="pt-2 flex flex-wrap justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => navigateToPage('portal')}
+                          className="px-4 py-2 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl transition cursor-pointer"
+                        >
+                          ← Back to Test Categories
+                        </button>
+                      </div>
+                    </div>
+                  ) : isCategoryView ? (
+                    <>
+                      {/* 1️⃣ FREE TESTS SECTION (Sample Tests) */}
+                      <div className="bg-gradient-to-br from-emerald-50/70 via-teal-50/40 to-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 border-2 border-emerald-300/80 shadow-2xs space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-emerald-200/60 pb-3.5">
+                          <div className="space-y-1">
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10.5px] font-black uppercase tracking-wider">
+                              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Free Tests Section • Sample Tests</span>
+                            </div>
+                            <h3 className="text-base sm:text-xl font-black text-slate-900 font-['Outfit',sans-serif]">
+                              {pageView === 'chapter_wise' && `Free Sample Chapter Tests (${freeTests.length})`}
+                              {pageView === 'full_subject' && `Free Sample Full Subject Tests (${freeTests.length})`}
+                              {pageView === 'full_syllabus' && `Free Sample Grand Tests (${freeTests.length})`}
+                            </h3>
+                            <p className="text-xs text-slate-600 leading-relaxed max-w-2xl">
+                              Attend these free tests uploaded by the admin instantly without any payment. These work as sample tests to experience the official CBT timer and question pattern before unlocking paid series.
+                            </p>
+                          </div>
+                          <span className="text-xs font-black text-emerald-900 bg-white border border-emerald-300 px-3 py-1 rounded-xl shadow-2xs self-start sm:self-auto shrink-0">
+                            {freeTests.length} Free Sample {freeTests.length === 1 ? 'Test' : 'Tests'}
+                          </span>
+                        </div>
+
+                        {freeTests.length === 0 ? (
+                          <div className="text-center py-6 bg-white/80 rounded-2xl border border-dashed border-emerald-300 p-4">
+                            <p className="text-xs font-bold text-slate-700">No free sample tests published for this subject/chapter yet.</p>
+                            <p className="text-[11px] text-slate-500 mt-0.5">Admin can upload or mark tests as Free Sample Tests in the Admin Test Manager.</p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4 pt-1">
+                            {freeTests.map(test => renderTestCard(test, true))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 2️⃣ PAID TESTS SECTION (Complete Master Series) */}
+                      <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 border border-slate-200/90 shadow-2xs space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3.5">
+                          <div className="space-y-1">
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10.5px] font-black uppercase tracking-wider">
+                              <Lock className="w-3.5 h-3.5 text-purple-600" />
+                              <span>Complete Test Series • Pay to Unlock</span>
+                            </div>
+                            <h3 className="text-base sm:text-xl font-black text-slate-900 font-['Outfit',sans-serif]">
+                              {pageView === 'chapter_wise' && `Complete Chapter Wise Series (${paidTests.length})`}
+                              {pageView === 'full_subject' && `Complete Full Subject Master Tests (${paidTests.length})`}
+                              {pageView === 'full_syllabus' && `Full Syllabus Grand Test Series (${paidTests.length})`}
+                            </h3>
+                            <p className="text-xs text-slate-500 leading-relaxed max-w-2xl">
+                              For paid tests, pay first to unlock full access with official NTA CBT timer, answer keys, comprehensive step-by-step explanations, and live All India Rank analytics.
+                            </p>
+                          </div>
+                          <span className="text-xs font-black text-slate-700 bg-slate-100 border border-slate-200 px-3 py-1 rounded-xl self-start sm:self-auto shrink-0">
+                            {paidTests.length} Premium {paidTests.length === 1 ? 'Test' : 'Tests'}
+                          </span>
+                        </div>
+
+                        {paidTests.length === 0 ? (
+                          <div className="text-center py-6 bg-slate-50 rounded-2xl border border-slate-200 p-4">
+                            <p className="text-xs font-bold text-slate-700">No premium tests published in this section yet.</p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4 pt-1">
+                            {paidTests.map(test => renderTestCard(test, false))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    /* Default Simple Grid for Purchased or Free Sample View */
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4">
+                      {displayedTests.map(test => renderTestCard(test))}
+                    </div>
+                  )}
+
+                  {/* Back to Categories Footer Link */}
+                  <div className="pt-2 flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() => navigateToPage('portal')}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-black rounded-2xl shadow-2xs transition cursor-pointer"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                      <span>Return to All Test Categories Portal</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
 
           </div>
         )}

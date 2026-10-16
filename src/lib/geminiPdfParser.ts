@@ -281,11 +281,18 @@ export function separateBilingualAndCleanQuestion(
   // Case 1: If "english" text is predominantly Devanagari Hindi characters (>35%)
   if (enDevRatio > 0.35) {
     const hiDevMatches = (rawHiText || '').match(devanagariRegex) || [];
-    // If rawHiText has less Hindi than rawEnText, swap them!
-    if (!rawHiText || hiDevMatches.length < enDevMatches.length) {
+    // If rawHiText has content and less Hindi than rawEnText, swap them!
+    if (rawHiText && rawHiText.trim().length > 0 && hiDevMatches.length < enDevMatches.length) {
       return {
-        enText: sanitizeExamText(rawHiText || ''),
+        enText: sanitizeExamText(rawHiText),
         hiText: repairDevanagariText(sanitizeExamText(rawEnText))
+      };
+    } else if (!rawHiText || rawHiText.trim().length === 0) {
+      // If rawHiText is not present, NEVER leave enText blank!
+      const repaired = repairDevanagariText(sanitizeExamText(rawEnText));
+      return {
+        enText: repaired,
+        hiText: repaired
       };
     }
   }

@@ -639,6 +639,27 @@ export function saveStoredMockAttempt(attempt: MockTestAttempt) {
     localStorage.setItem(MOCK_ATTEMPTS_STORAGE_KEY, JSON.stringify(all));
     window.dispatchEvent(new Event('neetmbbs_mock_attempts_updated'));
 
+    // Sync to Cloudflare D1 Leaderboard
+    if (attempt.status === 'submitted' && typeof fetch !== 'undefined') {
+      try {
+        const profile = lookupUserProfile(attempt.userId, attempt.userEmail);
+        const test = getStoredMockTests().find(t => t.id === attempt.testId);
+        fetch('/api/leaderboard/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...attempt,
+            testTitle: attempt.testTitle || test?.title || 'NEET Mock Test',
+            testTypeCategory: test?.testTypeCategory || 'chapter_wise',
+            subject: test?.subject || (Array.isArray(test?.subjects) ? test?.subjects.join(', ') : 'All'),
+            userName: profile?.displayName || attempt.userName || 'NEET Aspirant',
+            photoURL: profile?.photoURL,
+            avatarUrl: profile?.avatarUrl
+          })
+        }).catch(() => {});
+      } catch (err) {}
+    }
+
     // Sync to Firebase RTDB
     try {
       if (rtdb && attempt.id) {
@@ -769,6 +790,24 @@ export function calculateMockTestScore(
   };
 }
 
+// Helper to lookup user profile picture & avatar from registered users
+function lookupUserProfile(userId?: string, userEmail?: string): { photoURL?: string; avatarUrl?: string; displayName?: string } | null {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('neetmbbs_registered_users') : null;
+    if (!raw) return null;
+    const users = JSON.parse(raw);
+    if (!Array.isArray(users)) return null;
+    const uIdClean = (userId || '').toLowerCase().trim();
+    const uEmailClean = (userEmail || '').toLowerCase().trim();
+    return users.find((u: any) => 
+      (u?.uid && (u.uid.toLowerCase() === uIdClean || u.uid.toLowerCase() === uEmailClean)) ||
+      (u?.email && (u.email.toLowerCase() === uEmailClean || u.email.toLowerCase() === uIdClean))
+    ) || null;
+  } catch {
+    return null;
+  }
+}
+
 // Single Test Leaderboard (Real Completed Attempts Only - ZERO Bot Users)
 export function getMockTestLeaderboard(testId: string): MockTestLeaderboardEntry[] {
   const attempts = getStoredMockAttempts().filter(a => a.testId === testId && a.status === 'submitted');
@@ -784,19 +823,24 @@ export function getMockTestLeaderboard(testId: string): MockTestLeaderboardEntry
   const test = getStoredMockTests().find(t => t.id === testId);
   const maxMarks = test ? test.maxMarks : 720;
 
-  // Real users only - No hardcoded bot users
-  return sorted.map((att, idx) => ({
-    rank: idx + 1,
-    userId: att.userId,
-    userName: att.userName || 'Verified Aspirant',
-    score: att.score || 0,
-    maxMarks: att.maxMarks || maxMarks,
-    accuracy: att.accuracy || 0,
-    timeSpentSeconds: att.timeSpentSeconds || 0,
-    submittedAt: att.submittedAt || new Date().toISOString(),
-    testId: att.testId,
-    testTitle: att.testTitle || test?.title
-  }));
+  // Real users only - Enriched with profile pictures from Cloudflare Storage / profile section
+  return sorted.map((att, idx) => {
+    const profile = lookupUserProfile(att.userId, att.userEmail);
+    return {
+      rank: idx + 1,
+      userId: att.userId,
+      userName: profile?.displayName || att.userName || 'Verified Aspirant',
+      score: att.score || 0,
+      maxMarks: att.maxMarks || maxMarks,
+      accuracy: att.accuracy || 0,
+      timeSpentSeconds: att.timeSpentSeconds || 0,
+      submittedAt: att.submittedAt || new Date().toISOString(),
+      testId: att.testId,
+      testTitle: att.testTitle || test?.title,
+      photoURL: profile?.photoURL,
+      avatarUrl: profile?.avatarUrl
+    };
+  });
 }
 
 // Combined Main Leaderboard (Combines all eligible mock tests - Real data only)
@@ -912,10 +956,16 @@ export function getCombinedMockTestLeaderboard(options?: {
     return b.testsAttempted - a.testsAttempted;
   });
 
-  return combined.map((entry, index) => ({
-    ...entry,
-    rank: index + 1
-  }));
+  return combined.map((entry, index) => {
+    const profile = lookupUserProfile(entry.userId);
+    return {
+      ...entry,
+      rank: index + 1,
+      userName: profile?.displayName || entry.userName,
+      photoURL: profile?.photoURL,
+      avatarUrl: profile?.avatarUrl
+    };
+  });
 }
 
 // Normalize any question object to ensure full bilingual & figure structure

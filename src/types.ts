@@ -512,6 +512,8 @@ export interface MockTestLeaderboardEntry {
   submittedAt: string;
   testId?: string;
   testTitle?: string;
+  photoURL?: string;
+  avatarUrl?: string;
 }
 
 export interface CombinedLeaderboardUser {
@@ -525,6 +527,8 @@ export interface CombinedLeaderboardUser {
   testsAttempted: number;
   accuracy: number;
   lastAttemptDate: string;
+  photoURL?: string;
+  avatarUrl?: string;
 }
 
 // ==========================================

@@ -1,9 +1,10 @@
 import React from 'react';
-import { Home, BookOpen, Package, User, ShieldCheck, ClipboardCheck } from 'lucide-react';
+import { Home, BookOpen, Package, User, ShieldCheck, ClipboardCheck, Heart } from 'lucide-react';
 
 export type ActiveNavScreen = 
   | 'home' 
   | 'format-listing' 
+  | 'wishlist'
   | 'orders' 
   | 'pdfs' 
   | 'account' 
@@ -20,6 +21,7 @@ interface BottomNavigationProps {
   isAdmin: boolean;
   orderBadgeCount?: number;
   pdfBadgeCount?: number;
+  wishlistBadgeCount?: number;
 }
 
 export const BottomNavigation: React.FC<BottomNavigationProps> = ({
@@ -27,10 +29,12 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
   onNavigate,
   isAdmin,
   orderBadgeCount = 0,
-  pdfBadgeCount = 0
+  pdfBadgeCount = 0,
+  wishlistBadgeCount = 0
 }) => {
   const isHomeActive = currentScreen === 'home' || currentScreen === 'format-listing';
   const isMockTestsActive = currentScreen === 'mock-tests' || currentScreen === 'mock-test-cbt' || currentScreen === 'mock-test-result';
+  const isWishlistActive = currentScreen === 'wishlist';
 
   return (
     <nav 
@@ -85,7 +89,35 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
           </span>
         </button>
 
-        {/* 3. Orders */}
+        {/* 3. Wishlist */}
+        <button
+          id="nav-btn-wishlist"
+          type="button"
+          onClick={() => onNavigate('wishlist')}
+          className={`flex-1 py-0.5 sm:py-1 flex flex-col items-center justify-center relative transition-all cursor-pointer min-h-[38px] sm:min-h-[44px] ${
+            isWishlistActive
+              ? 'text-rose-600'
+              : 'text-slate-400 hover:text-slate-700'
+          }`}
+        >
+          <div className="relative">
+            <div className={`w-7 h-6 sm:w-8 sm:h-7 rounded-lg sm:rounded-xl flex items-center justify-center transition-all ${
+              isWishlistActive ? 'bg-rose-50 text-rose-600 shadow-2xs' : ''
+            }`}>
+              <Heart className={`w-4 h-4 sm:w-4.5 sm:h-4.5 ${isWishlistActive ? 'stroke-[2.5] fill-rose-500 text-rose-500' : 'stroke-[1.8]'}`} />
+            </div>
+            {wishlistBadgeCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-rose-500 text-white font-black text-[7.5px] sm:text-[8px] min-w-3 sm:min-w-3.5 h-3 sm:h-3.5 px-0.5 rounded-full flex items-center justify-center border border-white shadow-xs">
+                {wishlistBadgeCount}
+              </span>
+            )}
+          </div>
+          <span className={`text-[9px] sm:text-[10px] tracking-tight leading-none mt-0.5 ${isWishlistActive ? 'font-black text-rose-600' : 'font-semibold text-slate-500'}`}>
+            Wishlist
+          </span>
+        </button>
+
+        {/* 4. Orders */}
         <button
           id="nav-btn-orders"
           type="button"

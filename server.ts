@@ -276,6 +276,11 @@ function restoreCloudflareSettingsFromDb() {
       if (savedCf.d1DatabaseId) CF_D1_DATABASE_ID = savedCf.d1DatabaseId;
       if (savedCf.d1Name) CF_D1_NAME = savedCf.d1Name;
     }
+    if (CF_API_TOKEN) {
+      setTimeout(() => {
+        syncAllProductsToD1Internal().catch(e => console.warn("Auto D1 sync on boot note:", e.message));
+      }, 1500);
+    }
   } catch (e) {
     console.warn("Could not restore Cloudflare settings from DB:", e);
   }
@@ -310,7 +315,7 @@ async function queryCloudflareD1(sql: string, params: any[] = []) {
 async function initD1Tables() {
   if (!CF_API_TOKEN) return;
   const schemas = [
-    `CREATE TABLE IF NOT EXISTS users (uid TEXT PRIMARY KEY, email TEXT UNIQUE, displayName TEXT, role TEXT, createdAt TEXT, totalOrders INTEGER, totalSpent REAL);`,
+    `CREATE TABLE IF NOT EXISTS users (uid TEXT PRIMARY KEY, email TEXT UNIQUE, displayName TEXT, role TEXT, createdAt TEXT, totalOrders INTEGER, totalSpent REAL, photoURL TEXT, avatarUrl TEXT);`,
     `CREATE TABLE IF NOT EXISTS products (id TEXT PRIMARY KEY, title TEXT, author TEXT, type TEXT, category TEXT, price REAL, originalPrice REAL, rating REAL, reviewsCount INTEGER, coverImage TEXT, sampleImages TEXT, pdfUrl TEXT, description TEXT, features TEXT, tags TEXT, pages INTEGER, edition TEXT, isbn TEXT, inStock INTEGER, isBestSeller INTEGER, createdAt TEXT);`,
     `CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, userId TEXT, userEmail TEXT, userName TEXT, items TEXT, totalAmount REAL, paymentId TEXT, razorpayOrderId TEXT, paymentStatus TEXT, shippingAddress TEXT, status TEXT, orderDate TEXT, invoiceNumber TEXT, notes TEXT);`,
     `CREATE TABLE IF NOT EXISTS payment_records (id TEXT PRIMARY KEY, orderId TEXT, paymentId TEXT, amount REAL, status TEXT, gateway TEXT, signature TEXT, createdAt TEXT);`,
@@ -320,12 +325,76 @@ async function initD1Tables() {
     `CREATE TABLE IF NOT EXISTS reviews (id TEXT PRIMARY KEY, productId TEXT, userEmail TEXT, userName TEXT, rating REAL, comment TEXT, createdAt TEXT);`,
     `CREATE TABLE IF NOT EXISTS support_messages (id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, subject TEXT, message TEXT, status TEXT, createdAt TEXT);`,
     `CREATE TABLE IF NOT EXISTS mock_tests (id TEXT PRIMARY KEY, testNumber TEXT, title TEXT, subject TEXT, totalQuestions INTEGER, durationMinutes INTEGER, price REAL, isFree INTEGER, createdAt TEXT);`,
-    `CREATE TABLE IF NOT EXISTS mock_questions (id TEXT PRIMARY KEY, testId TEXT, questionNumber INTEGER, subject TEXT, chapter TEXT, questionText TEXT, options TEXT, correctAnswer TEXT, figureUrl TEXT, createdAt TEXT);`
+    `CREATE TABLE IF NOT EXISTS mock_questions (id TEXT PRIMARY KEY, testId TEXT, questionNumber INTEGER, subject TEXT, chapter TEXT, questionText TEXT, options TEXT, correctAnswer TEXT, figureUrl TEXT, createdAt TEXT);`,
+    `CREATE TABLE IF NOT EXISTS mock_test_attempts (id TEXT PRIMARY KEY, testId TEXT, testTitle TEXT, testTypeCategory TEXT, subject TEXT, userId TEXT, userEmail TEXT, userName TEXT, photoURL TEXT, avatarUrl TEXT, score INTEGER, maxMarks INTEGER, accuracy INTEGER, correctCount INTEGER, incorrectCount INTEGER, unansweredCount INTEGER, timeSpentSeconds INTEGER, submittedAt TEXT);`
   ];
 
-  for (const sql of schemas) {
-    await queryCloudflareD1(sql);
+  try {
+    for (const sql of schemas) {
+      await queryCloudflareD1(sql);
+    }
+  } catch (err: any) {
+    console.warn("initD1Tables notice:", err.message);
   }
+}
+
+// Direct Product to Cloudflare D1 Synchronizer
+async function syncProductToD1(product: any) {
+  if (!CF_API_TOKEN) return { success: false, message: "No Cloudflare API token configured" };
+  try {
+    await initD1Tables();
+    const safeCover = typeof product.coverImage === 'string' && !product.coverImage.startsWith('data:') ? product.coverImage : '';
+    const safePdf = typeof product.pdfUrl === 'string' && !product.pdfUrl.startsWith('data:') ? product.pdfUrl : '';
+    const result = await queryCloudflareD1(
+      `INSERT OR REPLACE INTO products (id, title, author, type, category, price, originalPrice, rating, reviewsCount, coverImage, sampleImages, pdfUrl, description, features, tags, pages, edition, isbn, inStock, isBestSeller, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        product.id,
+        product.title || '',
+        product.author || 'Verified Specialists',
+        product.type || 'book',
+        product.category || 'General',
+        Number(product.price || 0),
+        Number(product.originalPrice || 0),
+        Number(product.rating || 4.8),
+        Number(product.reviewsCount || 0),
+        safeCover,
+        JSON.stringify(product.sampleImages || []),
+        safePdf,
+        product.description || '',
+        JSON.stringify(product.features || []),
+        JSON.stringify(product.tags || []),
+        Number(product.pages || 0),
+        product.edition || '',
+        product.isbn || '',
+        product.inStock !== false ? 1 : 0,
+        product.isBestSeller ? 1 : 0,
+        product.createdAt || new Date().toISOString()
+      ]
+    );
+    return result;
+  } catch (err: any) {
+    console.warn("[Cloudflare D1 Product Sync Error]:", err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// Bulk Sync all local database products to Cloudflare D1
+async function syncAllProductsToD1Internal() {
+  if (!CF_API_TOKEN) return { success: false, synced: 0 };
+  const db = loadDatabase();
+  await initD1Tables();
+  let count = 0;
+  for (const prod of db.products) {
+    if (!prod || !prod.id) continue;
+    try {
+      await syncProductToD1(prod);
+      count++;
+    } catch (e: any) {
+      console.warn("Product D1 sync error:", prod.id, e.message);
+    }
+  }
+  console.log(`[Cloudflare D1] Synced ${count} of ${db.products.length} products to D1 database ${CF_D1_DATABASE_ID}`);
+  return { success: true, synced: count };
 }
 
 // -------------------------------------------------------------
@@ -1650,9 +1719,10 @@ app.post("/api/cloudflare/config", async (req, res) => {
     };
     saveDatabase(db);
 
-    // If API Token is present, automatically initialize D1 tables
+    // If API Token is present, automatically initialize D1 tables & sync all products
     if (CF_API_TOKEN) {
       initD1Tables().catch(err => console.warn("D1 tables init note:", err));
+      syncAllProductsToD1Internal().catch(err => console.warn("D1 sync note:", err));
     }
 
     return res.json({
@@ -1843,6 +1913,187 @@ app.get("/api/cloudflare/d1/export-sql", (_req, res) => {
   }
 });
 
+// =============================================================
+// REAL-TIME CLOUDFLARE D1 LEADERBOARD & USER PROFILE API
+// =============================================================
+
+// Sync user profile photo & details to Cloudflare D1
+app.post("/api/user/sync-profile", async (req, res) => {
+  try {
+    const { uid, email, displayName, photoURL, avatarUrl } = req.body || {};
+    if (!email && !uid) {
+      return res.status(400).json({ success: false, error: "uid or email required" });
+    }
+
+    const cleanUid = uid || email;
+    const cleanEmail = (email || '').toLowerCase().trim();
+    const cleanName = displayName || cleanEmail.split('@')[0] || 'NEET Aspirant';
+    let safePhoto = typeof photoURL === 'string' ? photoURL : '';
+    if (safePhoto.startsWith('data:')) {
+      try {
+        const cleanBase64 = safePhoto.replace(/^data:[^;]+;base64,/, '');
+        const fileBuffer = Buffer.from(cleanBase64, 'base64');
+        const mimeType = safePhoto.split(';')[0].replace('data:', '') || 'image/jpeg';
+        const objectKey = `avatars/user_${Date.now()}_${cleanUid.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 16)}.jpg`;
+        fileBufferCache.set(objectKey, { buffer: fileBuffer, contentType: mimeType });
+        if (r2Client) {
+          r2Client.send(new PutObjectCommand({
+            Bucket: CLOUDFLARE_R2_BUCKET,
+            Key: objectKey,
+            Body: fileBuffer,
+            ContentType: mimeType,
+          })).catch(() => {});
+        }
+        safePhoto = `/api/r2/file/${objectKey}`;
+      } catch (err: any) {
+        console.warn('Avatar base64 save warning:', err.message);
+      }
+    }
+    const safeAvatar = typeof avatarUrl === 'string' ? avatarUrl : '';
+
+    if (CF_API_TOKEN) {
+      await initD1Tables();
+      // Upsert into users table
+      await queryCloudflareD1(
+        `INSERT INTO users (uid, email, displayName, role, createdAt, totalOrders, totalSpent, photoURL, avatarUrl)
+         VALUES (?, ?, ?, 'customer', datetime('now'), 0, 0, ?, ?)
+         ON CONFLICT(uid) DO UPDATE SET
+           displayName = excluded.displayName,
+           photoURL = COALESCE(NULLIF(excluded.photoURL, ''), users.photoURL),
+           avatarUrl = COALESCE(NULLIF(excluded.avatarUrl, ''), users.avatarUrl);`,
+        [cleanUid, cleanEmail, cleanName, safePhoto, safeAvatar]
+      );
+
+      // Also update any existing leaderboard attempts for this user so their profile picture reflects immediately
+      if (safePhoto || safeAvatar) {
+        await queryCloudflareD1(
+          `UPDATE mock_test_attempts SET 
+             userName = ?, 
+             photoURL = CASE WHEN ? != '' THEN ? ELSE photoURL END,
+             avatarUrl = CASE WHEN ? != '' THEN ? ELSE avatarUrl END
+           WHERE userId = ? OR userEmail = ?;`,
+          [cleanName, safePhoto, safePhoto, safeAvatar, safeAvatar, cleanUid, cleanEmail]
+        );
+      }
+    }
+
+    return res.json({ success: true, message: "Profile synced to Cloudflare D1", photoURL: safePhoto, avatarUrl: safeAvatar });
+  } catch (err: any) {
+    console.warn("Profile sync notice:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Submit / Record Test Attempt to Cloudflare D1
+app.post("/api/leaderboard/submit", async (req, res) => {
+  try {
+    const attempt = req.body || {};
+    if (!attempt.testId || !attempt.userId) {
+      return res.status(400).json({ success: false, error: "testId and userId are required" });
+    }
+
+    const id = attempt.id || `att_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const safePhoto = typeof attempt.photoURL === 'string' && !attempt.photoURL.startsWith('data:') ? attempt.photoURL : '';
+    const safeAvatar = typeof attempt.avatarUrl === 'string' ? attempt.avatarUrl : '';
+
+    if (CF_API_TOKEN) {
+      await initD1Tables();
+      await queryCloudflareD1(
+        `INSERT OR REPLACE INTO mock_test_attempts 
+         (id, testId, testTitle, testTypeCategory, subject, userId, userEmail, userName, photoURL, avatarUrl, score, maxMarks, accuracy, correctCount, incorrectCount, unansweredCount, timeSpentSeconds, submittedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        [
+          id,
+          attempt.testId,
+          attempt.testTitle || 'NEET Mock Test',
+          attempt.testTypeCategory || 'chapter_wise',
+          attempt.subject || 'All',
+          attempt.userId,
+          (attempt.userEmail || '').toLowerCase(),
+          attempt.userName || 'NEET Aspirant',
+          safePhoto,
+          safeAvatar,
+          Number(attempt.score || 0),
+          Number(attempt.maxMarks || 720),
+          Number(attempt.accuracy || 0),
+          Number(attempt.correctCount || 0),
+          Number(attempt.incorrectCount || 0),
+          Number(attempt.unansweredCount || 0),
+          Number(attempt.timeSpentSeconds || 0),
+          attempt.submittedAt || new Date().toISOString()
+        ]
+      );
+    }
+
+    return res.json({ success: true, id, message: "Attempt recorded to Cloudflare D1" });
+  } catch (err: any) {
+    console.warn("Leaderboard submit notice:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Fetch Real-time Leaderboard with Profile Pictures
+app.get("/api/leaderboard", async (req, res) => {
+  try {
+    const { category, testId, limit } = req.query;
+    const maxEntries = Math.min(Number(limit) || 50, 100);
+
+    let d1Entries: any[] = [];
+    if (CF_API_TOKEN) {
+      await initD1Tables();
+      let sql = `SELECT * FROM mock_test_attempts WHERE 1=1`;
+      const params: any[] = [];
+
+      if (category && category !== 'all') {
+        sql += ` AND testTypeCategory = ?`;
+        params.push(String(category));
+      }
+      if (testId && testId !== 'all') {
+        sql += ` AND testId = ?`;
+        params.push(String(testId));
+      }
+
+      sql += ` ORDER BY score DESC, timeSpentSeconds ASC LIMIT ?`;
+      params.push(maxEntries);
+
+      const result = await queryCloudflareD1(sql, params);
+      if (result && Array.isArray(result.result) && result.result[0]?.results) {
+        d1Entries = result.result[0].results;
+      }
+    }
+
+    // Assign rank numbers and ensure photoURL / avatar are resolved
+    const ranked = d1Entries.map((item, idx) => ({
+      rank: idx + 1,
+      id: item.id,
+      userId: item.userId,
+      userEmail: item.userEmail,
+      userName: item.userName || 'Verified Aspirant',
+      testId: item.testId,
+      testTitle: item.testTitle,
+      testTypeCategory: item.testTypeCategory || 'chapter_wise',
+      subject: item.subject,
+      score: Number(item.score || 0),
+      maxMarks: Number(item.maxMarks || 720),
+      accuracy: Number(item.accuracy || 0),
+      timeSpentSeconds: Number(item.timeSpentSeconds || 0),
+      submittedAt: item.submittedAt,
+      photoURL: item.photoURL || undefined,
+      avatarUrl: item.avatarUrl || undefined
+    }));
+
+    return res.json({
+      success: true,
+      source: d1Entries.length > 0 ? "cloudflare_d1" : "fallback",
+      count: ranked.length,
+      entries: ranked
+    });
+  } catch (err: any) {
+    console.warn("Leaderboard fetch error:", err.message);
+    return res.status(500).json({ success: false, error: err.message, entries: [] });
+  }
+});
+
 // -------------------------------------------------------------
 // DATABASE REST API ENDPOINTS (Products, Orders, Users, Banners, etc.)
 // -------------------------------------------------------------
@@ -1876,32 +2127,7 @@ app.post("/api/db/products", async (req, res) => {
     saveDatabase(db);
 
     // Sync with Cloudflare D1
-    queryCloudflareD1(
-      `INSERT OR REPLACE INTO products (id, title, author, type, category, price, originalPrice, rating, reviewsCount, coverImage, sampleImages, pdfUrl, description, features, tags, pages, edition, isbn, inStock, isBestSeller, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        product.id,
-        product.title,
-        product.author || '',
-        product.type || 'book',
-        product.category || 'Biology',
-        product.price || 0,
-        product.originalPrice || 0,
-        product.rating || 5,
-        product.reviewsCount || 0,
-        product.coverImage || '',
-        JSON.stringify(product.sampleImages || []),
-        product.pdfUrl || '',
-        product.description || '',
-        JSON.stringify(product.features || []),
-        JSON.stringify(product.tags || []),
-        product.pages || 0,
-        product.edition || '',
-        product.isbn || '',
-        product.inStock !== false ? 1 : 0,
-        product.isBestSeller ? 1 : 0,
-        product.createdAt || new Date().toISOString()
-      ]
-    ).catch(err => console.warn("D1 sync notice:", err));
+    syncProductToD1(product).catch(err => console.warn("D1 sync notice:", err));
 
     // Sync with Firebase Realtime Database
     syncToFirebaseRTDB("products", db.products).catch(e => console.warn(e));
@@ -1924,32 +2150,7 @@ app.put("/api/db/products/:id", async (req, res) => {
       saveDatabase(db);
       
       // Sync with Cloudflare D1
-      queryCloudflareD1(
-        `INSERT OR REPLACE INTO products (id, title, author, type, category, price, originalPrice, rating, reviewsCount, coverImage, sampleImages, pdfUrl, description, features, tags, pages, edition, isbn, inStock, isBestSeller, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          updatedP.id,
-          updatedP.title || '',
-          updatedP.author || 'Verified Specialists',
-          updatedP.type || 'book',
-          updatedP.category || 'General',
-          Number(updatedP.price || 0),
-          Number(updatedP.originalPrice || 0),
-          Number(updatedP.rating || 4.8),
-          Number(updatedP.reviewsCount || 0),
-          typeof updatedP.coverImage === 'string' && !updatedP.coverImage.startsWith('data:') ? updatedP.coverImage : '',
-          JSON.stringify(updatedP.sampleImages || []),
-          typeof updatedP.pdfUrl === 'string' && !updatedP.pdfUrl.startsWith('data:') ? updatedP.pdfUrl : '',
-          updatedP.description || '',
-          JSON.stringify(updatedP.features || []),
-          JSON.stringify(updatedP.tags || []),
-          Number(updatedP.pages || 0),
-          updatedP.edition || '',
-          updatedP.isbn || '',
-          updatedP.inStock !== false ? 1 : 0,
-          updatedP.isBestSeller ? 1 : 0,
-          updatedP.createdAt || new Date().toISOString()
-        ]
-      ).catch(err => console.warn("D1 sync notice:", err));
+      syncProductToD1(updatedP).catch(err => console.warn("D1 sync notice:", err));
 
       syncToFirebaseRTDB("products", db.products).catch(e => console.warn(e));
       return res.json({ success: true, product: db.products[idx] });
@@ -4044,24 +4245,7 @@ CRITICAL RULES:
       preferredModel
     });
 
-    let parsedData: any = {};
-    try {
-      parsedData = JSON.parse(rawText);
-    } catch {
-      try {
-        const cleaned = rawText.replace(/```(?:json)?/gi, "").trim();
-        parsedData = JSON.parse(cleaned);
-      } catch {
-        const start = rawText.indexOf('{');
-        const end = rawText.lastIndexOf('}');
-        if (start !== -1 && end !== -1 && end > start) {
-          parsedData = JSON.parse(rawText.slice(start, end + 1));
-        } else {
-          parsedData = { questions: [] };
-        }
-      }
-    }
-
+    const parsedData = safeParseGeminiJson(rawText);
     const normalized = normalizeExtractedQuestions(parsedData.questions || []);
 
     return res.json({
@@ -4092,86 +4276,256 @@ CRITICAL RULES:
 });
 
 /**
+ * Robust JSON parser and repair engine for Gemini outputs:
+ * Handles LaTeX backslashes (\alpha, \mu), missing commas, unescaped inner quotes,
+ * literal unescaped newlines/tabs inside strings, trailing commas, and truncated responses.
+ * Guarantees zero unhandled SyntaxErrors.
+ */
+function safeParseGeminiJson(rawText: string): any {
+  if (!rawText || typeof rawText !== "string") return { questions: [] };
+
+  // 1. Direct parse attempt
+  try {
+    return JSON.parse(rawText);
+  } catch {}
+
+  // 2. Strip markdown backticks
+  let text = rawText.replace(/```(?:json)?/gi, "").trim();
+  try {
+    return JSON.parse(text);
+  } catch {}
+
+  // 3. Extract outermost object or array
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    const sliced = text.slice(start, end + 1);
+    try {
+      return JSON.parse(sliced);
+    } catch {}
+    text = sliced;
+  }
+
+  // 4. Sanitize unescaped newlines, carriage returns, and control chars inside JSON strings
+  const sanitizeControlCharsInStrings = (str: string): string => {
+    let result = "";
+    let inString = false;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      const prev = i > 0 ? str[i - 1] : "";
+      if (ch === '"' && prev !== "\\") {
+        inString = !inString;
+        result += ch;
+      } else if (inString) {
+        if (ch === "\n") result += "\\n";
+        else if (ch === "\r") {} // drop carriage return
+        else if (ch === "\t") result += " ";
+        else result += ch;
+      } else {
+        result += ch;
+      }
+    }
+    return result;
+  };
+
+  const textNoControlChars = sanitizeControlCharsInStrings(text);
+  try {
+    return JSON.parse(textNoControlChars);
+  } catch {}
+
+  // 5. Try LaTeX escape repair and trailing commas
+  try {
+    const r1 = textNoControlChars
+      .replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, "\\\\")
+      .replace(/,\s*([}\]])/g, "$1");
+    return JSON.parse(r1);
+  } catch {}
+
+  // 6. Try missing commas between properties and array items
+  try {
+    const r2 = textNoControlChars
+      .replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, "\\\\")
+      .replace(/,\s*([}\]])/g, "$1")
+      .replace(/(:\s*"[^"]*?)"([^",}\]\s][^"]*?)"/g, "$1\\\"$2\\\"")
+      .replace(/("(?:[^"\\]|\\.)*"|\d+|true|false|null|\]|\})\s*\n\s*("|\{|\[)/g, "$1,\n$2")
+      .replace(/(}|])\s*\n\s*(")/g, "$1,\n$2");
+    return JSON.parse(r2);
+  } catch {}
+
+  // 7. LIFO stack truncation repair (in case token limit was reached mid-JSON)
+  try {
+    let s = textNoControlChars.trim();
+    const quotes = (s.match(/(?<!\\)"/g) || []).length;
+    if (quotes % 2 !== 0) s += "\"";
+    s = s.replace(/,\s*$/, "");
+    s = s.replace(/,\s*"[^"]*?"\s*:\s*$/, "");
+
+    const stack: string[] = [];
+    let inString = false;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      const prev = i > 0 ? s[i - 1] : "";
+      if (ch === "\"" && prev !== "\\") {
+        inString = !inString;
+      } else if (!inString) {
+        if (ch === "{" || ch === "[") {
+          stack.push(ch);
+        } else if (ch === "}" && stack[stack.length - 1] === "{") {
+          stack.pop();
+        } else if (ch === "]" && stack[stack.length - 1] === "[") {
+          stack.pop();
+        }
+      }
+    }
+    while (stack.length > 0) {
+      const top = stack.pop();
+      if (top === "{") s += "}";
+      else if (top === "[") s += "]";
+    }
+    const r3 = s
+      .replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, "\\\\")
+      .replace(/,\s*([}\]])/g, "$1")
+      .replace(/("(?:[^"\\]|\\.)*"|\d+|true|false|null|\]|\})\s*\n\s*("|\{|\[)/g, "$1,\n$2");
+    return JSON.parse(r3);
+  } catch {}
+
+  // 8. Regex question extractor fallback: extracts individual valid question blocks
+  try {
+    const questions: any[] = [];
+    const qMatches = text.match(/\{[^{}]*?"questionNumber"\s*:\s*\d+[\s\S]*?\}(?=\s*,\s*\{|\s*\])/g) ||
+                    text.match(/\{[^{}]*?"questionNumber"[\s\S]*?\}/g);
+    if (qMatches && qMatches.length > 0) {
+      for (const m of qMatches) {
+        try {
+          const sanitizedM = sanitizeControlCharsInStrings(m);
+          const cleaned = sanitizedM
+            .replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, "\\\\")
+            .replace(/,\s*([}\]])/g, "$1");
+          const qObj = JSON.parse(cleaned);
+          if (qObj && typeof qObj === "object") questions.push(qObj);
+        } catch {
+          const numMatch = m.match(/"questionNumber"\s*:\s*(\d+)/);
+          const qTextMatch = m.match(/"questionText"\s*:\s*"([\s\S]*?)(?<!\\)"/);
+          if (numMatch && qTextMatch) {
+            questions.push({
+              questionNumber: parseInt(numMatch[1], 10),
+              questionText: qTextMatch[1].replace(/\\n/g, "\n"),
+              options: []
+            });
+          }
+        }
+      }
+      if (questions.length > 0) return { questions };
+    }
+  } catch {}
+
+  return { questions: [] };
+}
+
+/**
  * Universal Question Normalizer:
  * Extracts real question statements, options, diagrams and answers from any Gemini output structure.
  * Guarantees questionText and options are NEVER left empty or with placeholder text.
  */
 function normalizeExtractedQuestions(rawList: any[]): any[] {
   if (!Array.isArray(rawList)) return [];
-  return rawList.map((q: any, idx: number) => {
-    const qNum = typeof q.questionNumber === 'number' && q.questionNumber > 0
-      ? q.questionNumber
-      : (idx + 1);
+  return rawList
+    .map((q: any, idx: number) => {
+      const qNum = typeof q.questionNumber === 'number' && q.questionNumber > 0
+        ? q.questionNumber
+        : (idx + 1);
 
-    // Find verbatim question statement across any nested field
-    let extractedText = '';
-    if (typeof q.english?.questionText === 'string' && q.english.questionText.trim()) {
-      extractedText = q.english.questionText.trim();
-    } else if (typeof q.questionText === 'string' && q.questionText.trim()) {
-      extractedText = q.questionText.trim();
-    } else if (typeof q.question === 'string' && q.question.trim()) {
-      extractedText = q.question.trim();
-    } else if (typeof q.statement === 'string' && q.statement.trim()) {
-      extractedText = q.statement.trim();
-    } else if (typeof q.text === 'string' && q.text.trim()) {
-      extractedText = q.text.trim();
-    } else if (typeof q.english === 'string' && q.english.trim()) {
-      extractedText = q.english.trim();
-    } else if (typeof q.hindi?.questionText === 'string' && q.hindi.questionText.trim()) {
-      extractedText = q.hindi.questionText.trim();
-    }
+      // Find verbatim question statement across any nested field
+      let extractedText = '';
+      if (typeof q.english?.questionText === 'string' && q.english.questionText.trim()) {
+        extractedText = q.english.questionText.trim();
+      } else if (typeof q.questionText === 'string' && q.questionText.trim()) {
+        extractedText = q.questionText.trim();
+      } else if (typeof q.question === 'string' && q.question.trim()) {
+        extractedText = q.question.trim();
+      } else if (typeof q.statement === 'string' && q.statement.trim()) {
+        extractedText = q.statement.trim();
+      } else if (typeof q.text === 'string' && q.text.trim()) {
+        extractedText = q.text.trim();
+      } else if (typeof q.english === 'string' && q.english.trim()) {
+        extractedText = q.english.trim();
+      } else if (typeof q.hindi?.questionText === 'string' && q.hindi.questionText.trim()) {
+        extractedText = q.hindi.questionText.trim();
+      }
 
-    // Find options across any field
-    let rawOpts = q.english?.options || q.options || q.choices || q.answers || [];
-    let normalizedOpts: Array<{ label: string; text: string }> = [];
+      // Find options across any field
+      let rawOpts = q.english?.options || q.options || q.choices || q.answers || [];
+      let normalizedOpts: Array<{ label: string; text: string }> = [];
 
-    if (Array.isArray(rawOpts) && rawOpts.length > 0) {
-      normalizedOpts = (['A', 'B', 'C', 'D'] as const).map((lbl, oIdx) => {
-        const item = rawOpts.find((o: any) => (o?.label || '').toUpperCase() === lbl) || rawOpts[oIdx];
-        let val = '';
-        if (typeof item === 'string') {
-          val = item.replace(/^\([A-Da-d1-4]\)\s*/, '').trim();
-        } else if (item && typeof item === 'object') {
-          val = (item.text || item.value || item.statement || item.label_text || '').toString().trim();
-        }
-        return { label: lbl, text: val };
-      });
-    } else if (rawOpts && typeof rawOpts === 'object') {
-      normalizedOpts = (['A', 'B', 'C', 'D'] as const).map(lbl => {
-        const val = rawOpts[lbl] || rawOpts[lbl.toLowerCase()] || rawOpts[String(lbl.charCodeAt(0) - 64)] || '';
-        return { label: lbl, text: String(val).trim() };
-      });
-    }
+      if (Array.isArray(rawOpts) && rawOpts.length > 0) {
+        normalizedOpts = (['A', 'B', 'C', 'D'] as const).map((lbl, oIdx) => {
+          const item = rawOpts.find((o: any) => (o?.label || '').toUpperCase() === lbl) || rawOpts[oIdx];
+          let val = '';
+          if (typeof item === 'string') {
+            val = item.replace(/^\([A-Da-d1-4]\)\s*/, '').trim();
+          } else if (item && typeof item === 'object') {
+            val = (item.text || item.value || item.statement || item.label_text || '').toString().trim();
+          }
+          return { label: lbl, text: val };
+        });
+      } else if (rawOpts && typeof rawOpts === 'object') {
+        normalizedOpts = (['A', 'B', 'C', 'D'] as const).map(lbl => {
+          const val = rawOpts[lbl] || rawOpts[lbl.toLowerCase()] || rawOpts[String(lbl.charCodeAt(0) - 64)] || '';
+          return { label: lbl, text: String(val).trim() };
+        });
+      }
 
-    // Ensure 4 options exist
-    if (normalizedOpts.length < 4) {
-      const existing = new Set(normalizedOpts.map(o => o.label));
-      (['A', 'B', 'C', 'D'] as const).forEach(lbl => {
-        if (!existing.has(lbl)) {
-          normalizedOpts.push({ label: lbl, text: '' });
-        }
-      });
-      normalizedOpts.sort((a, b) => a.label.localeCompare(b.label));
-    }
+      // Ensure 4 options exist
+      if (normalizedOpts.length < 4) {
+        const existing = new Set(normalizedOpts.map(o => o.label));
+        (['A', 'B', 'C', 'D'] as const).forEach(lbl => {
+          if (!existing.has(lbl)) {
+            normalizedOpts.push({ label: lbl, text: '' });
+          }
+        });
+        normalizedOpts.sort((a, b) => a.label.localeCompare(b.label));
+      }
 
-    // Figure bounding box resolution
-    const resolvedBbox = q.figureBoundingBox || q.boundingBox || q.figure_bbox || q.bbox || null;
-    const hasFig = Boolean(q.hasFigure || (resolvedBbox && Array.isArray(resolvedBbox) && resolvedBbox.length === 4));
+      // Figure bounding box resolution
+      const resolvedBbox = q.figureBoundingBox || q.boundingBox || q.figure_bbox || q.bbox || null;
+      const textLower = extractedText.toLowerCase();
+      const mentionsVisual = [
+        'shown in figure', 'shown in the figure', 'as shown in figure', 'as shown in the figure',
+        'in the given figure', 'in given figure', 'given diagram', 'in the circuit',
+        'given circuit', 'in the graph', 'following scheme', 'reaction scheme',
+        'benzene', 'structure of', 'following curve', 'circular bend', 'square loop',
+        'magnitude of magnetic field at the origin', 'loop pqrs', 'wire cd', 'chitra', 'चित्र में',
+        'radius a', 'current i', 'diagram', 'figure', 'circuit', 'graph'
+      ].some(kw => textLower.includes(kw));
 
-    return {
-      ...q,
-      questionNumber: qNum,
-      questionText: extractedText,
-      english: {
+      const hasFig = Boolean(
+        q.hasFigure ||
+        mentionsVisual ||
+        (resolvedBbox && Array.isArray(resolvedBbox) && resolvedBbox.length === 4)
+      );
+
+      return {
+        ...q,
+        questionNumber: qNum,
         questionText: extractedText,
-        options: normalizedOpts
-      },
-      options: normalizedOpts,
-      hasFigure: hasFig,
-      figureBoundingBox: Array.isArray(resolvedBbox) ? resolvedBbox : undefined,
-      correctAnswer: (q.correctAnswer || 'A').toString().toUpperCase().slice(0, 1)
-    };
-  });
+        english: {
+          questionText: extractedText,
+          options: normalizedOpts
+        },
+        options: normalizedOpts,
+        hasFigure: hasFig,
+        figureBoundingBox: Array.isArray(resolvedBbox) ? resolvedBbox : undefined,
+        correctAnswer: (q.correctAnswer || 'A').toString().toUpperCase().slice(0, 1)
+      };
+    })
+    .filter((q: any) => {
+      // NEVER return dummy questions with blank question text
+      if (!q.questionText || typeof q.questionText !== 'string') return false;
+      const trimmed = q.questionText.trim();
+      if (trimmed.length < 3) return false;
+      if (/^Question\s*\d+$/i.test(trimmed)) return false;
+      return true;
+    });
 }
 
 // ==========================================
