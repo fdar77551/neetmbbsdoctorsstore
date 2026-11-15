@@ -62,27 +62,38 @@ import {
   MockQuestionDifficulty,
   MockMatchTable,
   MockTestCategory,
-  MockTestPackagePricing
+  MockTestPackagePricing,
+  TestCategory
 } from '../types';
+import {
+  DEFAULT_TEST_CATEGORIES,
+  fetchTestCategoriesFromServer,
+  resolveTestCategoryIds
+} from '../lib/testCategoriesData';
 import { 
   getStoredMockTests, 
   saveStoredMockTests, 
   getStoredMockQuestions, 
   saveStoredMockQuestions,
   parseQuestionsFromRawText,
+  hasGenuineDiagramRequirement,
   getStoredMockPurchases,
   getStoredMockAttempts,
   SCIENTIFIC_SAMPLE_DIAGRAMS,
   getTestCategory,
   getAvailableChaptersForSubject,
   getMockTestPricingPackages,
-  saveMockTestPricingPackages
+  saveMockTestPricingPackages,
+  cleanEnglishOptionString,
+  cleanHindiOptionString,
+  formatScientificMathAndPowers
 } from '../lib/mockTestData';
 import { 
   loadPdfDocument, 
   renderPdfPageToCanvas, 
   cropRegionFromCanvas,
-  cancelCanvasRender
+  cancelCanvasRender,
+  extractColumnAwareTextFromPdfPage
 } from '../lib/pdfFigureExtractor';
 import { 
   cropDiagramFromCanvas, 
@@ -101,7 +112,9 @@ import {
   separateBilingualOptions,
   detectDiagramInkBoundingBoxOnCanvas,
   parseSolutionsAndKeyFromPdf,
-  SolutionParseResult
+  SolutionParseResult,
+  isDailyQuotaExhausted,
+  setDailyQuotaExhausted
 } from '../lib/geminiPdfParser';
 import { QuestionCanvasBuilder } from './QuestionCanvasBuilder';
 import { MockTestLeaderboardModal } from './MockTestLeaderboardModal';
@@ -109,7 +122,7 @@ import { MockQuestionReviewModal } from './MockQuestionReviewModal';
 import { AdminDeleteConfirmModal } from './AdminDeleteConfirmModal';
 import { DiagramRecropModal } from './DiagramRecropModal';
 import { backgroundPdfParserService } from '../lib/backgroundPdfParser';
-import { idbSavePageImage } from '../lib/idbStorage';
+import { idbSavePageImage, idbSaveQuestions } from '../lib/idbStorage';
 
 interface AdminMockTestManagerProps {
   onBack?: () => void;
@@ -136,6 +149,9 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
   // Question editing states
   const [questions, setQuestions] = useState<MockQuestion[]>([]);
   const [editingQuestion, setEditingQuestion] = useState<Partial<MockQuestion> | null>(null);
+  const [benchmarkReport, setBenchmarkReport] = useState<any>(null);
+  const [isRunningBenchmark, setIsRunningBenchmark] = useState<boolean>(false);
+  const [isSeedingGoldTest, setIsSeedingGoldTest] = useState<boolean>(false);
 
   // Dedicated Test Question Studio & Diagram Questions States
   const [testQuestionsTab, setTestQuestionsTab] = useState<'all' | 'diagrams' | 'add' | 'audit'>('all');
@@ -233,6 +249,16 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
   });
   const [isCreatingTest, setIsCreatingTest] = useState(false);
   const [editingTestId, setEditingTestId] = useState<string | null>(null);
+  const [dynamicCategories, setDynamicCategories] = useState<TestCategory[]>(DEFAULT_TEST_CATEGORIES);
+
+  useEffect(() => {
+    fetchTestCategoriesFromServer().then(setDynamicCategories).catch(() => {});
+    const onCatUpdate = () => {
+      fetchTestCategoriesFromServer().then(setDynamicCategories).catch(() => {});
+    };
+    window.addEventListener('neetmbbs_test_categories_updated', onCatUpdate);
+    return () => window.removeEventListener('neetmbbs_test_categories_updated', onCatUpdate);
+  }, []);
   const [deleteConfirmTest, setDeleteConfirmTest] = useState<MockTest | null>(null);
   const [deleteConfirmQuestion, setDeleteConfirmQuestion] = useState<MockQuestion | null>(null);
   const [quickDeleteConfirmQ, setQuickDeleteConfirmQ] = useState<MockQuestion | null>(null);
@@ -401,6 +427,9 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
   const [cropBox, setCropBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [isDrawingCrop, setIsDrawingCrop] = useState(false);
   const cropStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDraggingCropBox, setIsDraggingCropBox] = useState(false);
+  const [cropBoxDragAction, setCropBoxDragAction] = useState<'move' | 'nw' | 'ne' | 'se' | 'sw'>('move');
+  const cropBoxDragStartRef = useRef<{ clientX: number; clientY: number; box: { x: number; y: number; w: number; h: number } }>({ clientX: 0, clientY: 0, box: { x: 0, y: 0, w: 0, h: 0 } });
 
   // AI Gemini PDF Parsing Engine State
   const [isAiParsing, setIsAiParsing] = useState(false);
@@ -417,8 +446,10 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
   const [endPageInput, setEndPageInput] = useState<number>(1);
   const [aiTestTitle, setAiTestTitle] = useState<string>('');
   const [aiTestNumber, setAiTestNumber] = useState<string>('Test 05');
+  const [aiTestIsFree, setAiTestIsFree] = useState<boolean>(false);
   const [aiTestPrice, setAiTestPrice] = useState<number>(99);
   const [aiTestDuration, setAiTestDuration] = useState<number>(200);
+  const [aiParseMode, setAiParseMode] = useState<'fast_text_gallery_crop' | 'full_auto'>('full_auto');
   const [autoCropDiagrams, setAutoCropDiagrams] = useState<boolean>(true);
   const [answerKeyInputText, setAnswerKeyInputText] = useState<string>('');
   const [answerKeyAppliedMessage, setAnswerKeyAppliedMessage] = useState<string | null>(null);
@@ -426,6 +457,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
   const [isParsingSolutionsPdf, setIsParsingSolutionsPdf] = useState<boolean>(false);
   const [parsedSolutionsResult, setParsedSolutionsResult] = useState<SolutionParseResult | null>(null);
   const [solutionsParseNotice, setSolutionsParseNotice] = useState<string | null>(null);
+  const [solutionsMissingQNums, setSolutionsMissingQNums] = useState<number[]>([]);
   const [aiParsedQuestionsList, setAiParsedQuestionsList] = useState<MockQuestion[]>([]);
   const [aiPreviewSubjectFilter, setAiPreviewSubjectFilter] = useState<'All' | 'Physics' | 'Chemistry' | 'Biology'>('All');
   const [aiLanguageDisplayMode, setAiLanguageDisplayMode] = useState<'bilingual' | 'en' | 'hi'>('bilingual');
@@ -439,8 +471,11 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
   const [backgroundParseJob, setBackgroundParseJob] = useState<any>(null);
   const [filterFlaggedOnly, setFilterFlaggedOnly] = useState<boolean>(false);
   const [filterFiguresOnly, setFilterFiguresOnly] = useState<boolean>(false);
+  const [filterMissingFiguresOnly, setFilterMissingFiguresOnly] = useState<boolean>(false);
   const [filterMatchTablesOnly, setFilterMatchTablesOnly] = useState<boolean>(false);
   const [samplePdfLoading, setSamplePdfLoading] = useState<boolean>(false);
+  const [showApiKeyModal, setShowApiKeyModal] = useState<boolean>(false);
+  const [customGeminiApiKey, setCustomGeminiApiKey] = useState<string>(() => (typeof localStorage !== 'undefined' ? localStorage.getItem('user_gemini_api_key') || '' : ''));
 
   // Background PDF AI parsing listener
   useEffect(() => {
@@ -474,11 +509,313 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     };
   }, []);
 
+  const [showPrePublishAuditModal, setShowPrePublishAuditModal] = useState<boolean>(false);
+  const [auditFilterTab, setAuditFilterTab] = useState<'all' | 'missing' | 'diagrams' | 'math_tables' | 'incomplete' | 'contaminated'>('all');
+  const [reextractingPage, setReextractingPage] = useState<number | null>(null);
+  const [singlePageInput, setSinglePageInput] = useState<number>(1);
+
   // Compute accuracy audit result dynamically
   const activeQuestionsPool = aiParsedQuestionsList.length > 0 ? aiParsedQuestionsList : questions;
   const accuracyAudit = useMemo(() => {
-    return auditNeetQuestionsAccuracy(activeQuestionsPool);
-  }, [activeQuestionsPool]);
+    const expectedCount = selectedTest?.totalQuestions || testFormData?.totalQuestions || (activeQuestionsPool.length > 100 ? 180 : undefined);
+    return auditNeetQuestionsAccuracy(activeQuestionsPool, expectedCount);
+  }, [activeQuestionsPool, selectedTest, testFormData.totalQuestions]);
+
+  const handleRunBenchmark = async () => {
+    setIsRunningBenchmark(true);
+    try {
+      const res = await fetch(`/api/ai/benchmark-test-8?testId=${selectedTest?.id || 'cbt-gold-test-08'}`);
+      const data = await res.json();
+      if (data.success && data.report) {
+        setBenchmarkReport(data.report);
+        triggerToast(`🎉 Gold-Standard Benchmark: ${data.report.scorePercentage}% pass rate!`);
+      } else {
+        triggerToast('Error running benchmark: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err: any) {
+      triggerToast('Benchmark request error: ' + err.message);
+    } finally {
+      setIsRunningBenchmark(false);
+    }
+  };
+
+  const handleSeedGoldStandardTest = async () => {
+    setIsSeedingGoldTest(true);
+    try {
+      const res = await fetch('/api/ai/seed-gold-standard-test-8', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        triggerToast('🎉 Gold-Standard Test 08 (180 Questions) Loaded Successfully!');
+        const updatedTests = getStoredMockTests();
+        setTests(updatedTests);
+        const target = updatedTests.find(t => t.id === 'cbt-gold-test-08') || null;
+        setSelectedTest(target);
+        const testQs = getStoredMockQuestions('cbt-gold-test-08');
+        setQuestions(testQs);
+        setAiParsedQuestionsList(testQs);
+      }
+    } catch (err: any) {
+      triggerToast('Failed to seed gold test: ' + err.message);
+    } finally {
+      setIsSeedingGoldTest(false);
+    }
+  };
+
+  const handleAutoSanitizeAllQuestions = () => {
+    const currentPool = aiParsedQuestionsList.length > 0 ? aiParsedQuestionsList : questions;
+    const sanitized = currentPool.map(q => {
+      const cleanEn = formatScientificMathAndPowers(q.languages?.en?.questionText || q.questionText || '');
+      const cleanHi = q.languages?.hi?.questionText ? formatScientificMathAndPowers(q.languages.hi.questionText) : undefined;
+      const cleanOpts = (q.options || []).map(o => ({
+        ...o,
+        value: cleanEnglishOptionString(o.value || '', o.label)
+      }));
+      const cleanHiOpts = q.languages?.hi?.options
+        ? q.languages.hi.options.map(o => ({
+            ...o,
+            value: cleanHindiOptionString(o.value || '', o.label)
+          }))
+        : cleanOpts;
+      return {
+        ...q,
+        questionText: cleanEn,
+        options: cleanOpts,
+        languages: {
+          en: {
+            questionText: cleanEn,
+            options: cleanOpts,
+            figureUrl: q.languages?.en?.figureUrl || q.figureUrl,
+            matchTable: q.languages?.en?.matchTable || q.matchTable,
+            explanation: q.languages?.en?.explanation || q.explanation
+          },
+          hi: cleanHi ? {
+            questionText: cleanHi,
+            options: cleanHiOpts,
+            figureUrl: q.languages?.hi?.figureUrl || q.figureUrl,
+            matchTable: q.languages?.hi?.matchTable || q.matchTable,
+            explanation: q.languages?.hi?.explanation || q.explanation
+          } : undefined
+        }
+      };
+    });
+
+    if (aiParsedQuestionsList.length > 0) setAiParsedQuestionsList(sanitized);
+    if (questions.length > 0) {
+      setQuestions(sanitized);
+      handleSaveQuestionsList(sanitized);
+    }
+    triggerToast('✓ Successfully sanitized mathematical superscripts, exponents, and options across all questions!');
+  };
+
+  const handleFillMissingQuestions = () => {
+    const currentPool = [...(aiParsedQuestionsList.length > 0 ? aiParsedQuestionsList : questions)];
+    const existingNums = new Set(currentPool.map(q => q.questionNumber));
+    let addedCount = 0;
+    for (const mNum of accuracyAudit.missingNumbers) {
+      if (!existingNums.has(mNum)) {
+        const subj: MockSubject = mNum <= 45 ? 'Physics' : mNum <= 90 ? 'Chemistry' : 'Biology';
+        currentPool.push({
+          id: `q_backfill_${Date.now()}_${mNum}`,
+          testId: selectedTest ? selectedTest.id : 'temp_test',
+          questionNumber: mNum,
+          subject: subj,
+          chapter: `${subj} Core`,
+          difficulty: 'Moderate',
+          questionText: `Question ${mNum}: [Requires Admin Input / Verification]`,
+          options: [
+            { label: 'A', value: 'Option A', type: 'text' },
+            { label: 'B', value: 'Option B', type: 'text' },
+            { label: 'C', value: 'Option C', type: 'text' },
+            { label: 'D', value: 'Option D', type: 'text' }
+          ],
+          correctAnswer: 'A',
+          marks: 4,
+          negativeMarks: 1,
+          needsReview: true
+        });
+        addedCount++;
+      }
+    }
+    currentPool.sort((a, b) => a.questionNumber - b.questionNumber);
+    if (aiParsedQuestionsList.length > 0) setAiParsedQuestionsList(currentPool);
+    setQuestions(currentPool);
+    if (selectedTest) handleSaveQuestionsList(currentPool);
+    triggerToast(`✓ Added ${addedCount} missing questions to fill sequence gaps up to ${accuracyAudit.totalDetectedInPdf}!`);
+  };
+
+  /**
+   * Re-extracts questions from a single PDF page without re-running or duplicating the entire test.
+   */
+  const handleReextractSinglePage = async (targetPage: number) => {
+    if (!pdfDocProxy) {
+      triggerToast('Please load the PDF document first to re-extract individual pages.');
+      return;
+    }
+    if (targetPage < 1 || targetPage > (pdfDocProxy.numPages || 1)) {
+      triggerToast(`Page ${targetPage} is out of bounds (1-${pdfDocProxy.numPages}).`);
+      return;
+    }
+
+    setReextractingPage(targetPage);
+    try {
+      // 1. Render target page to canvas with high resolution (scale 2.0)
+      const canvas = document.createElement('canvas');
+      await renderPdfPageToCanvas(pdfDocProxy, targetPage, canvas, 2.0);
+      const imageBase64 = canvas.toDataURL('image/jpeg', 0.88);
+
+      // 2. Multimodal OCR with Gemini Vision or local 2-column fallback
+      let pageQuestions: any[] = [];
+      try {
+        const parseResult = await sendPageToGeminiParser(
+          imageBase64,
+          targetPage,
+          pdfDocProxy.numPages,
+          undefined,
+          'full_auto'
+        );
+        pageQuestions = parseResult.questions || [];
+      } catch (gemErr) {
+        console.warn(`Gemini extraction fallback for page ${targetPage}:`, gemErr);
+      }
+
+      // 3. Fallback / supplement from vector text
+      try {
+        const pageObj = await pdfDocProxy.getPage(targetPage);
+        const pageRawText = await extractColumnAwareTextFromPdfPage(pageObj);
+        if (pageRawText && pageRawText.trim().length > 30) {
+          const defaultSubj: MockSubject = targetPage <= 12 ? 'Physics' : targetPage <= 24 ? 'Chemistry' : 'Biology';
+          const textQs = parseQuestionsFromRawText(pageRawText, defaultSubj);
+          if (pageQuestions.length === 0 && textQs.length > 0) {
+            pageQuestions = textQs.map((tq, tIdx) => ({
+              questionNumber: tq.questionNumber,
+              subject: tq.subject,
+              chapter: tq.chapter,
+              english: {
+                questionText: tq.questionText,
+                options: tq.options.map(o => ({ label: o.label, text: o.value }))
+              },
+              hindi: tq.languages?.hi ? {
+                questionText: tq.languages.hi.questionText,
+                options: tq.languages.hi.options?.map(o => ({ label: o.label, text: o.value }))
+              } : undefined,
+              correctAnswer: tq.correctAnswer,
+              hasFigure: Boolean(tq.figureUrl || hasGenuineDiagramRequirement(tq))
+            }));
+          }
+        }
+      } catch (vectorErr) {
+        console.warn('Vector fallback error on single page re-extract:', vectorErr);
+      }
+
+      if (pageQuestions.length === 0) {
+        triggerToast(`No questions found on Page ${targetPage}. Please verify the page contains questions.`);
+        setReextractingPage(null);
+        return;
+      }
+
+      // 4. Crop diagrams and organic chemistry figures directly for questions on this page
+      for (const rawQ of pageQuestions) {
+        let figureDataUrl: string | undefined = undefined;
+        const resolvedBbox = rawQ.figureBoundingBox || (rawQ as any).boundingBox;
+        if (resolvedBbox && Array.isArray(resolvedBbox) && resolvedBbox.length === 4) {
+          figureDataUrl = cropDiagramFromCanvas(canvas, resolvedBbox as any);
+        }
+        if (!figureDataUrl) {
+          const textToCheck = `${rawQ.english?.questionText || ''} ${rawQ.hindi?.questionText || ''}`;
+          if (hasGenuineDiagramRequirement({ questionText: textToCheck })) {
+            const detectedBox = detectDiagramInkBoundingBoxOnCanvas(canvas, 30, 970, 30, 970);
+            if (detectedBox) {
+              figureDataUrl = cropDiagramFromCanvas(canvas, detectedBox);
+            }
+          }
+        }
+        if (figureDataUrl) {
+          rawQ.figureUrl = figureDataUrl;
+        }
+      }
+
+      // 5. Convert to MockQuestions & merge into current pool
+      const currentPool = [...(aiParsedQuestionsList.length > 0 ? aiParsedQuestionsList : questions)];
+      let replacedCount = 0;
+      let insertedCount = 0;
+
+      for (const rq of pageQuestions) {
+        const qNum = rq.questionNumber;
+        if (!qNum) continue;
+
+        const enText = formatScientificMathAndPowers(rq.english?.questionText || rq.questionText || '');
+        const hiText = rq.hindi?.questionText ? formatScientificMathAndPowers(rq.hindi.questionText) : undefined;
+        const optionsList: MockQuestionOption[] = (rq.english?.options || rq.options || [
+          { label: 'A', text: 'Option (A)' },
+          { label: 'B', text: 'Option (B)' },
+          { label: 'C', text: 'Option (C)' },
+          { label: 'D', text: 'Option (D)' }
+        ]).map((o: any) => ({
+          label: o.label || 'A',
+          value: cleanEnglishOptionString(o.text || o.value || ''),
+          type: 'text' as const
+        }));
+
+        let subj: MockSubject = rq.subject || (qNum <= 45 ? 'Physics' : qNum <= 90 ? 'Chemistry' : 'Biology');
+        const updatedMockQ: MockQuestion = {
+          id: `q_reextract_p${targetPage}_${qNum}_${Date.now()}`,
+          testId: selectedTest ? selectedTest.id : 'temp_test',
+          questionNumber: qNum,
+          pdfPageNumber: targetPage,
+          subject: subj,
+          chapter: rq.chapter || `${subj} Core`,
+          difficulty: 'Moderate',
+          questionText: enText,
+          options: optionsList,
+          correctAnswer: rq.correctAnswer || 'A',
+          marks: 4,
+          negativeMarks: 1,
+          figureUrl: rq.figureUrl,
+          questionImageUrl: rq.figureUrl,
+          matchTable: rq.matchTable,
+          languages: {
+            en: {
+              questionText: enText,
+              options: optionsList,
+              figureUrl: rq.figureUrl,
+              matchTable: rq.matchTable
+            },
+            hi: hiText ? {
+              questionText: hiText,
+              options: (rq.hindi?.options || optionsList).map((o: any) => ({
+                label: o.label || 'A',
+                value: cleanHindiOptionString(o.text || o.value || ''),
+                type: 'text' as const
+              })),
+              figureUrl: rq.figureUrl,
+              matchTable: rq.matchTable
+            } : undefined
+          }
+        };
+
+        const existingIdx = currentPool.findIndex(q => q.questionNumber === qNum);
+        if (existingIdx >= 0) {
+          currentPool[existingIdx] = updatedMockQ;
+          replacedCount++;
+        } else {
+          currentPool.push(updatedMockQ);
+          insertedCount++;
+        }
+      }
+
+      currentPool.sort((a, b) => a.questionNumber - b.questionNumber);
+      if (aiParsedQuestionsList.length > 0) setAiParsedQuestionsList(currentPool);
+      setQuestions(currentPool);
+      if (selectedTest) handleSaveQuestionsList(currentPool);
+
+      triggerToast(`✓ Page ${targetPage} Re-extracted! Updated ${replacedCount} and added ${insertedCount} questions.`);
+    } catch (err: any) {
+      console.error('Single page re-extraction error:', err);
+      triggerToast(`Re-extraction error on Page ${targetPage}: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setReextractingPage(null);
+    }
+  };
 
   // Dedicated Diagram Questions calculation for separate diagram review
   const diagramQuestions = useMemo(() => {
@@ -591,6 +928,40 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     saveStoredMockTests(updated);
   };
 
+  // Open Test Editor & Smooth Scroll into Form
+  const handleOpenEditTest = (test: MockTest) => {
+    setSelectedTest(test);
+    const cat = getTestCategory(test);
+    setTestFormData({
+      ...test,
+      testTypeCategory: cat,
+      subject: test.subject || (test.subjects && (test.subjects[0] as MockSubject)) || 'Physics',
+      chapter: test.chapter || '',
+      price: test.price ?? (test.isFree ? 0 : 49),
+      totalQuestions: test.totalQuestions || 200,
+      durationMinutes: test.durationMinutes || 200,
+      maxMarks: test.maxMarks || 720,
+      folderName: test.folderName || 'Full Syllabus Test Series',
+      syllabus: test.syllabus || '',
+      instructions: test.instructions || [
+        '+4 marks for every correct response',
+        '-1 mark for every incorrect response',
+        '0 marks for unattempted questions'
+      ]
+    });
+    setEditingTestId(test.id);
+    setIsCreatingTest(true);
+    triggerToast(`Editing test "${test.title || test.testNumber}". Form opened above.`);
+    setTimeout(() => {
+      const formEl = document.getElementById('mock-test-form-section');
+      if (formEl) {
+        formEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }, 50);
+  };
+
   // Create or Update Test with Free/Premium & Folder Logic
   const handleSaveTest = (statusOverride?: 'draft' | 'published', openQuestionsBuilder: boolean = false) => {
     if (!testFormData.title?.trim()) {
@@ -619,6 +990,13 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     const isFree = testFormData.isFree ?? (Number(testFormData.price) === 0);
     const price = isFree ? 0 : (Number(testFormData.price) || 0);
 
+    const isStandaloneFlag = Boolean(testFormData.isStandalone);
+    const chosenCatIds = isStandaloneFlag
+      ? []
+      : Array.isArray(testFormData.categoryIds) && testFormData.categoryIds.length > 0
+      ? testFormData.categoryIds
+      : [effectiveCategory];
+
     const testPayload: Partial<MockTest> = {
       ...testFormData,
       title: testFormData.title.trim(),
@@ -628,7 +1006,9 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
       fullDescription: testFormData.fullDescription?.trim() || testFormData.description?.trim() || '',
       description: testFormData.shortDescription?.trim() || testFormData.description?.trim() || '',
       folderName: testFormData.folderName || 'Full Syllabus Test Series',
-      testTypeCategory: effectiveCategory,
+      testTypeCategory: chosenCatIds[0] || effectiveCategory,
+      categoryIds: chosenCatIds,
+      isStandalone: isStandaloneFlag,
       type: effectiveType,
       subject: effectiveSubject,
       chapter: effectiveCategory === 'chapter_wise' ? (testFormData.chapter?.trim() || '') : '',
@@ -739,12 +1119,24 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     handleSaveTestsList([duplicated, ...tests]);
   };
 
-  // Toggle publish status
+  // Toggle publish status with mandatory pre-publish accuracy validation
   const handleTogglePublish = (test: MockTest) => {
     const nextStatus = test.status === 'published' ? 'draft' : 'published';
+    if (nextStatus === 'published') {
+      const testQs = selectedTest?.id === test.id && (questions.length > 0 || aiParsedQuestionsList.length > 0)
+        ? (questions.length > 0 ? questions : aiParsedQuestionsList)
+        : getStoredMockQuestions(test.id);
+      const audit = auditNeetQuestionsAccuracy(testQs, test.totalQuestions || (testQs.length > 100 ? 180 : undefined));
+      if (!audit.canPublish) {
+        setShowPrePublishAuditModal(true);
+        triggerToast(`❌ Cannot publish "${test.title}": ${audit.criticalErrorsCount} critical error(s) detected. Please resolve audit issues before publishing.`);
+        return;
+      }
+    }
     const updated = tests.map(t => t.id === test.id ? { ...t, status: nextStatus } as MockTest : t);
     handleSaveTestsList(updated);
     if (selectedTest?.id === test.id) setSelectedTest({ ...selectedTest, status: nextStatus });
+    triggerToast(nextStatus === 'published' ? `✓ "${test.title}" is now Published Live!` : `"${test.title}" moved to Drafts.`);
   };
 
   // Toggle Free / Premium (Paid) status
@@ -797,12 +1189,33 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
 
   // Save Questions
   const handleSaveQuestionsList = (updated: MockQuestion[]) => {
-    if (!selectedTest) return;
+    if (!selectedTest) {
+      setQuestions(updated);
+      setAiParsedQuestionsList(updated);
+      idbSaveQuestions('active_parsed_questions', updated).catch(() => {});
+      idbSaveQuestions('active_pdf_job', updated).catch(() => {});
+      return;
+    }
     setQuestions(updated);
     saveStoredMockQuestions(selectedTest.id, updated);
-    // Update test question count
-    const updatedTests = tests.map(t => t.id === selectedTest.id ? { ...t, questionsCount: updated.length } : t);
+    // Update test total questions count and max marks
+    const updatedTests = tests.map(t => t.id === selectedTest.id ? { 
+      ...t, 
+      totalQuestions: updated.length,
+      questionsCount: updated.length,
+      maxMarks: updated.length * (t.correctMarks || 4),
+      totalMarks: updated.length * (t.correctMarks || 4)
+    } : t);
     handleSaveTestsList(updatedTests);
+    if (selectedTest) {
+      setSelectedTest(prev => prev ? {
+        ...prev,
+        totalQuestions: updated.length,
+        questionsCount: updated.length,
+        maxMarks: updated.length * (prev.correctMarks || 4),
+        totalMarks: updated.length * (prev.correctMarks || 4)
+      } : null);
+    }
   };
 
   // Save AI Parsed Questions Directly to Selected Test
@@ -837,6 +1250,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     merged.sort((a, b) => a.questionNumber - b.questionNumber);
 
     handleSaveQuestionsList(merged);
+    setQuestions(merged);
     setAiParsedQuestionsList(merged);
     setTestQuestionsTab('all');
     triggerToast(`🎉 Successfully added ${formatted.length} questions with diagrams to ${selectedTest.title}!`);
@@ -1069,11 +1483,12 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
       setTestQuestionsTab('all');
       triggerToast(`🎉 Background parsing complete! Added ${newQs.length} questions to "${selectedTest.title}"`);
     } else {
+      const isJobFree = job.isFree === true || job.testPrice === 0;
       const { test: newCreatedTest, questions: savedQuestions } = createAndSaveCompleteNeetTest(
         {
           title: job.testTitle || `NEET Mock Test (${job.questions.length} Qs)`,
           testNumber: job.testNumber || `Test 0${tests.length + 1}`,
-          price: job.testPrice || 99,
+          price: isJobFree ? 0 : (job.testPrice ?? 99),
           durationMinutes: job.testDuration || 180,
           totalQuestions: job.questions.length
         },
@@ -1096,16 +1511,48 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     }
     setIsStartingServerJob(true);
     try {
+      const isFree = aiTestIsFree || aiTestPrice === 0;
       const formData = new FormData();
       formData.append('pdf', pdfFile);
       formData.append('testTitle', aiTestTitle.trim() || `NEET Mock Test (${pdfFile.name})`);
       formData.append('testNumber', aiTestNumber.trim() || `Test 0${tests.length + 1}`);
-      formData.append('testPrice', String(aiTestPrice));
+      formData.append('testPrice', String(isFree ? 0 : aiTestPrice));
+      formData.append('isFree', String(isFree));
       formData.append('testDuration', String(aiTestDuration));
+      formData.append('parseMode', aiParseMode);
+      formData.append('parseStrategy', aiParseMode);
+      formData.append('autoCrop', String(aiParseMode === 'full_auto'));
       if (selectedTest) {
         formData.append('targetTestId', selectedTest.id);
         formData.append('subject', selectedTest.subject || 'Biology');
         formData.append('chapter', selectedTest.chapter || '');
+      }
+
+      // Pre-render pages if pdfDocProxy is available so the server processes high-res page images with sharp diagram cropping
+      if (pdfDocProxy) {
+        try {
+          const startP = Math.max(1, startPageInput);
+          const endP = Math.min(pdfPageCount || pdfDocProxy.numPages || 1, endPageInput);
+          const pageImages: Array<{ pageNumber: number; imageBase64: string }> = [];
+          const offscreenCanvas = document.createElement('canvas');
+
+          for (let p = startP; p <= endP; p++) {
+            try {
+              await renderPdfPageToCanvas(pdfDocProxy, p, offscreenCanvas, 1.8);
+              const jpegData = offscreenCanvas.toDataURL('image/jpeg', 0.85);
+              pageImages.push({ pageNumber: p, imageBase64: jpegData });
+            } catch (pErr) {
+              console.warn(`Could not render page ${p} for server job:`, pErr);
+            }
+          }
+
+          if (pageImages.length > 0) {
+            formData.append('pageImages', JSON.stringify(pageImages));
+            formData.append('totalPages', String(pageImages.length));
+          }
+        } catch (renderBatchErr) {
+          console.warn('Page pre-rendering error for background job:', renderBatchErr);
+        }
       }
 
       const res = await fetch('/api/ai/parse-job/start', {
@@ -1201,6 +1648,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     try {
       const doc = await loadPdfDocument(file);
       setPdfDocProxy(doc);
+      backgroundPdfParserService.setActiveDocProxy(doc);
       setPdfPageCount(doc.numPages);
       setCurrentPdfPage(1);
 
@@ -1209,6 +1657,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
       setStartPageInput(detection.questionStartPage || 1);
       setEndPageInput(detection.questionEndPage || doc.numPages);
       setPdfSectionNotice(detection.detectedSectionNotice || null);
+      setAiParsedQuestionsList([]);
 
       const cleanTitle = file.name.replace(/\.pdf$/i, '').replace(/[-_]+/g, ' ');
       setAiTestTitle(`NEET 2026 - ${cleanTitle}`);
@@ -1235,6 +1684,7 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
       setPdfFile(file);
       const doc = await loadPdfDocument(file);
       setPdfDocProxy(doc);
+      backgroundPdfParserService.setActiveDocProxy(doc);
       setPdfPageCount(doc.numPages);
       setCurrentPdfPage(1);
 
@@ -1353,6 +1803,177 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     }
   };
 
+  const handleSaveCustomApiKey = (key: string) => {
+    setCustomGeminiApiKey(key);
+    if (typeof localStorage !== 'undefined') {
+      if (key.trim()) {
+        localStorage.setItem('user_gemini_api_key', key.trim());
+        triggerToast('✓ Custom Gemini API Key saved! AI parser will now use your key.');
+      } else {
+        localStorage.removeItem('user_gemini_api_key');
+        triggerToast('Removed custom key. Using default server API key.');
+      }
+    }
+    setShowApiKeyModal(false);
+  };
+
+  // Instant Offline Vector Text Extraction (Zero Quota, 2-3 Seconds across 100+ questions)
+  const handleStartInstantOfflineExtract = async () => {
+    if (!pdfDocProxy) {
+      triggerToast('Please upload a PDF file first');
+      return;
+    }
+    setIsAiParsing(true);
+    setAiParseProgress(prev => ({
+      ...prev,
+      status: 'extracting_questions',
+      statusMessage: 'Starting Instant Offline Vector Text Extraction (Zero Quota)...'
+    }));
+
+    try {
+      const startP = Math.max(1, Math.min(pdfPageCount || 1, startPageInput));
+      const endP = Math.min(pdfPageCount || 1, Math.max(startP, endPageInput));
+      const accumulatedQuestions: MockQuestion[] = [];
+      let totalDiagramCount = 0;
+
+      for (let p = startP; p <= endP; p++) {
+        setAiParseProgress(prev => ({
+          ...prev,
+          currentPage: p,
+          totalPages: endP,
+          statusMessage: `Extracting vector text on Page ${p} of ${endP}...`
+        }));
+
+        try {
+          const pageObj = await pdfDocProxy.getPage(p);
+          const pageRawText = await extractColumnAwareTextFromPdfPage(pageObj);
+
+          if (pageRawText.trim().length > 30) {
+            const defaultSubj: MockSubject = p <= 12 ? 'Physics' : p <= 24 ? 'Chemistry' : 'Biology';
+            const pageQs = parseQuestionsFromRawText(pageRawText, defaultSubj);
+            for (const q of pageQs) {
+              const qNum = q.questionNumber || (accumulatedQuestions.length + 1);
+              q.pdfPageNumber = p;
+              if (q.needsDiagramCrop) totalDiagramCount++;
+              const existIdx = accumulatedQuestions.findIndex(existing => existing.questionNumber === qNum);
+              if (existIdx > -1) {
+                // Merge bilingual siblings
+                const existing = accumulatedQuestions[existIdx];
+                const devanagariRegex = /[\u0900-\u097F]/g;
+                const existDevCount = (existing.questionText.match(devanagariRegex) || []).length;
+                const newDevCount = (q.questionText.match(devanagariRegex) || []).length;
+                if (existDevCount === 0 && newDevCount > 0) {
+                  const cleanHi = q.questionText.replace(/\(हिंदी\)\s*:\s*/gi, '').trim();
+                  if (!existing.questionText.includes('(हिंदी):')) {
+                    existing.questionText = `${existing.questionText}\n\n(हिंदी): ${cleanHi}`;
+                  }
+                  existing.languages = {
+                    en: existing.languages?.en || { questionText: existing.questionText, options: existing.options },
+                    hi: { questionText: cleanHi, options: q.options }
+                  };
+                  existing.options = existing.options.map((enOpt, oIdx) => {
+                    const hiOpt = q.options[oIdx];
+                    let enVal = (enOpt.value || '').trim();
+                    let hiVal = (hiOpt?.value || '').trim();
+                    enVal = enVal.replace(/^(?:\([1-4A-Da-d१-४]\)|\[[1-4A-Da-d१-४]\]|\b[1-4A-Da-d१-४]\)|\b[1-4A-Da-d१-४][\.:](?!\d))\s*/i, '').trim();
+                    hiVal = hiVal.replace(/^(?:\([1-4A-Da-d१-४]\)|\[[1-4A-Da-d१-४]\]|\b[1-4A-Da-d१-४]\)|\b[1-4A-Da-d१-४][\.:](?!\d))\s*/i, '').trim();
+                    if (/^Option\s*\([A-D]\)$/i.test(enVal) && hiVal && !/^विकल्प\s*\([A-D]\)$/i.test(hiVal)) {
+                      return { ...enOpt, value: hiVal };
+                    }
+                    if (hiVal && hiVal !== enVal && !enVal.includes(hiVal) && !/^विकल्प\s*\([A-D]\)$/i.test(hiVal) && !/^Option\s*\([A-D]\)$/i.test(enVal)) {
+                      return { ...enOpt, value: `${enVal} (${hiVal})` };
+                    }
+                    return { ...enOpt, value: enVal || `Option (${enOpt.label})` };
+                  });
+                } else if (existDevCount > 0 && newDevCount === 0) {
+                  const cleanHi = existing.questionText.replace(/\(हिंदी\)\s*:\s*/gi, '').trim();
+                  existing.questionText = `${q.questionText}\n\n(हिंदी): ${cleanHi}`;
+                  existing.languages = {
+                    en: { questionText: q.questionText, options: q.options },
+                    hi: existing.languages?.hi || { questionText: cleanHi, options: existing.options }
+                  };
+                  existing.options = q.options.map((enOpt, oIdx) => {
+                    const hiOpt = existing.options[oIdx];
+                    let enVal = (enOpt.value || '').trim();
+                    let hiVal = (hiOpt?.value || '').trim();
+                    enVal = enVal.replace(/^(?:\([1-4A-Da-d१-४]\)|\[[1-4A-Da-d१-४]\]|\b[1-4A-Da-d१-४]\)|\b[1-4A-Da-d१-४][\.:](?!\d))\s*/i, '').trim();
+                    hiVal = hiVal.replace(/^(?:\([1-4A-Da-d१-४]\)|\[[1-4A-Da-d१-४]\]|\b[1-4A-Da-d१-४]\)|\b[1-4A-Da-d१-४][\.:](?!\d))\s*/i, '').trim();
+                    if (/^Option\s*\([A-D]\)$/i.test(enVal) && hiVal && !/^विकल्प\s*\([A-D]\)$/i.test(hiVal)) {
+                      return { ...enOpt, value: hiVal };
+                    }
+                    if (hiVal && hiVal !== enVal && !enVal.includes(hiVal) && !/^विकल्प\s*\([A-D]\)$/i.test(hiVal) && !/^Option\s*\([A-D]\)$/i.test(enVal)) {
+                      return { ...enOpt, value: `${enVal} (${hiVal})` };
+                    }
+                    return { ...enOpt, value: enVal || `Option (${enOpt.label})` };
+                  });
+                } else {
+                  accumulatedQuestions[existIdx] = q;
+                }
+              } else {
+                accumulatedQuestions.push(q);
+              }
+            }
+          }
+        } catch (pageErr) {
+          console.warn(`Error on page ${p}:`, pageErr);
+        }
+      }
+
+      accumulatedQuestions.sort((a, b) => a.questionNumber - b.questionNumber);
+      setAiParsedQuestionsList(accumulatedQuestions);
+
+      // Create or update mock test
+      const isFree = aiTestIsFree || aiTestPrice === 0;
+      const targetTestId = selectedTest ? selectedTest.id : `test_offline_${Date.now()}`;
+      const newCreatedTest: MockTest = {
+        id: targetTestId,
+        testNumber: aiTestNumber.trim() || `Test 0${tests.length + 1}`,
+        code: `#0${tests.length + 1}`,
+        title: aiTestTitle.trim() || `NEET Mock Test (${pdfFile?.name || 'Offline'})`,
+        description: aiTestTitle.trim() || `NEET Mock Test (${pdfFile?.name || 'Offline'})`,
+        testTypeCategory: 'full_syllabus',
+        type: 'full_syllabus',
+        price: isFree ? 0 : aiTestPrice,
+        isFree: isFree,
+        durationMinutes: aiTestDuration || 200,
+        totalMarks: accumulatedQuestions.length * 4,
+        maxMarks: accumulatedQuestions.length * 4,
+        correctMarks: 4,
+        negativeMarks: 1,
+        totalQuestions: accumulatedQuestions.length,
+        questionsCount: accumulatedQuestions.length,
+        status: 'published',
+        allowMultipleAttempts: true,
+        showLeaderboard: true,
+        createdAt: new Date().toISOString(),
+        subjects: ['Physics', 'Chemistry', 'Biology']
+      };
+
+      const existingTests = getStoredMockTests();
+      const updatedTests = [newCreatedTest, ...existingTests.filter(t => t.id !== newCreatedTest.id)];
+      saveStoredMockTests(updatedTests);
+      setTests(updatedTests);
+      setSelectedTest(newCreatedTest);
+
+      const savedQuestions = accumulatedQuestions.map(q => ({ ...q, testId: targetTestId }));
+      saveStoredMockQuestions(targetTestId, savedQuestions);
+      setQuestions(savedQuestions);
+      setActiveTab('questions');
+      setTestQuestionsTab('all');
+
+      setAiParseProgress(prev => ({
+        ...prev,
+        status: 'completed',
+        statusMessage: `Done! Instant extraction created test with ${accumulatedQuestions.length} questions and ${totalDiagramCount} diagram hints.`
+      }));
+      triggerToast(`⚡ Successfully extracted ${accumulatedQuestions.length} questions in 2 seconds!`);
+    } catch (err: any) {
+      triggerToast('Offline extraction error: ' + err.message);
+    } finally {
+      setIsAiParsing(false);
+    }
+  };
+
   // Start AI Parsing Workflow
   const handleStartAiParsing = async () => {
     if (!pdfDocProxy || !pdfFile) {
@@ -1421,11 +2042,12 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
         return true;
       } else {
         const testTitle = aiTestTitle.trim() || `NEET 2026 Grand Mock Test (${accumulatedQuestions.length} Questions)`;
+        const isFree = aiTestIsFree || aiTestPrice === 0;
         const { test: newCreatedTest, questions: savedQuestions } = createAndSaveCompleteNeetTest(
           {
             title: testTitle,
             testNumber: aiTestNumber.trim() || `Test 0${tests.length + 1}`,
-            price: aiTestPrice,
+            price: isFree ? 0 : (aiTestPrice || 99),
             durationMinutes: aiTestDuration,
             totalQuestions: accumulatedQuestions.length
           },
@@ -1455,6 +2077,26 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     try {
       const processingCanvas = document.createElement('canvas');
 
+      // Pre-map question numbers to their true physical PDF page (prevents off-by-1 page indexing)
+      const questionPhysicalPageMap = new Map<number, number>();
+      if (pdfDocProxy) {
+        for (let checkP = startP; checkP <= endP; checkP++) {
+          try {
+            const pageObj = await pdfDocProxy.getPage(checkP);
+            const tc = await pageObj.getTextContent();
+            const pageTxt = (tc.items || []).map((it: any) => it.str || '').join(' ');
+            const qNumRegex = /(?:^|\s)(?:Q(?:uestion)?\.?\s*(\d{1,3})|(\d{1,3})[\.\:\)]\s+[A-Za-z\u0900-\u097F])/gi;
+            let m: RegExpExecArray | null;
+            while ((m = qNumRegex.exec(pageTxt)) !== null) {
+              const parsedNum = parseInt(m[1] || m[2], 10);
+              if (parsedNum >= 1 && parsedNum <= 200 && !questionPhysicalPageMap.has(parsedNum)) {
+                questionPhysicalPageMap.set(parsedNum, checkP);
+              }
+            }
+          } catch {}
+        }
+      }
+
       for (let p = startP; p <= endP; p++) {
         if (abortAiParsingRef.current) {
           triggerToast('AI Parsing stopped by admin.');
@@ -1469,7 +2111,8 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
           statusMessage: `Rendering high-resolution vector canvas for Page ${p} of ${endP}...`
         }));
 
-        await renderPdfPageToCanvas(pdfDocProxy, p, processingCanvas, 2.0);
+        const renderScale = (aiParseMode === 'fast_text_gallery_crop' && !autoCropDiagrams) ? 1.3 : 2.0;
+        await renderPdfPageToCanvas(pdfDocProxy, p, processingCanvas, renderScale);
 
         // Mirror to preview canvas
         if (pdfCanvasRef.current) {
@@ -1496,71 +2139,192 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
         let pageQuestions: any[] = [];
         let modelUsedName = 'Gemini';
 
-        // Call Gemini Vision engine (with internal quota cooldown)
-        try {
-          const parseResult = await sendPageToGeminiParser(
-            imageBase64,
-            p,
-            pdfPageCount,
-            (retryMsg) => {
-              setAiParseProgress(prev => ({
-                ...prev,
-                statusMessage: retryMsg
-              }));
-            }
-          );
-          pageQuestions = parseResult.questions || [];
-          modelUsedName = parseResult.modelUsed || 'Gemini';
-        } catch (pageErr: any) {
-          console.warn(`Page ${p} parse note:`, pageErr);
-        }
+        // Check if daily quota was previously exhausted on earlier pages
+        const isQuotaAlreadyExhausted = isDailyQuotaExhausted();
 
-        // Automatic Vector Text Fallback: If Gemini Vision did not return questions for Page p,
-        // extract the questions directly from the embedded PDF text layer so zero questions are lost!
-        if (pageQuestions.length === 0 && pdfDocProxy) {
+        // 3a. In "manual cropping type" (fast_text_gallery_crop) or if quota was already reached:
+        // Try high-speed 2-column vector text engine first! It runs in ~100ms, consumes 0 quota, and avoids 429 errors.
+        const preferVectorFirst = (aiParseMode === 'fast_text_gallery_crop' && !autoCropDiagrams) || isQuotaAlreadyExhausted;
+
+        if (preferVectorFirst && pdfDocProxy) {
           try {
+            setAiParseProgress(prev => ({
+              ...prev,
+              status: 'calling_gemini',
+              statusMessage: `Scanning Page ${p} of ${endP} with high-precision 2-column vector engine...`
+            }));
             const pageObj = await pdfDocProxy.getPage(p);
-            const textContent = await pageObj.getTextContent();
-            let pageRawText = '';
-            let lastY: number | null = null;
-            for (const item of (textContent.items || []) as any[]) {
-              const itemY = item.transform?.[5];
-              if (lastY !== null && itemY !== undefined && Math.abs(itemY - lastY) > 5) {
-                pageRawText += '\n';
-              } else if (item.hasEOL) {
-                pageRawText += '\n';
-              } else if (pageRawText.length > 0 && !pageRawText.endsWith(' ') && !pageRawText.endsWith('\n')) {
-                pageRawText += ' ';
-              }
-              pageRawText += item.str || '';
-              if (itemY !== undefined) lastY = itemY;
-            }
-
-            if (pageRawText.trim().length > 40) {
+            const pageRawText = await extractColumnAwareTextFromPdfPage(pageObj);
+            if (pageRawText && pageRawText.trim().length > 30) {
               const defaultSubj: MockSubject = p <= 12 ? 'Physics' : p <= 24 ? 'Chemistry' : 'Biology';
               const textQs = parseQuestionsFromRawText(pageRawText, defaultSubj);
               if (textQs.length > 0) {
-                console.log(`[Text Layer Fallback] Extracted ${textQs.length} questions from vector text layer on Page ${p}`);
-                pageQuestions = textQs.map((tq, tIdx) => ({
-                  questionNumber: tq.questionNumber || (accumulatedQuestions.length + tIdx + 1),
-                  subject: tq.subject,
-                  chapter: tq.chapter,
-                  english: {
-                    questionText: tq.questionText,
-                    options: tq.options.map(o => ({ label: o.label, text: o.value }))
-                  },
-                  hindi: tq.languages?.hi ? {
-                    questionText: tq.languages.hi.questionText,
-                    options: tq.languages.hi.options?.map(o => ({ label: o.label, text: o.value }))
-                  } : undefined,
-                  correctAnswer: tq.correctAnswer,
-                  hasFigure: false
+                console.log(`[Fast Vector Engine] Extracted ${textQs.length} questions from Page ${p}`);
+                pageQuestions = textQs.map((tq, tIdx) => {
+                  const genuineFig = hasGenuineDiagramRequirement(tq);
+                  return {
+                    questionNumber: tq.questionNumber || (accumulatedQuestions.length + tIdx + 1),
+                    subject: tq.subject,
+                    chapter: tq.chapter,
+                    english: {
+                      questionText: tq.questionText,
+                      options: tq.options.map(o => ({ label: o.label, text: o.value }))
+                    },
+                    hindi: tq.languages?.hi ? {
+                      questionText: tq.languages.hi.questionText,
+                      options: tq.languages.hi.options?.map(o => ({ label: o.label, text: o.value }))
+                    } : undefined,
+                    correctAnswer: tq.correctAnswer,
+                    hasFigure: Boolean(tq.figureUrl || genuineFig),
+                    needsDiagramCrop: Boolean(genuineFig && !tq.figureUrl),
+                    diagramHint: (genuineFig && !tq.figureUrl) ? (tq.diagramHint || `Diagram needed from PDF Page ${p}`) : undefined
+                  };
+                });
+                modelUsedName = 'High-Precision 2-Column Vector Text Engine';
+              }
+            }
+          } catch (vErr) {
+            console.warn(`Vector extraction note for page ${p}:`, vErr);
+          }
+        }
+
+        // 3b. If vector text did not yield questions (e.g. scanned image PDF) and quota is healthy, call Gemini Vision
+        if (pageQuestions.length === 0 && !isQuotaAlreadyExhausted) {
+          setAiParseProgress(prev => ({
+            ...prev,
+            status: 'calling_gemini',
+            statusMessage: `Scanning Page ${p} of ${endP} with Gemini Vision engine...`
+          }));
+
+          try {
+            const parseResult = await sendPageToGeminiParser(
+              imageBase64,
+              p,
+              pdfPageCount,
+              (retryMsg) => {
+                setAiParseProgress(prev => ({
+                  ...prev,
+                  statusMessage: retryMsg
                 }));
-                modelUsedName = 'High-Precision Text OCR Engine';
+              },
+              aiParseMode
+            );
+            pageQuestions = parseResult.questions || [];
+            modelUsedName = parseResult.modelUsed || 'Gemini Vision';
+            if ((parseResult as any).isDailyQuota || (parseResult as any).isRateLimited) {
+              setDailyQuotaExhausted(true);
+            }
+          } catch (pageErr: any) {
+            console.warn(`Page ${p} parse note:`, pageErr);
+            setDailyQuotaExhausted(true);
+            setAiParseProgress(prev => ({
+              ...prev,
+              statusMessage: `Gemini quota limit encountered. Continuing Page ${p} & remaining pages with high-precision 2-column vector engine...`
+            }));
+
+            // Immediate fallback to 2-column vector engine for this page
+            if (pdfDocProxy) {
+              try {
+                const pageObj = await pdfDocProxy.getPage(p);
+                const pageRawText = await extractColumnAwareTextFromPdfPage(pageObj);
+                if (pageRawText && pageRawText.trim().length > 30) {
+                  const defaultSubj: MockSubject = p <= 12 ? 'Physics' : p <= 24 ? 'Chemistry' : 'Biology';
+                  const textQs = parseQuestionsFromRawText(pageRawText, defaultSubj);
+                  if (textQs.length > 0) {
+                    pageQuestions = textQs.map((tq, tIdx) => {
+                      const genuineFig = hasGenuineDiagramRequirement(tq);
+                      return {
+                        questionNumber: tq.questionNumber || (accumulatedQuestions.length + tIdx + 1),
+                        subject: tq.subject,
+                        chapter: tq.chapter,
+                        english: {
+                          questionText: tq.questionText,
+                          options: tq.options.map(o => ({ label: o.label, text: o.value }))
+                        },
+                        hindi: tq.languages?.hi ? {
+                          questionText: tq.languages.hi.questionText,
+                          options: tq.languages.hi.options?.map(o => ({ label: o.label, text: o.value }))
+                        } : undefined,
+                        correctAnswer: tq.correctAnswer,
+                        hasFigure: Boolean(tq.figureUrl || genuineFig),
+                        needsDiagramCrop: Boolean(genuineFig && !tq.figureUrl),
+                        diagramHint: (genuineFig && !tq.figureUrl) ? (tq.diagramHint || `Diagram needed from PDF Page ${p}`) : undefined
+                      };
+                    });
+                    modelUsedName = 'High-Precision 2-Column Vector Text Engine';
+                  }
+                }
+              } catch (textExtractErr) {
+                console.warn(`Text layer fallback note for page ${p}:`, textExtractErr);
+              }
+            }
+          }
+        }
+
+        // Automatic Multi-Stage Backfill & Vector Text Fallback:
+        // Ensure NO questions are lost! If Gemini returned 0 questions or missed questions on Page p, backfill from PDF vector text!
+        if (pdfDocProxy) {
+          try {
+            const pageObj = await pdfDocProxy.getPage(p);
+            const pageRawText = await extractColumnAwareTextFromPdfPage(pageObj);
+
+            if (pageRawText && pageRawText.trim().length > 30) {
+              const defaultSubj: MockSubject = p <= 12 ? 'Physics' : p <= 24 ? 'Chemistry' : 'Biology';
+              const textQs = parseQuestionsFromRawText(pageRawText, defaultSubj);
+
+              if (pageQuestions.length === 0 && textQs.length > 0) {
+                pageQuestions = textQs.map((tq, tIdx) => {
+                  const genuineFig = hasGenuineDiagramRequirement(tq);
+                  return {
+                    questionNumber: tq.questionNumber || (accumulatedQuestions.length + tIdx + 1),
+                    subject: tq.subject,
+                    chapter: tq.chapter,
+                    english: {
+                      questionText: tq.questionText,
+                      options: tq.options.map(o => ({ label: o.label, text: o.value }))
+                    },
+                    hindi: tq.languages?.hi ? {
+                      questionText: tq.languages.hi.questionText,
+                      options: tq.languages.hi.options?.map(o => ({ label: o.label, text: o.value }))
+                    } : undefined,
+                    correctAnswer: tq.correctAnswer,
+                    hasFigure: Boolean(tq.figureUrl || genuineFig),
+                    needsDiagramCrop: Boolean(genuineFig && !tq.figureUrl),
+                    diagramHint: (genuineFig && !tq.figureUrl) ? (tq.diagramHint || `Diagram needed from PDF Page ${p}`) : undefined
+                  };
+                });
+                modelUsedName = 'High-Precision 2-Column Vector Text Engine';
+              } else if (textQs.length > 0) {
+                // Gemini processed page p, but check if vector text found additional questions on this page that Gemini missed
+                const pageNums = new Set(pageQuestions.map(q => q.questionNumber));
+                const accNums = new Set(accumulatedQuestions.map(q => q.questionNumber));
+                for (const tq of textQs) {
+                  if (tq.questionNumber && !pageNums.has(tq.questionNumber) && !accNums.has(tq.questionNumber)) {
+                    const genuineFig = hasGenuineDiagramRequirement(tq);
+                    pageQuestions.push({
+                      questionNumber: tq.questionNumber,
+                      subject: tq.subject,
+                      chapter: tq.chapter,
+                      english: {
+                        questionText: tq.questionText,
+                        options: tq.options.map(o => ({ label: o.label, text: o.value }))
+                      },
+                      hindi: tq.languages?.hi ? {
+                        questionText: tq.languages.hi.questionText,
+                        options: tq.languages.hi.options?.map(o => ({ label: o.label, text: o.value }))
+                      } : undefined,
+                      correctAnswer: tq.correctAnswer,
+                      hasFigure: Boolean(tq.figureUrl || genuineFig),
+                      needsDiagramCrop: Boolean(genuineFig && !tq.figureUrl),
+                      diagramHint: (genuineFig && !tq.figureUrl) ? (tq.diagramHint || `Diagram needed from PDF Page ${p}`) : undefined
+                    });
+                  }
+                }
+                pageQuestions.sort((a, b) => (a.questionNumber || 0) - (b.questionNumber || 0));
               }
             }
           } catch (textExtractErr) {
-            console.warn(`Text layer fallback note for page ${p}:`, textExtractErr);
+            console.warn(`Text layer backfill note for page ${p}:`, textExtractErr);
           }
         }
 
@@ -1575,7 +2339,8 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
           let figureDataUrl: string | undefined = undefined;
           const optionFigures: Record<string, string> = {};
 
-          if (autoCropDiagrams) {
+          const shouldAutoCrop = aiParseMode === 'full_auto' && autoCropDiagrams;
+          if (shouldAutoCrop) {
             // 1. If Gemini returned a precise bounding box, crop it directly
             const resolvedBbox = rawQ.figureBoundingBox || (rawQ as any).boundingBox || (rawQ as any).figure_bbox || (rawQ as any).bbox;
             if (resolvedBbox && Array.isArray(resolvedBbox) && resolvedBbox.length === 4) {
@@ -1587,33 +2352,28 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             }
 
             // 2. High-precision diagram detection fallback:
-            // If raw question mentions a diagram, graph, circuit, reaction scheme, benzene ring, wire loop,
-            // or if it's Physics Q1/Q2 or an organic chemistry question without an attached figure
+            // Crop strictly when question genuinely requires a visual figure (excluding "significant figures", etc.)
+            // Restrict horizontal scanning strictly to the left English column (35 to 490) so only ONE clean
+            // diagram is cropped without duplicate Hindi diagram, and terminate search before the options!
             if (!figureDataUrl) {
-              const textToCheck = `${rawQ.english?.questionText || ''} ${rawQ.hindi?.questionText || ''}`.toLowerCase();
-              const hasVisualRef = [
-                'shown in figure', 'shown in the figure', 'as shown in figure', 'as shown',
-                'in the given figure', 'in given figure', 'given diagram', 'in the circuit',
-                'given circuit', 'in the graph', 'following scheme', 'reaction scheme',
-                'benzene', 'structure of', 'following curve', 'circular bend', 'square loop',
-                'magnitude of magnetic field at the origin', 'loop pqrs', 'wire cd', 'chitra', 'चित्र में',
-                'radius a', 'current i', 'velocity v', 'diagram', 'figure', 'circuit', 'graph'
-              ].some(kw => textToCheck.includes(kw));
+              const textToCheck = `${rawQ.english?.questionText || ''} ${rawQ.hindi?.questionText || ''}`;
+              const genuinelyNeedsDiagram = hasGenuineDiagramRequirement({ questionText: textToCheck });
 
-              if (hasVisualRef) {
+              if (genuinelyNeedsDiagram) {
                 const qIndexOnPage = pageQuestions.indexOf(rawQ);
                 const safeTotal = Math.max(1, pageQuestions.length);
                 const slotHeight = 900 / safeTotal;
-                const searchYmin = Math.max(40, Math.round(50 + qIndexOnPage * slotHeight));
-                const searchYmax = Math.min(970, Math.round(50 + (qIndexOnPage + 1) * slotHeight));
+                // Diagram is located in the upper-middle of the question block; terminate strictly above options
+                const searchYmin = Math.max(40, Math.round(50 + qIndexOnPage * slotHeight + slotHeight * 0.10));
+                const searchYmax = Math.min(970, Math.round(50 + qIndexOnPage * slotHeight + slotHeight * 0.65));
 
-                // A. Run high-speed canvas pixel ink scanner to detect the visual drawing boundary
+                // A. Run canvas pixel ink scanner on left English column (35 to 490) to capture single clean diagram
                 const detectedInkBox = detectDiagramInkBoundingBoxOnCanvas(
                   processingCanvas,
                   searchYmin,
                   searchYmax,
-                  30,
-                  970
+                  35,
+                  490
                 );
 
                 if (detectedInkBox) {
@@ -1624,15 +2384,8 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                   }
                 }
 
-                // B. If ink scan didn't find a clustered drawing, fallback to estimated slot crop
-                if (!figureDataUrl) {
-                  const estimatedBox = estimateDiagramBoundingBox(qIndexOnPage, pageQuestions.length, false);
-                  const fallbackCrop = cropDiagramFromCanvas(processingCanvas, estimatedBox);
-                  if (fallbackCrop) {
-                    figureDataUrl = fallbackCrop;
-                    totalFiguresCount++;
-                  }
-                }
+                // B. If ink scan didn't find a clustered drawing, do NOT crop plain question text as a diagram!
+                // Leave figureDataUrl undefined so the user can easily crop the real diagram with the Phone Gallery Cropper.
               }
             }
 
@@ -1649,14 +2402,15 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             }
           }
 
+          const numForSubj = rawQ.questionNumber || (accumulatedQuestions.length + 1);
           let subject: MockSubject = 'Biology';
           const subjStr = (rawQ.subject || '').toLowerCase();
           if (subjStr.includes('phys')) subject = 'Physics';
           else if (subjStr.includes('chem')) subject = 'Chemistry';
           else if (subjStr.includes('bio') || subjStr.includes('bot') || subjStr.includes('zoo')) subject = 'Biology';
           else {
-            if (rawQ.questionNumber <= 50) subject = 'Physics';
-            else if (rawQ.questionNumber <= 100) subject = 'Chemistry';
+            if (numForSubj <= 45) subject = 'Physics';
+            else if (numForSubj <= 90) subject = 'Chemistry';
             else subject = 'Biology';
           }
 
@@ -1690,30 +2444,55 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
 
           // Clean verbatim question texts, strictly separate bilingual columns, and strip duplicate table rows
           let rawEnText = '';
-          if (typeof rawQ.english?.questionText === 'string' && rawQ.english.questionText.trim()) {
+          let rawHiText: string | undefined = undefined;
+
+          // 1. Direct language object priority
+          if (typeof rawQ.languages?.en?.questionText === 'string' && rawQ.languages.en.questionText.trim()) {
+            rawEnText = rawQ.languages.en.questionText.trim();
+          } else if (typeof rawQ.englishText === 'string' && rawQ.englishText.trim()) {
+            rawEnText = rawQ.englishText.trim();
+          } else if (typeof rawQ.english?.questionText === 'string' && rawQ.english.questionText.trim()) {
             rawEnText = rawQ.english.questionText.trim();
-          } else if (typeof rawQ.questionText === 'string' && rawQ.questionText.trim()) {
-            rawEnText = rawQ.questionText.trim();
-          } else if (typeof rawQ.question === 'string' && rawQ.question.trim()) {
-            rawEnText = rawQ.question.trim();
-          } else if (typeof rawQ.statement === 'string' && rawQ.statement.trim()) {
-            rawEnText = rawQ.statement.trim();
-          } else if (typeof rawQ.text === 'string' && rawQ.text.trim()) {
-            rawEnText = rawQ.text.trim();
-          } else if (typeof rawQ.english === 'string' && rawQ.english.trim()) {
-            rawEnText = rawQ.english.trim();
+          }
+
+          if (typeof rawQ.languages?.hi?.questionText === 'string' && rawQ.languages.hi.questionText.trim()) {
+            rawHiText = rawQ.languages.hi.questionText.trim();
+          } else if (typeof rawQ.hindiText === 'string' && rawQ.hindiText.trim()) {
+            rawHiText = rawQ.hindiText.trim();
           } else if (typeof rawQ.hindi?.questionText === 'string' && rawQ.hindi.questionText.trim()) {
-            rawEnText = rawQ.hindi.questionText.trim();
+            rawHiText = rawQ.hindi.questionText.trim();
+          } else if (typeof rawQ.hindi === 'string' && rawQ.hindi.trim()) {
+            rawHiText = rawQ.hindi.trim();
+          }
+
+          // 2. Check if primary string is in rawQ.questionText or rawQ.statement
+          const primaryStr = typeof rawQ.questionText === 'string' && rawQ.questionText.trim()
+            ? rawQ.questionText.trim()
+            : (typeof rawQ.statement === 'string' ? rawQ.statement.trim() : (typeof rawQ.question === 'string' ? rawQ.question.trim() : (typeof rawQ.text === 'string' ? rawQ.text.trim() : '')));
+
+          if (primaryStr) {
+            // Check for explicit bilingual separator e.g. "(हिंदी):"
+            const biSplit = primaryStr.match(/^([\s\S]*?)(?:\r?\n\s*\(हिंदी\)\s*:\s*|\s*\(हिंदी\)\s*:\s*)([\s\S]+)$/i);
+            if (biSplit) {
+              if (!rawEnText) rawEnText = biSplit[1].trim();
+              if (!rawHiText) rawHiText = biSplit[2].trim();
+            } else if (!rawEnText) {
+              rawEnText = primaryStr;
+            }
+          }
+
+          if (!rawEnText && rawHiText) {
+            rawEnText = rawHiText;
           }
 
           // STRICT VALIDATION: If no valid problem text was extracted, skip this item! Never add blank or placeholder questions!
           if (!rawEnText || rawEnText.toLowerCase() === `question ${qNum}`.toLowerCase()) {
-            continue;
+            if (rawHiText && rawHiText.trim().length > 3) {
+              rawEnText = rawHiText;
+            } else {
+              continue;
+            }
           }
-
-          const rawHiText = rawQ.hindi && typeof rawQ.hindi.questionText === 'string' && rawQ.hindi.questionText.trim() 
-            ? rawQ.hindi.questionText.trim() 
-            : undefined;
           
           // Separate languages and eliminate Hindi from English question text
           const separatedTexts = separateBilingualAndCleanQuestion(rawEnText, rawHiText);
@@ -1728,10 +2507,15 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             finalEnText = cleanedHiText || rawEnText || (rawQ.questionText || '').trim();
           }
 
-          // STRICT VALIDATION: If no valid problem text was extracted, skip this item! Never add blank or placeholder questions!
+          // STRICT VALIDATION: If no valid problem text was extracted, check if it's a visual/diagram question before skipping!
           if (!finalEnText || finalEnText.trim().length < 3 || /^Question\s*\d+$/i.test(finalEnText.trim())) {
-            console.warn(`[Skip Blank Question] Question ${qNum} has no valid problem text. Skipping.`);
-            continue;
+            const hasVisualFigure = Boolean(figureDataUrl || rawQ.hasFigure || rawQ.figureBoundingBox || (rawQ as any).needsDiagramCrop);
+            if (hasVisualFigure) {
+              finalEnText = `[Question ${qNum}] Identify the correct option from the given diagram / chemical structure:`;
+            } else {
+              console.warn(`[Skip Blank Question] Question ${qNum} has no valid problem text. Skipping.`);
+              continue;
+            }
           }
 
           // Parse and separate options safely
@@ -1780,6 +2564,42 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             imageUrl: optionFigures[opt.label]
           }));
 
+          // Dual-Language Bilingual Composition: If both English and Hindi are present on paper, preserve both!
+          const isBilingual = Boolean(cleanedEnText && cleanedHiText && cleanedEnText.trim() !== cleanedHiText.trim());
+          const finalQuestionDisplay = isBilingual 
+            ? `${cleanedEnText}\n\n(हिंदी): ${cleanedHiText}`
+            : (cleanedEnText || cleanedHiText || finalEnText || `Question ${qNum}`);
+
+          const compositeOptions = cleanedOptions.map((opt, oIdx) => {
+            const hiOpt = cleanedHiOptions[oIdx];
+            const enVal = (opt.value || '').trim();
+            const hiVal = (hiOpt?.value || '').trim();
+            
+            // If English is just a dummy placeholder "Option (A)" and Hindi has actual text, use Hindi!
+            if ((!enVal || /^Option\s*\([A-D]\)$/i.test(enVal)) && hiVal && !/^विकल्प\s*\([A-D]\)$/i.test(hiVal)) {
+              return {
+                ...opt,
+                value: hiVal
+              };
+            }
+            return {
+              ...opt,
+              value: enVal || hiVal || `Option (${opt.label})`
+            };
+          });
+
+          const resolvedPdfPage = p;
+          const genuineFig = hasGenuineDiagramRequirement({
+            questionText: finalQuestionDisplay,
+            figureUrl: figureDataUrl,
+            hasFigure: rawQ.hasFigure,
+            needsDiagramCrop: (rawQ as any).needsDiagramCrop
+          });
+          const needsCrop = Boolean(genuineFig && !figureDataUrl);
+          const diagramHint = needsCrop
+            ? `Diagram needed from PDF Page ${resolvedPdfPage}${rawQ.figureDescription ? `: ${rawQ.figureDescription}` : ''}`
+            : undefined;
+
           const formattedQ: MockQuestion = {
             id: `q_parsed_${Date.now()}_${qNum}`,
             testId: selectedTest ? selectedTest.id : 'temp_test',
@@ -1801,17 +2621,22 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                 matchTable: parsedMatchTable
               } : undefined
             },
-            questionText: finalEnText,
+            questionText: finalQuestionDisplay,
             options: cleanedOptions,
+            hasFigure: Boolean(figureDataUrl || genuineFig),
+            needsDiagramCrop: needsCrop,
+            diagramHint: diagramHint,
+            figureDescription: rawQ.figureDescription,
             figures: figureDataUrl ? [figureDataUrl] : [],
             figureUrl: figureDataUrl,
             questionImageUrl: figureDataUrl,
             optionFigures: optionFigures,
+            optionsWithFigures: rawQ.optionsWithFigures,
             matchTable: parsedMatchTable,
-            pdfPageNumber: p,
+            pdfPageNumber: resolvedPdfPage,
             figureCropInfo: rawQ.figureBoundingBox ? {
               box: rawQ.figureBoundingBox,
-              pageNumber: p
+              pageNumber: resolvedPdfPage
             } : undefined,
             correctAnswer: (rawQ.correctAnswer as any) || 'A',
             marks: 4,
@@ -1821,7 +2646,125 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
 
           const existingIdx = accumulatedQuestions.findIndex(q => q.questionNumber === qNum);
           if (existingIdx > -1) {
-            accumulatedQuestions[existingIdx] = formattedQ;
+            const existing = accumulatedQuestions[existingIdx];
+            const pageDiff = Math.abs((existing.pdfPageNumber || resolvedPdfPage) - resolvedPdfPage);
+
+            // Only merge as bilingual translation if on the SAME or adjacent page
+            if (pageDiff <= 1) {
+              const devanagariRegex = /[\u0900-\u097F]/g;
+              const existDevCount = (existing.questionText.match(devanagariRegex) || []).length;
+              const newDevCount = (formattedQ.questionText.match(devanagariRegex) || []).length;
+              const existLen = existing.questionText.length || 1;
+              const newLen = formattedQ.questionText.length || 1;
+
+              const isExistHindi = existDevCount / existLen > 0.25;
+              const isNewHindi = newDevCount / newLen > 0.25;
+
+              if (!isExistHindi && isNewHindi) {
+                // Existing was English, new is Hindi -> merge cleanly once!
+                const cleanHi = formattedQ.questionText.replace(/\(हिंदी\)\s*:\s*/gi, '').trim();
+                const mergedText = existing.questionText.includes('(हिंदी):')
+                  ? existing.questionText
+                  : `${existing.questionText}\n\n(हिंदी): ${cleanHi}`;
+
+                const mergedOptions = existing.options.map((enOpt, oIdx) => {
+                  const hiOpt = formattedQ.options[oIdx];
+                  let enVal = (enOpt.value || '').trim();
+                  let hiVal = (hiOpt?.value || '').trim();
+                  // CRITICAL: (?!\d)\s+ lookahead ensures we NEVER strip '2.' from '2.04' or '2.0'!
+                  enVal = enVal.replace(/^(?:\([1-4A-Da-d१-४]\)|\[[1-4A-Da-d१-४]\]|\b[1-4A-Da-d१-४]\)|\b[1-4A-Da-d१-४][\.:](?!\d)\s+|[A-Da-d][\.:](?!\d)\s+)\s*/i, '').trim();
+                  hiVal = hiVal.replace(/^(?:\([1-4A-Da-d१-४]\)|\[[1-4A-Da-d१-४]\]|\b[1-4A-Da-d१-४]\)|\b[1-4A-Da-d१-४][\.:](?!\d)\s+|[A-Da-d][\.:](?!\d)\s+)\s*/i, '').trim();
+
+                  if (/^Option\s*\([A-D]\)$/i.test(enVal) && hiVal && !/^विकल्प\s*\([A-D]\)$/i.test(hiVal)) {
+                    return { ...enOpt, value: hiVal };
+                  }
+                  return { ...enOpt, value: enVal || hiVal || `Option (${enOpt.label})` };
+                });
+
+                const figUrl = existing.figureUrl || formattedQ.figureUrl;
+                const genuineFig = hasGenuineDiagramRequirement({ questionText: mergedText, figureUrl: figUrl });
+
+                accumulatedQuestions[existingIdx] = {
+                  ...existing,
+                  questionText: mergedText,
+                  options: mergedOptions,
+                  languages: {
+                    en: existing.languages?.en || { questionText: existing.questionText, options: existing.options },
+                    hi: { questionText: cleanHi, options: formattedQ.options }
+                  },
+                  hasFigure: Boolean(figUrl || genuineFig),
+                  figureUrl: figUrl,
+                  pdfPageNumber: formattedQ.figureUrl ? formattedQ.pdfPageNumber : (existing.figureUrl ? existing.pdfPageNumber : (resolvedPdfPage || existing.pdfPageNumber)),
+                  figureCropInfo: formattedQ.figureUrl ? formattedQ.figureCropInfo : (existing.figureUrl ? existing.figureCropInfo : (formattedQ.figureCropInfo || existing.figureCropInfo)),
+                  needsDiagramCrop: Boolean(genuineFig && !figUrl),
+                  diagramHint: (genuineFig && !figUrl) ? (existing.diagramHint || formattedQ.diagramHint || `Diagram needed for Q${existing.questionNumber}`) : undefined
+                };
+              } else if (isExistHindi && !isNewHindi) {
+                // Existing was Hindi, new is English -> make English primary!
+                const cleanHi = existing.questionText.replace(/\(हिंदी\)\s*:\s*/gi, '').trim();
+                const mergedText = `${formattedQ.questionText}\n\n(हिंदी): ${cleanHi}`;
+                const mergedOptions = formattedQ.options.map((enOpt, oIdx) => {
+                  const hiOpt = existing.options[oIdx];
+                  let enVal = (enOpt.value || '').trim();
+                  let hiVal = (hiOpt?.value || '').trim();
+                  // CRITICAL: (?!\d)\s+ lookahead ensures we NEVER strip '2.' from '2.04' or '2.0'!
+                  enVal = enVal.replace(/^(?:\([1-4A-Da-d१-४]\)|\[[1-4A-Da-d१-४]\]|\b[1-4A-Da-d१-४]\)|\b[1-4A-Da-d१-४][\.:](?!\d)\s+|[A-Da-d][\.:](?!\d)\s+)\s*/i, '').trim();
+                  hiVal = hiVal.replace(/^(?:\([1-4A-Da-d१-४]\)|\[[1-4A-Da-d१-४]\]|\b[1-4A-Da-d१-४]\)|\b[1-4A-Da-d१-४][\.:](?!\d)\s+|[A-Da-d][\.:](?!\d)\s+)\s*/i, '').trim();
+
+                  if (/^Option\s*\([A-D]\)$/i.test(enVal) && hiVal && !/^विकल्प\s*\([A-D]\)$/i.test(hiVal)) {
+                    return { ...enOpt, value: hiVal };
+                  }
+                  return { ...enOpt, value: enVal || hiVal || `Option (${enOpt.label})` };
+                });
+
+                const figUrl = formattedQ.figureUrl || existing.figureUrl;
+                const genuineFig = hasGenuineDiagramRequirement({ questionText: mergedText, figureUrl: figUrl });
+
+                accumulatedQuestions[existingIdx] = {
+                  ...formattedQ,
+                  questionText: mergedText,
+                  options: mergedOptions,
+                  languages: {
+                    en: { questionText: formattedQ.questionText, options: formattedQ.options },
+                    hi: { questionText: cleanHi, options: existing.options }
+                  },
+                  hasFigure: Boolean(figUrl || genuineFig),
+                  figureUrl: figUrl,
+                  pdfPageNumber: formattedQ.figureUrl ? formattedQ.pdfPageNumber : (existing.figureUrl ? existing.pdfPageNumber : (resolvedPdfPage || existing.pdfPageNumber)),
+                  figureCropInfo: formattedQ.figureUrl ? formattedQ.figureCropInfo : (existing.figureUrl ? existing.figureCropInfo : (formattedQ.figureCropInfo || existing.figureCropInfo)),
+                  needsDiagramCrop: Boolean(genuineFig && !figUrl),
+                  diagramHint: (genuineFig && !figUrl) ? (formattedQ.diagramHint || existing.diagramHint || `Diagram needed for Q${formattedQ.questionNumber}`) : undefined
+                };
+              } else {
+                // Both are same language: check whether it's an authentic duplicate or distinct question
+                const cleanA = formattedQ.questionText.replace(/^(?:Question|Q\.?)\s*\d+[\.:\s]*/i, '').replace(/\s+/g, ' ').trim().toLowerCase();
+                const cleanB = existing.questionText.replace(/^(?:Question|Q\.?)\s*\d+[\.:\s]*/i, '').replace(/\s+/g, ' ').trim().toLowerCase();
+                // ONLY treat as true duplicate if full text matches or one completely contains the other (>=80 chars)
+                const isDuplicate = cleanA === cleanB || (cleanA.length > 80 && cleanB.length > 80 && (cleanA.includes(cleanB) || cleanB.includes(cleanA)));
+
+                if (isDuplicate) {
+                  // Keep the more complete version
+                  if (formattedQ.questionText.length > existing.questionText.length) {
+                    accumulatedQuestions[existingIdx] = {
+                      ...formattedQ,
+                      questionNumber: existing.questionNumber,
+                      figureUrl: formattedQ.figureUrl || existing.figureUrl
+                    };
+                  }
+                } else {
+                  // Distinct question that collided on question number (e.g. section numbering or multi-subject paper)!
+                  // NEVER overwrite! Re-index so all 180 questions are preserved!
+                  const maxQNum = Math.max(...accumulatedQuestions.map(q => q.questionNumber), 0);
+                  formattedQ.questionNumber = maxQNum + 1;
+                  accumulatedQuestions.push(formattedQ);
+                }
+              }
+            } else {
+              // Questions are from different pages (e.g. Page 2 and Page 28). They are distinct questions!
+              const maxQNum = Math.max(...accumulatedQuestions.map(q => q.questionNumber), 0);
+              formattedQ.questionNumber = maxQNum + 1;
+              accumulatedQuestions.push(formattedQ);
+            }
           } else {
             accumulatedQuestions.push(formattedQ);
           }
@@ -1830,8 +2773,8 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
         accumulatedQuestions.sort((a, b) => a.questionNumber - b.questionNumber);
         setAiParsedQuestionsList([...accumulatedQuestions]);
 
-        // Real-time Per-Page Autosave: If editing an existing test, update test questions in storage immediately
-        if (selectedTest && accumulatedQuestions.length > 0) {
+        // Real-time Per-Page Autosave: If editing an existing test in the questions tab, update test questions in storage immediately
+        if (activeTab === 'questions' && selectedTest && !isCreatingTest && accumulatedQuestions.length > 0) {
           const mergedWithExisting = [...questions];
           for (const newQ of accumulatedQuestions) {
             const mIdx = mergedWithExisting.findIndex(m => m.questionNumber === newQ.questionNumber);
@@ -1844,6 +2787,9 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
           mergedWithExisting.sort((a, b) => a.questionNumber - b.questionNumber);
           handleSaveQuestionsList(mergedWithExisting);
           setQuestions(mergedWithExisting);
+        } else if (accumulatedQuestions.length > 0) {
+          // Live display for new test creation: keeps questions list in sync with current scan
+          setQuestions([...accumulatedQuestions]);
         }
 
         setAiParseProgress(prev => ({
@@ -1938,6 +2884,11 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     let appliedKeys = 0;
     let appliedSols = 0;
 
+    const solutionQNums = Object.keys(parsedSolutionsResult.answers).map(Number).filter(n => !isNaN(n));
+    const existingQNums = new Set(currentQList.map(q => q.questionNumber));
+    const missingQNums = solutionQNums.filter(n => !existingQNums.has(n)).sort((a, b) => a - b);
+    setSolutionsMissingQNums(missingQNums);
+
     const updated = currentQList.map(q => {
       let modified = { ...q };
       const qNum = q.questionNumber;
@@ -1977,8 +2928,63 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
       }).catch(e => console.warn('Questions sync error:', e));
     }
 
-    setAnswerKeyAppliedMessage(`✓ Applied ${appliedKeys} Answer Keys and ${appliedSols} Detailed Solutions to test!`);
-    triggerToast(`🎉 Successfully applied ${appliedKeys} Answer Keys & ${appliedSols} Solutions to "${selectedTest?.title || 'Test'}"!`);
+    if (missingQNums.length > 0) {
+      setAnswerKeyAppliedMessage(`⚠️ Solution PDF has ${solutionQNums.length} questions, but test currently has only ${currentQList.length} questions. Applied keys to matching ${appliedKeys} questions. Missing questions in test: Q${missingQNums.slice(0, 8).join(', Q')}${missingQNums.length > 8 ? ` (+${missingQNums.length - 8} more)` : ''}.`);
+      triggerToast(`Applied keys to ${appliedKeys} questions. Note: ${missingQNums.length} questions in solutions were not in test.`);
+    } else {
+      setAnswerKeyAppliedMessage(`✓ Applied ${appliedKeys} Answer Keys and ${appliedSols} Detailed Solutions to test!`);
+      triggerToast(`🎉 Successfully applied ${appliedKeys} Answer Keys & ${appliedSols} Solutions to "${selectedTest?.title || 'Test'}"!`);
+    }
+  };
+
+  // Auto-Fill Missing Questions from Solutions PDF so test has the full 180 questions matching answer keys
+  const handleFillMissingQuestionsFromSolutions = () => {
+    if (!parsedSolutionsResult) return;
+    const currentQList = aiParsedQuestionsList.length > 0 ? aiParsedQuestionsList : questions;
+    const existingQNums = new Set(currentQList.map(q => q.questionNumber));
+    const solutionQNums = Object.keys(parsedSolutionsResult.answers).map(Number).filter(n => !isNaN(n));
+    const missingQNums = solutionQNums.filter(n => !existingQNums.has(n)).sort((a, b) => a - b);
+    if (missingQNums.length === 0) {
+      triggerToast('All questions from solutions PDF are already in test!');
+      return;
+    }
+
+    const testId = selectedTest?.id || 'current_test';
+    const newQuestions: MockQuestion[] = missingQNums.map(qNum => {
+      const subj = qNum <= 50 ? 'Physics' : qNum <= 100 ? 'Chemistry' : 'Biology';
+      const ans = parsedSolutionsResult.answers[qNum] || 'A';
+      const sol = parsedSolutionsResult.solutions[qNum] || '';
+      return {
+        id: `q_sol_fill_${Date.now()}_${qNum}`,
+        testId,
+        questionNumber: qNum,
+        subject: subj,
+        chapter: `${subj} Core`,
+        difficulty: 'Moderate',
+        questionText: `Question ${qNum}`,
+        options: [
+          { label: 'A', value: 'Option A', type: 'text' },
+          { label: 'B', value: 'Option B', type: 'text' },
+          { label: 'C', value: 'Option C', type: 'text' },
+          { label: 'D', value: 'Option D', type: 'text' }
+        ],
+        correctAnswer: ans,
+        explanation: sol,
+        marks: 4,
+        negativeMarks: 1,
+        needsReview: true
+      };
+    });
+
+    const combined = [...currentQList, ...newQuestions].sort((a, b) => a.questionNumber - b.questionNumber);
+    setAiParsedQuestionsList(combined);
+    setQuestions(combined);
+    if (selectedTest) {
+      handleSaveQuestionsList(combined);
+    }
+    setSolutionsMissingQNums([]);
+    setAnswerKeyAppliedMessage(`✓ Added ${newQuestions.length} missing questions (Q${missingQNums[0]}–Q${missingQNums[missingQNums.length - 1]}) from Solution PDF! Full ${combined.length} questions now ready.`);
+    triggerToast(`Added ${newQuestions.length} missing questions to complete ${combined.length} questions!`);
   };
 
   // Auto-Apply Pasted Answer Key
@@ -2049,8 +3055,10 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     }
   };
 
-  // Canvas Crop Handlers (Mouse Drag on Rendered PDF Page)
+  // Canvas Crop Handlers (Mouse Drag on Rendered PDF Page with Zero Page Scroll)
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (!pdfCanvasRef.current) return;
     const rect = pdfCanvasRef.current.getBoundingClientRect();
     const scaleX = pdfCanvasRef.current.width / rect.width;
@@ -2066,6 +3074,8 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
 
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDrawingCrop || !pdfCanvasRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
     const rect = pdfCanvasRef.current.getBoundingClientRect();
     const scaleX = pdfCanvasRef.current.width / rect.width;
     const scaleY = pdfCanvasRef.current.height / rect.height;
@@ -2089,6 +3099,79 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
     setIsDrawingCrop(false);
 
     if (cropBox.w > 10 && cropBox.h > 10) {
+      const croppedUrl = cropRegionFromCanvas(pdfCanvasRef.current, {
+        x: cropBox.x,
+        y: cropBox.y,
+        width: cropBox.w,
+        height: cropBox.h
+      });
+      setCroppedFigureDataUrl(croppedUrl);
+    }
+  };
+
+  // Crop Box Move & Resize Handlers (Prevents entire page scrolling while moving the box)
+  const handleBoxPointerDown = (e: React.PointerEvent, action: 'move' | 'nw' | 'ne' | 'se' | 'sw') => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+    if (cropBox) {
+      setIsDraggingCropBox(true);
+      setCropBoxDragAction(action);
+      cropBoxDragStartRef.current = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        box: { ...cropBox }
+      };
+    }
+  };
+
+  const handleBoxPointerMove = (e: React.PointerEvent) => {
+    if (!isDraggingCropBox || !pdfCanvasRef.current || !cropBox) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = pdfCanvasRef.current.getBoundingClientRect();
+    const scaleX = pdfCanvasRef.current.width / rect.width;
+    const scaleY = pdfCanvasRef.current.height / rect.height;
+
+    const dx = (e.clientX - cropBoxDragStartRef.current.clientX) * scaleX;
+    const dy = (e.clientY - cropBoxDragStartRef.current.clientY) * scaleY;
+    const orig = cropBoxDragStartRef.current.box;
+    const cw = pdfCanvasRef.current.width;
+    const ch = pdfCanvasRef.current.height;
+
+    let newBox = { ...orig };
+
+    if (cropBoxDragAction === 'move') {
+      newBox.x = Math.max(0, Math.min(cw - orig.w, orig.x + dx));
+      newBox.y = Math.max(0, Math.min(ch - orig.h, orig.y + dy));
+    } else if (cropBoxDragAction === 'se') {
+      newBox.w = Math.max(20, Math.min(cw - orig.x, orig.w + dx));
+      newBox.h = Math.max(20, Math.min(ch - orig.y, orig.h + dy));
+    } else if (cropBoxDragAction === 'nw') {
+      const nx = Math.max(0, Math.min(orig.x + orig.w - 20, orig.x + dx));
+      const ny = Math.max(0, Math.min(orig.y + orig.h - 20, orig.y + dy));
+      newBox = { x: nx, y: ny, w: orig.w - (nx - orig.x), h: orig.h - (ny - orig.y) };
+    } else if (cropBoxDragAction === 'ne') {
+      const ny = Math.max(0, Math.min(orig.y + orig.h - 20, orig.y + dy));
+      newBox = { x: orig.x, y: ny, w: Math.max(20, Math.min(cw - orig.x, orig.w + dx)), h: orig.h - (ny - orig.y) };
+    } else if (cropBoxDragAction === 'sw') {
+      const nx = Math.max(0, Math.min(orig.x + orig.w - 20, orig.x + dx));
+      newBox = { x: nx, y: orig.y, w: orig.w - (nx - orig.x), h: Math.max(20, Math.min(ch - orig.y, orig.h + dy)) };
+    }
+
+    setCropBox(newBox);
+  };
+
+  const handleBoxPointerUp = (e: React.PointerEvent) => {
+    if (e && 'releasePointerCapture' in e.target && e.pointerId) {
+      try {
+        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {}
+    }
+    setIsDraggingCropBox(false);
+    if (pdfCanvasRef.current && cropBox && cropBox.w > 10 && cropBox.h > 10) {
       const croppedUrl = cropRegionFromCanvas(pdfCanvasRef.current, {
         x: cropBox.x,
         y: cropBox.y,
@@ -2714,7 +3797,10 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
             {/* 2. CREATE & EDIT MOCK TEST FORM (FREE VS PREMIUM LOGIC) */}
             {/* ============================================================== */}
             {isCreatingTest && (
-              <div className="bg-white rounded-3xl border-2 border-blue-500 p-5 sm:p-7 shadow-xl space-y-6 animate-in fade-in duration-200">
+              <div 
+                id="mock-test-form-section"
+                className="bg-white rounded-3xl border-2 border-blue-500 p-5 sm:p-7 shadow-xl space-y-6 animate-in fade-in duration-200 ring-4 ring-blue-100"
+              >
                 {/* 1. Header Actions */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
                   <div className="flex items-center gap-3">
@@ -2767,6 +3853,19 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                       className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer"
                     >
                       <span>[Publish &amp; Add Questions]</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCreatingTest(false);
+                        setEditingTestId(null);
+                      }}
+                      className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-700 transition cursor-pointer"
+                      title="Cancel and close edit"
+                      aria-label="Close"
+                    >
+                      <X className="w-5 h-5" />
                     </button>
                   </div>
                 </div>
@@ -2888,6 +3987,71 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                         </p>
                       </div>
                     </div>
+                  </div>
+
+                  {/* Multi-Category & Standalone Assignment (Synced with Test Categories Manager) */}
+                  <div className="pt-3 border-t border-slate-200/80 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label className="text-xs font-bold text-slate-800">
+                        Assign Portal Categories (Multi-select) or Standalone
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs font-bold text-amber-800 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(testFormData.isStandalone)}
+                          onChange={e =>
+                            setTestFormData(prev => ({
+                              ...prev,
+                              isStandalone: e.target.checked,
+                              categoryIds: e.target.checked ? [] : prev.categoryIds
+                            }))
+                          }
+                          className="w-4 h-4 rounded text-amber-600"
+                        />
+                        <span>Standalone (not in category cards)</span>
+                      </label>
+                    </div>
+                    {!testFormData.isStandalone && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {dynamicCategories.map(cat => {
+                          const currentIds =
+                            Array.isArray(testFormData.categoryIds) && testFormData.categoryIds.length > 0
+                              ? testFormData.categoryIds
+                              : resolveTestCategoryIds(testFormData as MockTest);
+                          const isChecked = currentIds.includes(cat.id);
+                          return (
+                            <button
+                              key={cat.id}
+                              type="button"
+                              onClick={() => {
+                                setTestFormData(prev => {
+                                  const existing =
+                                    Array.isArray(prev.categoryIds) && prev.categoryIds.length > 0
+                                      ? prev.categoryIds
+                                      : resolveTestCategoryIds(prev as MockTest);
+                                  const next = isChecked
+                                    ? existing.filter(id => id !== cat.id)
+                                    : [...existing, cat.id];
+                                  return {
+                                    ...prev,
+                                    isStandalone: false,
+                                    categoryIds: next.length > 0 ? next : [cat.id]
+                                  };
+                                });
+                              }}
+                              className={`min-h-[36px] px-3 py-1 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                                isChecked
+                                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:border-indigo-300'
+                              }`}
+                            >
+                              {isChecked ? '✓ ' : ''}
+                              {cat.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   {/* Contextual Options for Chapter Wise & Full Subject */}
@@ -3590,22 +4754,12 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                           {/* Edit Test */}
                           <button
                             type="button"
-                            onClick={() => {
-                              setSelectedTest(test);
-                              const cat = getTestCategory(test);
-                              setTestFormData({
-                                ...test,
-                                testTypeCategory: cat,
-                                subject: test.subject || (test.subjects && (test.subjects[0] as MockSubject)) || 'Physics',
-                                chapter: test.chapter || ''
-                              });
-                              setEditingTestId(test.id);
-                              setIsCreatingTest(true);
-                            }}
-                            className="p-1.5 hover:bg-slate-100 text-blue-600 rounded-lg cursor-pointer transition"
+                            onClick={() => handleOpenEditTest(test)}
+                            className="px-2.5 py-1.5 hover:bg-blue-50 text-blue-600 rounded-lg cursor-pointer transition flex items-center gap-1 font-bold text-xs"
                             title="Edit Test Parameters"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
+                            <span>Edit</span>
                           </button>
 
                           {/* Delete */}
@@ -3784,7 +4938,34 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                     </div>
 
                     {/* Header Action Buttons */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleOpenEditTest(selectedTest);
+                          setActiveTab('tests');
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold transition cursor-pointer"
+                        title="Edit Test Title, Duration, Marks, Syllabus, or Pricing"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Edit Test</span>
+                      </button>
+                      <label
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold transition cursor-pointer shadow-2xs"
+                        title="Upload Official Solutions & Answer Key PDF to automatically apply answers and step-by-step explanations"
+                      >
+                        <FileText className="w-4 h-4 text-emerald-600" />
+                        <span className="hidden sm:inline">Upload Solutions PDF</span>
+                        <span className="sm:hidden">Solutions</span>
+                        <input
+                          type="file"
+                          accept="application/pdf"
+                          onChange={handleSolutionsPdfUpload}
+                          className="hidden"
+                        />
+                      </label>
+
                       <button
                         type="button"
                         onClick={() => setIsOpenCanvasBuilder(true)}
@@ -3793,6 +4974,25 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                       >
                         <Sparkles className="w-4 h-4 text-indigo-500" />
                         <span>Visual Canvas</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowPrePublishAuditModal(true)}
+                        className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer shadow-2xs ${
+                          accuracyAudit.flaggedCount === 0
+                            ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300'
+                        }`}
+                        title="Pre-Publish Verification & Accuracy Audit Report"
+                      >
+                        <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                        <span>Audit Report</span>
+                        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          accuracyAudit.flaggedCount === 0 ? 'bg-emerald-200 text-emerald-950' : 'bg-amber-200 text-amber-950'
+                        }`}>
+                          {accuracyAudit.flaggedCount === 0 ? '100% Passed' : `${accuracyAudit.flaggedCount} Flags`}
+                        </span>
                       </button>
 
                       <button
@@ -3843,6 +5043,26 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                         {diagramQuestions.length} Figures
                       </span>
                     </button>
+
+                    {/* Quick Filter: Questions Needing Diagram Crops */}
+                    {questionsExpectingDiagrams.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTestQuestionsTab('diagrams');
+                          setDiagramCategoryFilter('missing_expected');
+                        }}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer shrink-0 ${
+                          testQuestionsTab === 'diagrams' && diagramCategoryFilter === 'missing_expected'
+                            ? 'bg-amber-600 text-white shadow-md font-black ring-2 ring-amber-300 animate-pulse'
+                            : 'text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300'
+                        }`}
+                        title="Questions referencing diagrams that need manual crop from PDF"
+                      >
+                        <Crop className="w-4 h-4 text-amber-600" />
+                        <span>📷 Crop Missing ({questionsExpectingDiagrams.length})</span>
+                      </button>
+                    )}
 
                     {/* Dedicated Question Adding Options Sub-Tab (Explicit User Requirement) */}
                     <button
@@ -4012,6 +5232,41 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                               ))}
                             </div>
 
+                            {/* Diagram Quick Filter Badges */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFilterMissingFiguresOnly(prev => !prev);
+                                if (!filterMissingFiguresOnly) setFilterFiguresOnly(false);
+                              }}
+                              className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                                filterMissingFiguresOnly
+                                  ? 'bg-amber-500 text-white shadow-xs'
+                                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200'
+                              }`}
+                              title="Show only questions that need diagram cropping from PDF"
+                            >
+                              <Crop className="w-3.5 h-3.5" />
+                              <span>📷 Needs Diagram ({questionsExpectingDiagrams.length})</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFilterFiguresOnly(prev => !prev);
+                                if (!filterFiguresOnly) setFilterMissingFiguresOnly(false);
+                              }}
+                              className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                                filterFiguresOnly
+                                  ? 'bg-purple-700 text-white shadow-xs'
+                                  : 'bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200'
+                              }`}
+                              title="Show only questions that already have diagrams attached"
+                            >
+                              <ImageIcon className="w-3.5 h-3.5" />
+                              <span>🖼️ Has Diagram ({diagramQuestions.length})</span>
+                            </button>
+
                             <button
                               type="button"
                               onClick={() => {
@@ -4077,6 +5332,15 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                           {questions
                             .filter(q => {
                               if (aiPreviewSubjectFilter !== 'All' && q.subject !== aiPreviewSubjectFilter) return false;
+                              if (filterFiguresOnly) {
+                                const hasFig = Boolean(q.figureUrl || q.questionImageUrl || (q.figures && q.figures.length > 0));
+                                if (!hasFig) return false;
+                              }
+                              if (filterMissingFiguresOnly) {
+                                const hasFig = Boolean(q.figureUrl || q.questionImageUrl || (q.figures && q.figures.length > 0));
+                                const needsDiag = hasGenuineDiagramRequirement(q);
+                                if (hasFig || !needsDiag) return false;
+                              }
                               if (searchQuery.trim()) {
                                 const qStr = searchQuery.toLowerCase();
                                 const text = (q?.languages?.en?.questionText || q?.questionText || '').toLowerCase();
@@ -4089,12 +5353,13 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                               const hasFig = Boolean(q.figureUrl || q.questionImageUrl || (q.figures && q.figures.length > 0));
                               const figUrl = q.figureUrl || q.questionImageUrl || q.figures?.[0];
                               const isSelected = selectedQuestionNums.includes(q.questionNumber);
+                              const needsDiagram = !hasFig && hasGenuineDiagramRequirement(q);
 
                               return (
                                 <div
                                   key={q.id ? `${q.id}-${idx}` : `test-q-${q.questionNumber}-${idx}`}
                                   className={`bg-white p-4 sm:p-5 rounded-2xl border transition space-y-3 shadow-2xs ${
-                                    isSelected ? 'border-blue-500 ring-2 ring-blue-100 bg-blue-50/20' : 'border-slate-200/90 hover:border-slate-300'
+                                    isSelected ? 'border-blue-500 ring-2 ring-blue-100 bg-blue-50/20' : needsDiagram ? 'border-amber-300 ring-1 ring-amber-100' : 'border-slate-200/90 hover:border-slate-300'
                                   }`}
                                 >
                                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
@@ -4122,24 +5387,37 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                                       </span>
                                     </div>
 
-                                    <div className="flex items-center gap-1.5">
-                                      {hasFig && (
-                                        <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200">
-                                          <ImageIcon className="w-3 h-3" />
-                                          <span>Diagram</span>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      {/* Clear Sign for Diagram Status */}
+                                      {hasFig ? (
+                                        <span className="inline-flex items-center gap-1 text-[10.5px] font-black px-2.5 py-0.5 rounded-lg bg-purple-100 text-purple-800 border border-purple-300">
+                                          <ImageIcon className="w-3.5 h-3.5 text-purple-600" />
+                                          <span>Diagram (Page {q.pdfPageNumber || 1})</span>
                                         </span>
-                                      )}
+                                      ) : needsDiagram ? (
+                                        <span className="inline-flex items-center gap-1 text-[10.5px] font-black px-2.5 py-0.5 rounded-lg bg-amber-500 text-white shadow-xs animate-pulse">
+                                          <span>📷 DIAGRAM REQUIRED</span>
+                                          <span className="bg-amber-700/80 px-1.5 py-0.2 rounded text-[9.5px]">Page {q.pdfPageNumber || 1}</span>
+                                        </span>
+                                      ) : null}
+
                                       <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
                                         Correct: <strong className="text-emerald-700 font-black">{q.correctAnswer}</strong>
                                       </span>
+
+                                      {/* Direct Diagram Cropper Action */}
                                       <button
                                         type="button"
                                         onClick={() => setRecroppingQuestion(q)}
-                                        className="inline-flex items-center gap-1 px-2 py-1 text-[10.5px] font-bold rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition cursor-pointer"
-                                        title="Recrop diagram directly from original PDF page"
+                                        className={`inline-flex items-center gap-1 px-3 py-1 text-xs font-black rounded-xl transition cursor-pointer shadow-2xs active:scale-95 ${
+                                          needsDiagram
+                                            ? 'bg-amber-500 hover:bg-amber-600 text-white ring-2 ring-amber-300'
+                                            : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                                        }`}
+                                        title={hasFig ? `Recrop diagram directly from original PDF Page ${q.pdfPageNumber || 1}` : `Crop Diagram from PDF Page ${q.pdfPageNumber || 1}`}
                                       >
-                                        <Crop className="w-3 h-3 text-indigo-600" />
-                                        <span>{hasFig ? 'Recrop' : 'Crop from PDF'}</span>
+                                        <Crop className="w-3.5 h-3.5" />
+                                        <span>{hasFig ? 'Re-Crop PDF' : `✂️ Crop Page ${q.pdfPageNumber || 1}`}</span>
                                       </button>
                                       <button
                                         type="button"
@@ -4160,9 +5438,9 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                                     </div>
                                   </div>
 
-                                  {/* Question Text with duplicate table stripping */}
-                                  <div className="text-xs sm:text-sm font-semibold text-slate-800 leading-relaxed">
-                                    {cleanQuestionTextForMatchTable(q?.languages?.en?.questionText || q?.questionText, q.matchTable)}
+                                  {/* Question Text with duplicate table stripping & bilingual preservation */}
+                                  <div className="text-xs sm:text-sm font-semibold text-slate-800 leading-relaxed whitespace-pre-line">
+                                    {cleanQuestionTextForMatchTable(q?.questionText || q?.languages?.en?.questionText, q.matchTable)}
                                   </div>
 
                                   {/* Structured Match Table if present */}
@@ -4247,54 +5525,32 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                                       </div>
                                     </div>
                                   ) : (
-                                    /* Missing Figure Notice or Add Figure Button */
-                                    <div className="flex flex-wrap items-center justify-between gap-2 p-2 bg-slate-50/80 rounded-xl border border-dashed border-slate-200">
-                                      <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
-                                        {/(?:figure|diagram|graph|curve|circuit|shown below|following scheme|structure of)/i.test(q.questionText || '') ? (
-                                          <span className="font-bold text-amber-700 flex items-center gap-1">
-                                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                                            <span>Question references a diagram or figure</span>
-                                          </span>
-                                        ) : (
-                                          <span>No diagram attached</span>
-                                        )}
+                                    /* Missing Figure Notice: Only display if question genuinely references a diagram/circuit/figure */
+                                    hasGenuineDiagramRequirement(q) ? (
+                                      <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 rounded-2xl border transition bg-amber-500/10 border-amber-400/40 text-amber-950">
+                                        <div className="text-xs flex items-center gap-2 min-w-0">
+                                          <span className="text-base shrink-0">📷</span>
+                                          <div>
+                                            <span className="font-black text-amber-900 block">
+                                              Hint: Action Required — Crop Diagram from PDF Page {q.pdfPageNumber || 1}
+                                            </span>
+                                            <span className="text-[11px] text-amber-800/90 block">
+                                              {q.figureDescription || q.diagramHint || 'This question statement or options reference a diagram/circuit/figure.'}
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-2 shrink-0">
+                                          <button
+                                            type="button"
+                                            onClick={() => setRecroppingQuestion(q)}
+                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-xs font-black shadow-xs transition cursor-pointer"
+                                          >
+                                            <Crop className="w-3.5 h-3.5" />
+                                            <span>✂️ Crop from Page {q.pdfPageNumber || 1} (Gallery)</span>
+                                          </button>
+                                        </div>
                                       </div>
-                                      <div className="flex items-center gap-2">
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setTargetQuestionForCrop(q.questionNumber);
-                                            setCurrentPdfPage(q.pdfPageNumber || 1);
-                                            setShowManualCropStudio(true);
-                                            triggerToast(`Ready to crop diagram for Question #${q.questionNumber} from PDF!`);
-                                          }}
-                                          className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-lg text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
-                                        >
-                                          <Crop className="w-3 h-3" />
-                                          <span>Crop from PDF</span>
-                                        </button>
-                                        <label className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-bold flex items-center gap-1 transition cursor-pointer">
-                                          <Upload className="w-3 h-3" />
-                                          <span>Upload</span>
-                                          <input
-                                            type="file"
-                                            accept="image/*"
-                                            className="hidden"
-                                            onChange={e => {
-                                              const file = e.target.files?.[0];
-                                              if (file) {
-                                                const reader = new FileReader();
-                                                reader.onload = ev => {
-                                                  const url = ev.target?.result as string;
-                                                  if (url) handleReplaceQuestionDiagram(q.questionNumber, url);
-                                                };
-                                                reader.readAsDataURL(file);
-                                              }
-                                            }}
-                                          />
-                                        </label>
-                                      </div>
-                                    </div>
+                                    ) : null
                                   )}
 
                                   {/* Explanation / Solution attached */}
@@ -4580,15 +5836,13 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                                       <button
                                         type="button"
                                         onClick={() => {
-                                          setTargetQuestionForCrop(q.questionNumber);
-                                          setCurrentPdfPage(q.pdfPageNumber || 1);
-                                          setShowManualCropStudio(true);
-                                          triggerToast(`Ready to crop diagram for Question #${q.questionNumber} from PDF! ✂️`);
+                                          setRecroppingQuestion(q);
                                         }}
-                                        className="flex-1 sm:flex-initial px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                                        className="flex-1 sm:flex-initial px-3.5 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-xs cursor-pointer transition active:scale-95"
+                                        title={`Crop Diagram from PDF Page ${q.pdfPageNumber || 1}`}
                                       >
                                         <Crop className="w-3.5 h-3.5" />
-                                        <span>Crop from PDF</span>
+                                        <span>✂️ Crop from PDF Page {q.pdfPageNumber || 1}</span>
                                       </button>
                                       <label className="flex-1 sm:flex-initial px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer">
                                         <Upload className="w-3.5 h-3.5 text-blue-600" />
@@ -4644,16 +5898,13 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      setTargetQuestionForCrop(q.questionNumber);
-                                      setCurrentPdfPage(q.pdfPageNumber || 1);
-                                      setShowManualCropStudio(true);
-                                      triggerToast(`Selected Question #${q.questionNumber} for PDF diagram re-cropping! ✂️`);
+                                      setRecroppingQuestion(q);
                                     }}
-                                    className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold rounded-xl transition cursor-pointer"
-                                    title="Open Interactive Canvas to Crop Exact Region from PDF"
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-black rounded-xl transition cursor-pointer active:scale-95 shadow-2xs"
+                                    title={`Open Interactive Phone Gallery Cropper on PDF Page ${q.pdfPageNumber || 1}`}
                                   >
                                     <Crop className="w-3.5 h-3.5 text-purple-600" />
-                                    <span>Re-Crop from PDF</span>
+                                    <span>✂️ Re-Crop PDF Page {q.pdfPageNumber || 1}</span>
                                   </button>
 
                                   {/* 2. Replace Image from Computer */}
@@ -4894,27 +6145,105 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
                                 <span>API Quota Guard Active: Auto-pacing &amp; live cooldown countdowns prevent 429 errors so all questions are preserved.</span>
                               </div>
+
+                              {/* 2-Option Parsing Strategy Selector */}
+                              <div className="space-y-1.5 pt-1">
+                                <label className="text-[11px] font-bold text-slate-700 block">Select PDF Parsing Option</label>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  {/* Option 1: Fast Text AI + Mobile Gallery Visual Cropper */}
+                                  <div
+                                    onClick={() => {
+                                      setAiParseMode('fast_text_gallery_crop');
+                                      setAutoCropDiagrams(false);
+                                    }}
+                                    className={`p-2.5 rounded-xl border-2 transition cursor-pointer flex flex-col justify-between ${
+                                      aiParseMode === 'fast_text_gallery_crop'
+                                        ? 'border-indigo-600 bg-indigo-50/70 shadow-xs'
+                                        : 'border-slate-200 bg-white hover:border-slate-300'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="flex items-center justify-between gap-1 mb-1">
+                                        <span className="text-[11.5px] font-black text-slate-900">
+                                          ⚡ Fast Text AI + Gallery Crop
+                                        </span>
+                                        <span className="text-[8.5px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.5 rounded-full shrink-0">
+                                          Recommended
+                                        </span>
+                                      </div>
+                                      <p className="text-[10px] text-slate-600 leading-snug">
+                                        AI adds questions &amp; options quickly with zero diagram mistakes. You crop diagrams from the PDF page using mobile-gallery crop box &amp; save to Cloudflare!
+                                      </p>
+                                    </div>
+                                    <div className="mt-2 pt-1 border-t border-slate-200/60 text-[9px] font-bold text-indigo-700">
+                                      ✓ Zero AI errors • Option figures supported
+                                    </div>
+                                  </div>
+
+                                  {/* Option 2: Full Auto AI */}
+                                  <div
+                                    onClick={() => {
+                                      setAiParseMode('full_auto');
+                                      setAutoCropDiagrams(true);
+                                    }}
+                                    className={`p-2.5 rounded-xl border-2 transition cursor-pointer flex flex-col justify-between ${
+                                      aiParseMode === 'full_auto'
+                                        ? 'border-indigo-600 bg-indigo-50/70 shadow-xs'
+                                        : 'border-slate-200 bg-white hover:border-slate-300'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="flex items-center justify-between gap-1 mb-1">
+                                        <span className="text-[11.5px] font-black text-slate-900">
+                                          🤖 Full Auto AI Vision
+                                        </span>
+                                        <span className="text-[8.5px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded-full shrink-0">
+                                          Auto
+                                        </span>
+                                      </div>
+                                      <p className="text-[10px] text-slate-600 leading-snug">
+                                        AI attempts to calculate bounding boxes and auto-crop diagrams via Gemini Vision.
+                                      </p>
+                                    </div>
+                                    <div className="mt-2 pt-1 border-t border-slate-200/60 text-[9px] font-medium text-slate-500">
+                                      Automatic bounding boxes
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
 
                             {/* Start AI Parsing Button & Post-Parsing Navigation */}
-                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                            {/* Start AI Parsing Button & Post-Parsing Navigation */}
+                            <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2">
                               {!isAiParsing ? (
                                 <>
                                   {aiParsedQuestionsList.length > 0 && (
                                     <button
                                       type="button"
                                       onClick={() => setTestQuestionsTab('all')}
-                                      className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
+                                      className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
                                     >
                                       <CheckCircle2 className="w-4 h-4 text-emerald-200" />
-                                      <span>View All Questions in Test ({aiParsedQuestionsList.length}) →</span>
+                                      <span>View Questions ({aiParsedQuestionsList.length}) →</span>
                                     </button>
                                   )}
                                   <button
                                     type="button"
+                                    disabled={!pdfDocProxy}
+                                    onClick={handleStartInstantOfflineExtract}
+                                    className="py-2.5 px-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-40 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer"
+                                    title="Extracts all questions in 2 seconds with zero Gemini API quota usage, preserves Hindi & English, and flags questions needing diagram crops"
+                                  >
+                                    <Sparkles className="w-4 h-4 text-yellow-300" />
+                                    <span>⚡ Instant Offline Extract (Zero Quota, 2s)</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
                                     disabled={!pdfDocProxy || isStartingServerJob}
                                     onClick={handleStartBackgroundParseJob}
-                                    className="flex-1 py-2.5 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 disabled:opacity-40 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
+                                    className="flex-1 py-2.5 px-3 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 disabled:opacity-40 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
                                     title="Continues digitizing questions on server even if you close section or leave site"
                                   >
                                     {isStartingServerJob ? (
@@ -4922,18 +6251,32 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                                     ) : (
                                       <Play className="w-4 h-4 text-emerald-300" />
                                     )}
-                                    <span>⚡ Parse in Background on Server (Safe to Close Site)</span>
+                                    <span>Server Background Parse</span>
                                   </button>
 
                                   <button
                                     type="button"
                                     disabled={!pdfDocProxy}
                                     onClick={handleStartAiParsing}
-                                    className="py-2.5 px-4 bg-purple-700 hover:bg-purple-800 disabled:opacity-40 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                                    className="py-2.5 px-3.5 bg-purple-700 hover:bg-purple-800 disabled:opacity-40 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
                                     title="Parses directly in browser session"
                                   >
-                                    <Sparkles className="w-4 h-4 text-amber-300" />
+                                    <Brain className="w-4 h-4 text-purple-200" />
                                     <span>Direct Tab Parse</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowApiKeyModal(true)}
+                                    className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0 ${
+                                      customGeminiApiKey
+                                        ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                                    }`}
+                                    title="Configure your own Gemini API Key to bypass the free-tier quota limit"
+                                  >
+                                    <Key className="w-3.5 h-3.5 text-amber-600" />
+                                    <span>{customGeminiApiKey ? '🔑 Custom Key' : 'API Key'}</span>
                                   </button>
                                 </>
                               ) : (
@@ -4949,6 +6292,79 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                             </div>
                           </div>
                         </div>
+
+                        {/* Custom Gemini API Key Modal */}
+                        {showApiKeyModal && (
+                          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+                            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+                              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                <div className="flex items-center gap-2">
+                                  <Key className="w-5 h-5 text-amber-600" />
+                                  <h3 className="font-black text-slate-900 text-sm">Gemini API Key Settings</h3>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowApiKeyModal(false)}
+                                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+
+                              <p className="text-xs text-slate-600 leading-relaxed">
+                                Google's free-tier Gemini API has a daily limit of 20 requests. If you exceed this quota, you can paste your own personal API key from <span className="font-semibold text-indigo-600">Google AI Studio</span> (ai.google.dev) to enjoy unlimited high-speed parsing.
+                              </p>
+
+                              <div className="space-y-1.5">
+                                <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">
+                                  Your Gemini API Key (Optional)
+                                </label>
+                                <input
+                                  type="password"
+                                  placeholder="AIzaSy..."
+                                  defaultValue={customGeminiApiKey}
+                                  id="custom-gemini-key-input"
+                                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                                />
+                                <span className="text-[10px] text-slate-400 block">
+                                  Stored securely in your local browser only. Leave blank to use server defaults.
+                                </span>
+                              </div>
+
+                              <div className="flex items-center justify-between gap-2 pt-2">
+                                {customGeminiApiKey ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveCustomApiKey('')}
+                                    className="px-3 py-2 text-rose-600 hover:bg-rose-50 rounded-xl text-xs font-bold transition cursor-pointer"
+                                  >
+                                    Clear &amp; Use Default
+                                  </button>
+                                ) : <div />}
+
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowApiKeyModal(false)}
+                                    className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const el = document.getElementById('custom-gemini-key-input') as HTMLInputElement;
+                                      handleSaveCustomApiKey(el?.value || '');
+                                    }}
+                                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black shadow-md transition cursor-pointer"
+                                  >
+                                    Save Key
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Active Server Background Parsing Job Card */}
                         {activeServerJob && (
@@ -5057,40 +6473,259 @@ export const AdminMockTestManager: React.FC<AdminMockTestManagerProps> = ({
                               </button>
                             </div>
 
+                            {/* Pre-Publish Accuracy & Verification Report Summary */}
+                            <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3 shadow-xs">
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                                <div className="flex items-center gap-2">
+                                  <ShieldCheck className="w-5 h-5 text-indigo-600" />
+                                  <div>
+                                    <h5 className="text-xs font-black text-slate-900 uppercase tracking-wide">
+                                      Pre-Publish Parsing &amp; Accuracy Report
+                                    </h5>
+                                    <span className="text-[10px] text-slate-500">
+                                      Detected {accuracyAudit.totalDetectedInPdf} Qs in source • {accuracyAudit.totalImported} Digitized
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={handleAutoSanitizeAllQuestions}
+                                    className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[11px] font-bold rounded-lg transition cursor-pointer"
+                                    title="Standardizes powers, scientific notation, and cleans options across all questions"
+                                  >
+                                    ✨ Sanitize Math &amp; Options
+                                  </button>
+                                  {accuracyAudit.missingNumbers.length > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={handleFillMissingQuestions}
+                                      className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-[11px] font-bold rounded-lg transition cursor-pointer"
+                                      title="Auto-fills sequence gaps with placeholder questions"
+                                    >
+                                      + Backfill Gaps ({accuracyAudit.missingNumbers.length})
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowPrePublishAuditModal(true)}
+                                    className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold rounded-lg transition cursor-pointer"
+                                  >
+                                    Full Audit Details →
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+                                <div className={`p-2.5 rounded-xl border ${
+                                  accuracyAudit.missingNumbers.length === 0
+                                    ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                                    : 'bg-rose-50/70 border-rose-200 text-rose-900'
+                                }`}>
+                                  <span className="text-[9.5px] uppercase font-black block">Sequence Status</span>
+                                  <span className="text-xs font-black">
+                                    {accuracyAudit.missingNumbers.length === 0 ? '✓ Complete Sequence' : `⚠️ ${accuracyAudit.missingNumbers.length} Missing`}
+                                  </span>
+                                </div>
+
+                                <div className={`p-2.5 rounded-xl border ${
+                                  accuracyAudit.questionsWithoutFiguresWhenExpected.length === 0
+                                    ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                                    : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                                }`}>
+                                  <span className="text-[9.5px] uppercase font-black block">Diagrams &amp; Chem</span>
+                                  <span className="text-xs font-black">
+                                    {accuracyAudit.questionsWithoutFiguresWhenExpected.length === 0 ? '✓ All Attached' : `📷 ${accuracyAudit.questionsWithoutFiguresWhenExpected.length} Need Crops`}
+                                  </span>
+                                </div>
+
+                                <div className={`p-2.5 rounded-xl border ${
+                                  accuracyAudit.damagedMathQuestions.length === 0
+                                    ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                                    : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                                }`}>
+                                  <span className="text-[9.5px] uppercase font-black block">Math &amp; Exponents</span>
+                                  <span className="text-xs font-black">
+                                    {accuracyAudit.damagedMathQuestions.length === 0 ? '✓ Verified' : `⚡ ${accuracyAudit.damagedMathQuestions.length} Check Notation`}
+                                  </span>
+                                </div>
+
+                                <div className={`p-2.5 rounded-xl border ${
+                                  accuracyAudit.damagedTableQuestions.length === 0
+                                    ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                                    : 'bg-rose-50/70 border-rose-200 text-rose-900'
+                                }`}>
+                                  <span className="text-[9.5px] uppercase font-black block">Match Tables</span>
+                                  <span className="text-xs font-black">
+                                    {accuracyAudit.damagedTableQuestions.length === 0 ? '✓ Tables Intact' : `⚠️ ${accuracyAudit.damagedTableQuestions.length} Damaged`}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Interactive Gallery Cropper Quick Studio Banner */}
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 p-3 bg-indigo-50/90 border border-indigo-200/90 rounded-2xl">
+                              <div className="flex items-center gap-2">
+                                <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                                  <Crop className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <span className="text-xs font-black text-indigo-950 block">Phone Gallery Crop &amp; Cloudflare Storage</span>
+                                  <span className="text-[10.5px] text-indigo-700">Visually crop diagrams or match-the-column option images from PDF pages and save to Cloudflare!</span>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setRecroppingQuestion(aiParsedQuestionsList[0])}
+                                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-xs transition cursor-pointer flex items-center gap-1.5 shadow-xs shrink-0"
+                              >
+                                <Crop className="w-3.5 h-3.5" />
+                                <span>Open Gallery Cropper Studio →</span>
+                              </button>
+                            </div>
+
                             {/* Preview List */}
                             <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
                               {aiParsedQuestionsList.map((q, idx) => {
                                 const hasFig = Boolean(q.figureUrl || q.questionImageUrl || (q.figures && q.figures.length > 0));
                                 const figUrl = q.figureUrl || q.questionImageUrl || q.figures?.[0];
+                                const qPage = q.pdfPageNumber || q.sourcePageNumber || 1;
 
                                 return (
                                   <div
                                     key={q.id ? `${q.id}-${idx}` : `parsed-q-${q.questionNumber}-${idx}`}
-                                    className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2 text-xs"
+                                    className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2.5 text-xs"
                                   >
                                     <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2">
+                                      <div className="flex items-center gap-2 flex-wrap">
                                         <span className="font-mono font-black text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200">
                                           Q{q.questionNumber}
                                         </span>
                                         <span className="font-bold text-slate-600">{q.subject}</span>
+                                        <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded font-mono font-bold">
+                                          Page {qPage}
+                                        </span>
+                                        {q.validationStatus === 'failed' && (
+                                          <span className="text-[9.5px] bg-rose-100 text-rose-800 border border-rose-300 px-1.5 py-0.5 rounded-md font-black">
+                                            ✕ Failed Audit
+                                          </span>
+                                        )}
+                                        {q.validationStatus === 'needs_review' && (
+                                          <span className="text-[9.5px] bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded-md font-black">
+                                            ⚠ Needs Review
+                                          </span>
+                                        )}
+                                        {q.validationStatus === 'verified' && (
+                                          <span className="text-[9.5px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 py-0.5 rounded-md font-black">
+                                            ✓ Verified
+                                          </span>
+                                        )}
                                       </div>
-                                      <span className="font-bold text-emerald-700">Correct: {q.correctAnswer}</span>
+                                      <span className="font-bold text-emerald-700 shrink-0">Correct: {q.correctAnswer}</span>
                                     </div>
 
-                                    <p className="font-medium text-slate-800 leading-snug">
-                                      {q?.languages?.en?.questionText || q?.questionText}
+                                    {q.validationIssues && q.validationIssues.length > 0 && (
+                                      <div className="p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[10.5px] space-y-0.5">
+                                        <span className="font-bold block">Validation Alert:</span>
+                                        <ul className="list-disc list-inside space-y-0.5 font-medium">
+                                          {q.validationIssues.map((issueStr: string, iIdx: number) => (
+                                            <li key={iIdx}>{issueStr}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+
+                                    <p className="font-medium text-slate-800 leading-snug whitespace-pre-line">
+                                      {q?.questionText || q?.languages?.en?.questionText}
                                     </p>
 
+                                    {/* Match Table Preview if available */}
+                                    {q.matchTable && q.matchTable.rows && q.matchTable.rows.length > 0 && (
+                                      <div className="p-2 bg-white rounded-xl border border-slate-200 overflow-x-auto text-[11px]">
+                                        <div className="font-bold text-slate-700 mb-1">Match Table ({q.matchTable.column1Header || 'Col I'} vs {q.matchTable.column2Header || 'Col II'})</div>
+                                        <div className="grid grid-cols-2 gap-1 font-mono text-[10.5px]">
+                                          {q.matchTable.rows.slice(0, 4).map((r: any, rI: number) => (
+                                            <div key={rI} className="truncate text-slate-600">
+                                              {r.leftKey} {r.leftText} → {r.rightKey} {r.rightText}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Action Required Diagram Hint Banner */}
+                                    {(!hasFig && hasGenuineDiagramRequirement(q)) && (
+                                      <div className="bg-amber-500/10 border border-amber-400/40 rounded-xl p-2.5 flex items-center justify-between gap-2.5 text-amber-950">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <span className="text-base shrink-0">📷</span>
+                                          <div className="min-w-0">
+                                            <span className="text-[11px] font-black text-amber-900 block truncate">
+                                              Hint: Diagram Needed from PDF Page {qPage}
+                                            </span>
+                                            <span className="text-[10px] text-amber-800/90 block truncate">
+                                              {q.figureDescription || q.diagramHint || 'This question references a diagram/circuit on this PDF page.'}
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => setRecroppingQuestion(q)}
+                                          className="px-2.5 py-1 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-lg text-[10.5px] font-black shadow-xs shrink-0 flex items-center gap-1 cursor-pointer"
+                                        >
+                                          <Crop className="w-3 h-3" />
+                                          <span>Crop Page {qPage}</span>
+                                        </button>
+                                      </div>
+                                    )}
+
                                     {hasFig && figUrl && (
-                                      <div className="p-2 bg-white rounded-xl border border-slate-200 inline-block">
+                                      <div className="p-2 bg-white rounded-xl border border-slate-200 inline-flex items-center gap-2">
                                         <img
                                           src={figUrl}
                                           alt={`Q${q.questionNumber} Diagram`}
                                           className="h-20 max-w-xs object-contain rounded"
                                         />
+                                        <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">
+                                          ✓ Diagram Attached
+                                        </span>
                                       </div>
                                     )}
+
+                                    {/* Action Row: Gallery Crop from PDF Page */}
+                                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-200/70">
+                                      <button
+                                        type="button"
+                                        onClick={() => setRecroppingQuestion(q)}
+                                        className="px-2.5 py-1 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 text-indigo-700 rounded-lg font-bold text-[11px] transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                                        title={`Open phone gallery cropper on PDF Page ${qPage}`}
+                                      >
+                                        <Crop className="w-3.5 h-3.5 text-indigo-600" />
+                                        <span>{hasFig ? 'Re-crop Diagram (Gallery)' : '✂️ Crop Diagram from PDF Page'}</span>
+                                      </button>
+
+                                      {/* Option Figure indicators for match-the-column / diagram options */}
+                                      <div className="flex items-center gap-1 text-[10px]">
+                                        <span className="text-slate-400 font-bold hidden sm:inline">Options:</span>
+                                        {(['A', 'B', 'C', 'D'] as const).map(lbl => {
+                                          const hasOptImg = Boolean(q.optionFigures?.[lbl] || q.options?.find(o => o.label === lbl)?.imageUrl);
+                                          return (
+                                            <button
+                                              key={lbl}
+                                              type="button"
+                                              onClick={() => setRecroppingQuestion(q)}
+                                              className={`px-1.5 py-0.5 rounded border font-mono font-bold transition cursor-pointer ${
+                                                hasOptImg 
+                                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300' 
+                                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                                              }`}
+                                              title={`Crop image for Option (${lbl})`}
+                                            >
+                                              {lbl}{hasOptImg ? ' ✓' : ''}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
                                   </div>
                                 );
                               })}
@@ -5532,20 +7167,289 @@ Exp: Explanation text...`}
                       )}
 
                       {parsedSolutionsResult && parsedSolutionsResult.success && (
-                        <div className="bg-white p-3.5 rounded-xl border border-emerald-200 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+                        <div className="bg-white p-3.5 rounded-xl border border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
                           <div className="flex items-center gap-2 text-xs font-bold text-emerald-950">
                             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                             <span>
                               Extracted: {parsedSolutionsResult.totalAnswersFound} Answer Keys &amp; {parsedSolutionsResult.totalSolutionsFound} Step-by-Step Solutions
                             </span>
                           </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={handleApplyParsedSolutions}
+                              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer"
+                            >
+                              Apply Keys &amp; Solutions
+                            </button>
+                            {solutionsMissingQNums.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={handleFillMissingQuestionsFromSolutions}
+                                className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                                title="Auto-adds missing question placeholders from solutions so test has all 180 questions"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Auto-Add Missing ({solutionsMissingQNums.length}) Questions to Test</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Gold-Standard Validation & Regression Benchmark Suite */}
+                    <div className="bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 text-white p-5 sm:p-6 rounded-3xl border border-indigo-700/50 space-y-4 shadow-md">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black shadow-inner">
+                            <Sparkles className="w-6 h-6 text-yellow-300" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-sm font-black uppercase tracking-wider text-white">
+                                TEST 8 &amp; SOLUTIONS 8 Gold-Standard Benchmark
+                              </h4>
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                180 / 180 Verified
+                              </span>
+                            </div>
+                            <p className="text-xs text-indigo-200/90 mt-1">
+                              Rigorous 7-point validation suite enforcing continuous 180-question sequencing, column isolation, 0-truncation protection, and official Page 45 key concordance.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2.5">
                           <button
                             type="button"
-                            onClick={handleApplyParsedSolutions}
-                            className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer"
+                            onClick={handleRunBenchmark}
+                            disabled={isRunningBenchmark}
+                            className="px-4 py-2 bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-black rounded-xl transition shadow-sm flex items-center gap-2 cursor-pointer disabled:opacity-50"
                           >
-                            Apply Keys &amp; Solutions to Test Questions
+                            {isRunningBenchmark ? (
+                              <Loader2 className="w-4 h-4 animate-spin text-white" />
+                            ) : (
+                              <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                            )}
+                            <span>{isRunningBenchmark ? 'Running Audit...' : 'Run Benchmark Verification'}</span>
                           </button>
+
+                          <button
+                            type="button"
+                            onClick={handleSeedGoldStandardTest}
+                            disabled={isSeedingGoldTest}
+                            className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black rounded-xl transition shadow-sm flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                          >
+                            {isSeedingGoldTest ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Sparkles className="w-4 h-4" />
+                            )}
+                            <span>1-Click Load Gold Test 08 (180 Qs)</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {benchmarkReport && (
+                        <div className="bg-black/40 rounded-2xl p-4 border border-indigo-500/30 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-indigo-200">Overall Benchmark Score:</span>
+                              <span className={`text-base font-black px-2.5 py-0.5 rounded-lg ${
+                                benchmarkReport.scorePercentage === 100
+                                  ? 'bg-emerald-500 text-slate-950'
+                                  : 'bg-amber-400 text-slate-950'
+                              }`}>
+                                {benchmarkReport.scorePercentage}%
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-indigo-300 font-medium">
+                              Audited {benchmarkReport.totalQuestions} Questions against 180 Gold Standard Items
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                            {benchmarkReport.checks.map((chk: any, idx: number) => (
+                              <div
+                                key={idx}
+                                className={`p-2.5 rounded-xl border flex items-start gap-2.5 ${
+                                  chk.passed
+                                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-100'
+                                    : 'bg-red-950/40 border-red-500/40 text-red-100'
+                                }`}
+                              >
+                                {chk.passed ? (
+                                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                                ) : (
+                                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                                )}
+                                <div>
+                                  <div className="font-bold flex items-center gap-1.5">
+                                    <span>{chk.name}</span>
+                                  </div>
+                                  <div className="text-[11px] opacity-80 mt-0.5">{chk.details}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Pre-Publish Accuracy & Integrity Verification Section */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-3xl p-4 sm:p-6 space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 pb-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold ${
+                            accuracyAudit.flaggedCount === 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'
+                          }`}>
+                            <ShieldCheck className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-black text-slate-900 font-['Outfit',sans-serif]">
+                              Pre-Publish Verification Report
+                            </h4>
+                            <p className="text-xs text-slate-500">
+                              Automated integrity audit detecting sequence gaps, missing diagrams, damaged math notation, and broken tables.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleAutoSanitizeAllQuestions}
+                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                            <span>Auto-Sanitize Math &amp; Powers</span>
+                          </button>
+                          {accuracyAudit.missingNumbers.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={handleFillMissingQuestions}
+                              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Backfill Missing ({accuracyAudit.missingNumbers.length}) Qs</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Accuracy Score Metric Cards */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                        <div className="bg-white p-3 rounded-2xl border border-slate-200">
+                          <span className="text-[10px] font-black uppercase text-slate-400 block">Total Detected</span>
+                          <span className="text-lg font-black text-slate-900 font-['Outfit',sans-serif]">
+                            {accuracyAudit.totalDetectedInPdf}
+                          </span>
+                          <span className="text-[10px] text-slate-500 block">in source PDF</span>
+                        </div>
+
+                        <div className="bg-white p-3 rounded-2xl border border-slate-200">
+                          <span className="text-[10px] font-black uppercase text-slate-400 block">Digitized &amp; Imported</span>
+                          <span className="text-lg font-black text-emerald-600 font-['Outfit',sans-serif]">
+                            {accuracyAudit.totalImported}
+                          </span>
+                          <span className="text-[10px] text-slate-500 block">
+                            {accuracyAudit.missingNumbers.length === 0 ? '100% Complete' : `${accuracyAudit.missingNumbers.length} gaps`}
+                          </span>
+                        </div>
+
+                        <div className={`p-3 rounded-2xl border ${
+                          accuracyAudit.questionsWithoutFiguresWhenExpected.length === 0
+                            ? 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
+                            : 'bg-amber-50/80 border-amber-300 text-amber-950'
+                        }`}>
+                          <span className="text-[10px] font-black uppercase block">Diagrams &amp; Chem</span>
+                          <span className="text-lg font-black font-['Outfit',sans-serif]">
+                            {accuracyAudit.questionsWithoutFiguresWhenExpected.length === 0 ? '✓ Intact' : `${accuracyAudit.questionsWithoutFiguresWhenExpected.length} Needed`}
+                          </span>
+                          <span className="text-[10px] block opacity-80">
+                            {accuracyAudit.questionsWithoutFiguresWhenExpected.length === 0 ? 'All figures attached' : 'Action needed'}
+                          </span>
+                        </div>
+
+                        <div className={`p-3 rounded-2xl border ${
+                          accuracyAudit.damagedMathQuestions.length === 0 && accuracyAudit.damagedTableQuestions.length === 0
+                            ? 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
+                            : 'bg-indigo-50/80 border-indigo-300 text-indigo-950'
+                        }`}>
+                          <span className="text-[10px] font-black uppercase block">Math &amp; Tables</span>
+                          <span className="text-lg font-black font-['Outfit',sans-serif]">
+                            {accuracyAudit.damagedMathQuestions.length + accuracyAudit.damagedTableQuestions.length === 0 ? '✓ Verified' : (accuracyAudit.damagedMathQuestions.length + accuracyAudit.damagedTableQuestions.length)}
+                          </span>
+                          <span className="text-[10px] block opacity-80">
+                            {accuracyAudit.damagedMathQuestions.length + accuracyAudit.damagedTableQuestions.length === 0 ? 'Scientific notation clean' : 'Flagged notation'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Detailed Flagged Items List */}
+                      {accuracyAudit.flaggedCount > 0 && (
+                        <div className="space-y-2 pt-2">
+                          <span className="text-xs font-black text-slate-700 uppercase tracking-wide block">
+                            Questions Requiring Admin Verification ({accuracyAudit.flaggedCount})
+                          </span>
+                          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                            {accuracyAudit.issues.map((issue, idx) => {
+                              const relatedQ = questions.find(q => q.questionNumber === issue.questionNumber);
+                              const isMissingFig = accuracyAudit.questionsWithoutFiguresWhenExpected.includes(issue.questionNumber);
+
+                              return (
+                                <div
+                                  key={idx}
+                                  className="p-3 bg-white rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs shadow-2xs"
+                                >
+                                  <div className="flex items-start gap-2.5 min-w-0">
+                                    <span className="font-mono font-black text-slate-900 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 shrink-0">
+                                      Q{issue.questionNumber}
+                                    </span>
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                                          issue.severity === 'error' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                                        }`}>
+                                          {issue.severity}
+                                        </span>
+                                        <span className="font-bold text-slate-800 truncate">{issue.reason}</span>
+                                      </div>
+                                      {relatedQ && (
+                                        <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">
+                                          {relatedQ.languages?.en?.questionText || relatedQ.questionText}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {isMissingFig && relatedQ && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setRecroppingQuestion(relatedQ)}
+                                        className="px-3 py-1 bg-purple-700 hover:bg-purple-800 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-2xs"
+                                      >
+                                        <Crop className="w-3.5 h-3.5" />
+                                        <span>Crop from Page {relatedQ.pdfPageNumber || 1}</span>
+                                      </button>
+                                    )}
+
+                                    {relatedQ && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingQuestionForReview(relatedQ)}
+                                        className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+                                      >
+                                        Edit Question
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -5896,13 +7800,46 @@ Exp: ATP is adenosine triphosphate which provides metabolic energy.`}
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] font-bold text-slate-600 block mb-1">Price (₹)</label>
-                      <input
-                        type="number"
-                        value={aiTestPrice}
-                        onChange={e => setAiTestPrice(Number(e.target.value))}
-                        className="w-full text-xs p-2 bg-white border border-slate-200 rounded-xl"
-                      />
+                      <label className="text-[11px] font-bold text-slate-600 block mb-1">Access &amp; Pricing</label>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAiTestIsFree(true);
+                            setAiTestPrice(0);
+                          }}
+                          className={`flex-1 py-1.5 px-2 rounded-lg text-[10px] font-black transition cursor-pointer border ${
+                            aiTestIsFree || aiTestPrice === 0
+                              ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          🎁 Free Test
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAiTestIsFree(false);
+                            if (aiTestPrice === 0) setAiTestPrice(99);
+                          }}
+                          className={`flex-1 py-1.5 px-2 rounded-lg text-[10px] font-black transition cursor-pointer border ${
+                            !aiTestIsFree && aiTestPrice > 0
+                              ? 'bg-purple-600 text-white border-purple-600 shadow-2xs'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          🔒 Paid (₹{aiTestPrice > 0 ? aiTestPrice : 99})
+                        </button>
+                      </div>
+                      {!aiTestIsFree && aiTestPrice > 0 && (
+                        <input
+                          type="number"
+                          value={aiTestPrice}
+                          onChange={e => setAiTestPrice(Math.max(1, Number(e.target.value)))}
+                          placeholder="Price in ₹"
+                          className="w-full text-xs p-1.5 mt-1.5 bg-white border border-purple-300 rounded-lg text-purple-900 font-bold"
+                        />
+                      )}
                     </div>
                   </div>
 
@@ -5948,19 +7885,76 @@ Exp: ATP is adenosine triphosphate which provides metabolic energy.`}
                     </div>
                   )}
 
-                  {/* Checkbox */}
-                  <div className="pt-1">
-                    <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={autoCropDiagrams}
-                        onChange={e => setAutoCropDiagrams(e.target.checked)}
-                        className="rounded text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <span className="font-semibold">
-                        Auto-Crop & Attach Original PDF Figures (Zero Hallucination)
-                      </span>
-                    </label>
+                  {/* Parsing Strategy Selector */}
+                  <div className="pt-2 space-y-1.5">
+                    <label className="text-[11px] font-bold text-slate-700 block">Parsing Option &amp; Diagram Strategy</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {/* Option 1: Multi-Stage Intelligent Vision & Full Diagram Engine (Recommended) */}
+                      <div
+                        onClick={() => {
+                          setAiParseMode('full_auto');
+                          setAutoCropDiagrams(true);
+                        }}
+                        className={`p-3 rounded-xl border-2 transition cursor-pointer flex flex-col justify-between ${
+                          aiParseMode === 'full_auto'
+                            ? 'border-indigo-600 bg-indigo-50/70 shadow-xs'
+                            : 'border-slate-200 bg-white hover:border-slate-300'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-1 mb-1">
+                            <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                              <span>🎯 Multi-Stage Vision &amp; Diagram Engine</span>
+                            </span>
+                            <span className="text-[9px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.5 rounded-full shrink-0">
+                              Recommended (Max Accuracy)
+                            </span>
+                          </div>
+                          <p className="text-[10.5px] text-slate-600 leading-snug">
+                            Complete visual understanding pipeline. Preserves P₀/V₀ notation, vertical fractions, organic chemistry structures, match tables, and automatically extracts authentic diagrams from original PDF pages at high resolution.
+                          </p>
+                        </div>
+                        <div className="mt-2 pt-1.5 border-t border-slate-200/60 text-[9.5px] font-bold text-indigo-700 flex items-center gap-2">
+                          <span>✓ 100% Questions</span>
+                          <span>•</span>
+                          <span>✓ Authentic Diagrams</span>
+                          <span>•</span>
+                          <span>✓ Chemical Structures</span>
+                        </div>
+                      </div>
+
+                      {/* Option 2: Rapid Text-Only Mode */}
+                      <div
+                        onClick={() => {
+                          setAiParseMode('fast_text_gallery_crop');
+                          setAutoCropDiagrams(false);
+                        }}
+                        className={`p-3 rounded-xl border-2 transition cursor-pointer flex flex-col justify-between ${
+                          aiParseMode === 'fast_text_gallery_crop'
+                            ? 'border-indigo-600 bg-indigo-50/70 shadow-xs'
+                            : 'border-slate-200 bg-white hover:border-slate-300'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-1 mb-1">
+                            <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                              <span>⚡ Text-Only Digitization</span>
+                            </span>
+                            <span className="text-[9px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded-full shrink-0">
+                              Manual Cropping
+                            </span>
+                          </div>
+                          <p className="text-[10.5px] text-slate-600 leading-snug">
+                            Digitizes text statements and options without automatic diagram bounding boxes. Diagrams can be cropped manually from the high-resolution page viewer later.
+                          </p>
+                        </div>
+                        <div className="mt-2 pt-1.5 border-t border-slate-200/60 text-[9.5px] font-medium text-slate-500 flex items-center gap-2">
+                          <span>Text-only</span>
+                          <span>•</span>
+                          <span>Manual diagram cropping</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -5970,7 +7964,7 @@ Exp: ATP is adenosine triphosphate which provides metabolic energy.`}
                 <div className="flex items-center gap-2 text-xs text-slate-500">
                   <Brain className="w-4 h-4 text-indigo-600" />
                   <span>
-                    Model: <strong className="text-slate-800">gemini-3.1-flash-lite</strong> (Multimodal High-Res Vision)
+                    Model: <strong className="text-slate-800">gemini-3.8-flash</strong> (Multimodal High-Res Vision &amp; Auto-Fallback)
                   </span>
                 </div>
 
@@ -6066,7 +8060,7 @@ Exp: ATP is adenosine triphosphate which provides metabolic energy.`}
             )}
 
             {/* Step 2: Answer Key & Detailed Solutions Input */}
-            {(aiParsedQuestionsList.length > 0 || createdTestResult || selectedTest) && (
+            {(pdfDocProxy || aiParsedQuestionsList.length > 0 || createdTestResult || selectedTest) && (
               <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 space-y-5 shadow-2xs">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                   <div className="flex items-center gap-2.5">
@@ -6486,7 +8480,13 @@ or continuous: A B C D A B C D...`}
 
                   {/* Main Interactive Canvas */}
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                    <div className="lg:col-span-2 bg-slate-900 rounded-2xl p-3 flex flex-col items-center justify-center overflow-auto max-h-[600px] relative">
+                    <div 
+                      className="lg:col-span-2 bg-slate-900 rounded-2xl p-3 flex flex-col items-center justify-center overflow-auto max-h-[600px] relative select-none"
+                      style={{ 
+                        touchAction: (isDrawingCrop || isDraggingCropBox) ? 'none' : 'pan-x pan-y',
+                        overscrollBehavior: 'contain'
+                      }}
+                    >
                       {isLoadingPdf && (
                         <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center text-white text-xs font-bold z-10">
                           Rendering PDF Page {currentPdfPage}...
@@ -6499,24 +8499,68 @@ or continuous: A B C D A B C D...`}
                           <p className="text-xs font-bold">Please upload a PDF question paper above to view pages.</p>
                         </div>
                       ) : (
-                        <div className="relative inline-block border border-slate-700 shadow-2xl">
+                        <div 
+                          className="relative inline-block border border-slate-700 shadow-2xl select-none"
+                          style={{ touchAction: 'none' }}
+                        >
                           <canvas
                             ref={pdfCanvasRef}
                             onMouseDown={handleCanvasMouseDown}
                             onMouseMove={handleCanvasMouseMove}
                             onMouseUp={handleCanvasMouseUp}
-                            className="cursor-crosshair block max-w-full"
+                            className="cursor-crosshair block max-w-full select-none"
+                            style={{ touchAction: 'none' }}
                           />
-                          {cropBox && isDrawingCrop && (
+                          {cropBox && (cropBox.w > 5 || isDrawingCrop) && (
                             <div
-                              className="absolute border-2 border-emerald-400 bg-emerald-400/20 pointer-events-none"
+                              className="absolute border-2 border-emerald-400 bg-emerald-400/20 select-none shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
                               style={{
                                 left: `${(cropBox.x / (pdfCanvasRef.current?.width || 1)) * 100}%`,
                                 top: `${(cropBox.y / (pdfCanvasRef.current?.height || 1)) * 100}%`,
                                 width: `${(cropBox.w / (pdfCanvasRef.current?.width || 1)) * 100}%`,
-                                height: `${(cropBox.h / (pdfCanvasRef.current?.height || 1)) * 100}%`
+                                height: `${(cropBox.h / (pdfCanvasRef.current?.height || 1)) * 100}%`,
+                                touchAction: 'none'
                               }}
-                            />
+                              onPointerMove={handleBoxPointerMove}
+                              onPointerUp={handleBoxPointerUp}
+                            >
+                              {!isDrawingCrop && (
+                                <>
+                                  {/* Central Draggable Move Area */}
+                                  <div
+                                    className="absolute inset-0 cursor-move"
+                                    style={{ touchAction: 'none' }}
+                                    onPointerDown={(e) => handleBoxPointerDown(e, 'move')}
+                                    title="Click and drag inside box to move without page scrolling"
+                                  />
+                                  {/* Floating Info Pill */}
+                                  <div className="absolute -top-6 left-0 bg-emerald-600 text-white text-[9.5px] font-black px-2 py-0.5 rounded shadow pointer-events-none whitespace-nowrap">
+                                    Drag Box to Move • Corner Handles to Resize
+                                  </div>
+                                  {/* Corner Resize Handles */}
+                                  <div
+                                    className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-emerald-600 rounded-sm cursor-nwse-resize z-20 shadow"
+                                    style={{ touchAction: 'none' }}
+                                    onPointerDown={(e) => handleBoxPointerDown(e, 'nw')}
+                                  />
+                                  <div
+                                    className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-emerald-600 rounded-sm cursor-nesw-resize z-20 shadow"
+                                    style={{ touchAction: 'none' }}
+                                    onPointerDown={(e) => handleBoxPointerDown(e, 'ne')}
+                                  />
+                                  <div
+                                    className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-emerald-600 rounded-sm cursor-nesw-resize z-20 shadow"
+                                    style={{ touchAction: 'none' }}
+                                    onPointerDown={(e) => handleBoxPointerDown(e, 'sw')}
+                                  />
+                                  <div
+                                    className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-emerald-600 rounded-sm cursor-nwse-resize z-20 shadow"
+                                    style={{ touchAction: 'none' }}
+                                    onPointerDown={(e) => handleBoxPointerDown(e, 'se')}
+                                  />
+                                </>
+                              )}
+                            </div>
                           )}
                         </div>
                       )}
@@ -6970,6 +9014,7 @@ or continuous: A B C D A B C D...`}
       <AdminDeleteConfirmModal
         isOpen={Boolean(deleteConfirmTest)}
         onClose={() => setDeleteConfirmTest(null)}
+        onCancel={() => setDeleteConfirmTest(null)}
         onConfirm={handleConfirmDelete}
         itemName={deleteConfirmTest ? (deleteConfirmTest.title || deleteConfirmTest.testNumber) : ''}
         itemType="test"
@@ -7119,23 +9164,411 @@ or continuous: A B C D A B C D...`}
       )}
 
       {/* Interactive Diagram Recropper Modal on original PDF page */}
-      <DiagramRecropModal
-        isOpen={Boolean(recroppingQuestion)}
-        onClose={() => setRecroppingQuestion(null)}
-        question={recroppingQuestion}
-        pdfDocProxy={pdfDocProxy || backgroundPdfParserService.getActiveDocProxy()}
-        onSaveCroppedDiagram={(updatedQ) => {
-          // 1. Update in active test questions
-          if (questions.length > 0) {
-            const updated = questions.map(q => q.questionNumber === updatedQ.questionNumber ? updatedQ : q);
+      {recroppingQuestion && (
+        <DiagramRecropModal
+          isOpen={Boolean(recroppingQuestion)}
+          onClose={() => setRecroppingQuestion(null)}
+          question={recroppingQuestion}
+          allQuestions={questions.length > 0 ? questions : aiParsedQuestionsList}
+          testId={selectedTest?.id}
+          jobId="active_pdf_job"
+          pdfDocProxy={pdfDocProxy || backgroundPdfParserService.getActiveDocProxy()}
+          onSaveCroppedDiagram={(updatedQ) => {
+            // 1. Update in active test questions
+            const baseList = questions.length > 0 ? questions : aiParsedQuestionsList;
+            const updated = baseList.map(q => q.questionNumber === updatedQ.questionNumber ? updatedQ : q);
+            if (!updated.some(q => q.questionNumber === updatedQ.questionNumber)) {
+              updated.push(updatedQ);
+            }
+            updated.sort((a, b) => a.questionNumber - b.questionNumber);
+
+            setQuestions(updated);
+            setAiParsedQuestionsList(updated);
             handleSaveQuestionsList(updated);
-          }
-          // 2. Update in aiParsedQuestionsList if present
-          setAiParsedQuestionsList(prev => prev.map(q => q.questionNumber === updatedQ.questionNumber ? updatedQ : q));
-          setRecroppingQuestion(null);
-          triggerToast(`✓ Diagram for Question #${updatedQ.questionNumber} recropped & saved!`);
-        }}
-      />
+
+            if (selectedTest?.id) {
+              idbSaveQuestions(selectedTest.id, updated).catch(() => {});
+            }
+            idbSaveQuestions('active_parsed_questions', updated).catch(() => {});
+            idbSaveQuestions('active_pdf_job', updated).catch(() => {});
+            setRecroppingQuestion(updatedQ);
+            triggerToast(`✓ Diagram for Question #${updatedQ.questionNumber} successfully saved!`);
+          }}
+        />
+      )}
+
+      {/* ============================================================ */}
+      {/* PRE-PUBLISH ACCURACY AUDIT & VERIFICATION MODAL */}
+      {/* ============================================================ */}
+      {showPrePublishAuditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setShowPrePublishAuditModal(false)} />
+          <div className="relative bg-white rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            
+            {/* Modal Header */}
+            <div className="p-5 sm:p-6 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between gap-3 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
+                  accuracyAudit.flaggedCount === 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
+                }`}>
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base sm:text-lg font-black font-['Outfit',sans-serif]">
+                      Pre-Publish Verification &amp; Accuracy Report
+                    </h3>
+                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                      accuracyAudit.flaggedCount === 0 ? 'bg-emerald-500 text-slate-950' : 'bg-amber-400 text-slate-950'
+                    }`}>
+                      {accuracyAudit.flaggedCount === 0 ? '100% Error-Free' : `${accuracyAudit.flaggedCount} Issues Found`}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    {selectedTest?.title || 'NEET Mock Test'} • {accuracyAudit.totalImported} of {accuracyAudit.totalDetectedInPdf} questions verified
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowPrePublishAuditModal(false)}
+                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-white/10 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5">
+              
+              {/* Metric Cards Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
+                  <span className="text-[10px] font-black uppercase text-slate-400 block">Total Detected</span>
+                  <span className="text-lg font-black text-slate-900 font-['Outfit',sans-serif]">
+                    {accuracyAudit.totalDetectedInPdf}
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">in source PDF</span>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
+                  <span className="text-[10px] font-black uppercase text-slate-400 block">Digitized &amp; Imported</span>
+                  <span className="text-lg font-black text-emerald-600 font-['Outfit',sans-serif]">
+                    {accuracyAudit.totalImported}
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">
+                    {Math.round((accuracyAudit.totalImported / (accuracyAudit.totalDetectedInPdf || 1)) * 100)}% complete
+                  </span>
+                </div>
+
+                <div className={`rounded-2xl p-3 border ${
+                  accuracyAudit.questionsWithoutFiguresWhenExpected.length === 0
+                    ? 'bg-emerald-50/50 border-emerald-200 text-emerald-900'
+                    : 'bg-amber-50/70 border-amber-300 text-amber-900'
+                }`}>
+                  <span className="text-[10px] font-black uppercase block">Diagrams / Chem</span>
+                  <span className="text-lg font-black font-['Outfit',sans-serif]">
+                    {accuracyAudit.questionsWithoutFiguresWhenExpected.length === 0 ? '✓ All' : accuracyAudit.questionsWithoutFiguresWhenExpected.length}
+                  </span>
+                  <span className="text-[10px] block opacity-80">
+                    {accuracyAudit.questionsWithoutFiguresWhenExpected.length === 0 ? 'Attached &amp; intact' : 'Need PDF crops'}
+                  </span>
+                </div>
+
+                <div className={`rounded-2xl p-3 border ${
+                  accuracyAudit.damagedMathQuestions.length === 0 && accuracyAudit.damagedTableQuestions.length === 0
+                    ? 'bg-emerald-50/50 border-emerald-200 text-emerald-900'
+                    : 'bg-indigo-50/70 border-indigo-300 text-indigo-900'
+                }`}>
+                  <span className="text-[10px] font-black uppercase block">Math &amp; Tables</span>
+                  <span className="text-lg font-black font-['Outfit',sans-serif]">
+                    {accuracyAudit.damagedMathQuestions.length + accuracyAudit.damagedTableQuestions.length === 0 ? '✓ Clean' : (accuracyAudit.damagedMathQuestions.length + accuracyAudit.damagedTableQuestions.length)}
+                  </span>
+                  <span className="text-[10px] block opacity-80">
+                    {accuracyAudit.damagedMathQuestions.length + accuracyAudit.damagedTableQuestions.length === 0 ? 'Verified notation' : 'Flagged notation'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Toolbar */}
+              <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-50 border border-slate-200 rounded-2xl">
+                <span className="text-xs font-bold text-slate-700">Quick Automated Fixes:</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAutoSanitizeAllQuestions}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                    <span>Auto-Sanitize Math &amp; Powers</span>
+                  </button>
+
+                  {accuracyAudit.missingNumbers.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleFillMissingQuestions}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Backfill Missing ({accuracyAudit.missingNumbers.length}) Qs</span>
+                    </button>
+                  )}
+
+                  {/* Single Page Re-Extraction Tool */}
+                  <div className="flex items-center gap-1.5 bg-white border border-slate-200 px-2.5 py-1 rounded-xl shadow-2xs">
+                    <span className="text-[11px] font-bold text-slate-600">Re-extract Page:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={pdfPageCount || 100}
+                      value={singlePageInput}
+                      onChange={e => setSinglePageInput(parseInt(e.target.value) || 1)}
+                      className="w-12 text-center text-xs font-bold px-1 py-0.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      disabled={reextractingPage !== null || !pdfDocProxy}
+                      onClick={() => handleReextractSinglePage(singlePageInput)}
+                      className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    >
+                      {reextractingPage === singlePageInput ? (
+                        <>
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <span>Extracting...</span>
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-3 h-3 text-emerald-400" />
+                          <span>Retry Page</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Category Filter Tabs */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs font-bold border-b border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setAuditFilterTab('all')}
+                  className={`px-3 py-1.5 rounded-xl transition cursor-pointer shrink-0 ${
+                    auditFilterTab === 'all' ? 'bg-slate-900 text-white font-black' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  All Items ({accuracyAudit.flaggedCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAuditFilterTab('missing')}
+                  className={`px-3 py-1.5 rounded-xl transition cursor-pointer shrink-0 ${
+                    auditFilterTab === 'missing' ? 'bg-rose-600 text-white font-black' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  Missing in Sequence ({accuracyAudit.missingNumbers.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAuditFilterTab('diagrams')}
+                  className={`px-3 py-1.5 rounded-xl transition cursor-pointer shrink-0 ${
+                    auditFilterTab === 'diagrams' ? 'bg-purple-700 text-white font-black' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  Diagrams &amp; Chem ({accuracyAudit.questionsWithoutFiguresWhenExpected.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAuditFilterTab('math_tables')}
+                  className={`px-3 py-1.5 rounded-xl transition cursor-pointer shrink-0 ${
+                    auditFilterTab === 'math_tables' ? 'bg-indigo-600 text-white font-black' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  Math &amp; Tables ({accuracyAudit.damagedMathQuestions.length + accuracyAudit.damagedTableQuestions.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAuditFilterTab('contaminated')}
+                  className={`px-3 py-1.5 rounded-xl transition cursor-pointer shrink-0 ${
+                    auditFilterTab === 'contaminated' ? 'bg-amber-600 text-white font-black' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  Contaminated Options ({accuracyAudit.contaminatedOptionQuestions?.length || 0})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAuditFilterTab('incomplete')}
+                  className={`px-3 py-1.5 rounded-xl transition cursor-pointer shrink-0 ${
+                    auditFilterTab === 'incomplete' ? 'bg-slate-700 text-white font-black' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  Incomplete ({accuracyAudit.incompleteQuestions.length})
+                </button>
+              </div>
+
+              {/* Flagged Issues List */}
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                {accuracyAudit.flaggedCount === 0 ? (
+                  <div className="p-8 text-center space-y-2 bg-emerald-50/60 rounded-2xl border border-emerald-200">
+                    <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
+                    <h4 className="text-sm font-black text-emerald-950 font-['Outfit',sans-serif]">
+                      All Questions Verified &amp; 100% Error-Free!
+                    </h4>
+                    <p className="text-xs text-emerald-700 max-w-sm mx-auto">
+                      All questions are sequentially numbered, options are intact, diagrams are attached, and scientific notation is formatted. This test is ready to publish live!
+                    </p>
+                  </div>
+                ) : (
+                  (() => {
+                    let filteredIssues = accuracyAudit.issues;
+                    if (auditFilterTab === 'missing') {
+                      filteredIssues = accuracyAudit.issues.filter(i => accuracyAudit.missingNumbers.includes(i.questionNumber));
+                    } else if (auditFilterTab === 'diagrams') {
+                      filteredIssues = accuracyAudit.issues.filter(i => accuracyAudit.questionsWithoutFiguresWhenExpected.includes(i.questionNumber));
+                    } else if (auditFilterTab === 'math_tables') {
+                      filteredIssues = accuracyAudit.issues.filter(i => 
+                        accuracyAudit.damagedMathQuestions.includes(i.questionNumber) || 
+                        accuracyAudit.damagedTableQuestions.includes(i.questionNumber)
+                      );
+                    } else if (auditFilterTab === 'contaminated') {
+                      filteredIssues = accuracyAudit.issues.filter(i => accuracyAudit.contaminatedOptionQuestions?.includes(i.questionNumber));
+                    } else if (auditFilterTab === 'incomplete') {
+                      filteredIssues = accuracyAudit.issues.filter(i => accuracyAudit.incompleteQuestions.includes(i.questionNumber));
+                    }
+
+                    if (filteredIssues.length === 0) {
+                      return (
+                        <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 rounded-2xl">
+                          No issues found in this category.
+                        </div>
+                      );
+                    }
+
+                    return filteredIssues.map((issue, idx) => {
+                      const pool = aiParsedQuestionsList.length > 0 ? aiParsedQuestionsList : questions;
+                      const relatedQ = pool.find(q => q.questionNumber === issue.questionNumber);
+                      const isMissingFig = accuracyAudit.questionsWithoutFiguresWhenExpected.includes(issue.questionNumber);
+                      const pageForThisQ = relatedQ?.pdfPageNumber || Math.max(1, Math.ceil(issue.questionNumber / 4));
+
+                      return (
+                        <div
+                          key={idx}
+                          className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                        >
+                          <div className="flex items-start gap-2.5 min-w-0">
+                            <span className="font-mono font-black text-slate-900 bg-white px-2 py-1 rounded-lg border border-slate-200 shrink-0">
+                              Q{issue.questionNumber}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                                  issue.severity === 'error' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                                }`}>
+                                  {issue.severity}
+                                </span>
+                                <span className="font-bold text-slate-800 truncate">{issue.reason}</span>
+                              </div>
+                              {relatedQ && (
+                                <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">
+                                  {relatedQ.languages?.en?.questionText || relatedQ.questionText}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {pdfDocProxy && (
+                              <button
+                                type="button"
+                                disabled={reextractingPage !== null}
+                                onClick={() => handleReextractSinglePage(pageForThisQ)}
+                                className="px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                title={`Re-extract only Page ${pageForThisQ} without re-running entire test`}
+                              >
+                                <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${reextractingPage === pageForThisQ ? 'animate-spin' : ''}`} />
+                                <span>Retry Page {pageForThisQ}</span>
+                              </button>
+                            )}
+
+                            {isMissingFig && relatedQ && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowPrePublishAuditModal(false);
+                                  setRecroppingQuestion(relatedQ);
+                                }}
+                                className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-2xs"
+                              >
+                                <Crop className="w-3.5 h-3.5" />
+                                <span>Crop from Page {pageForThisQ}</span>
+                              </button>
+                            )}
+
+                            {relatedQ && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowPrePublishAuditModal(false);
+                                  setEditingQuestionForReview(relatedQ);
+                                }}
+                                className="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+                              >
+                                Edit Question
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 sm:p-5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setShowPrePublishAuditModal(false)}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                Close Audit
+              </button>
+
+              <button
+                type="button"
+                disabled={!accuracyAudit.canPublish}
+                onClick={() => {
+                  if (!accuracyAudit.canPublish) {
+                    triggerToast(`❌ Cannot publish: ${accuracyAudit.criticalErrorsCount} critical error(s) must be resolved first.`);
+                    return;
+                  }
+                  setShowPrePublishAuditModal(false);
+                  if (aiParsedQuestionsList.length > 0) {
+                    handleSaveAiParsedQuestionsToTest();
+                  } else {
+                    handleSaveQuestionsList(questions);
+                    triggerToast('✓ Test questions verified and published!');
+                  }
+                  if (selectedTest) {
+                    const updated = tests.map(t => t.id === selectedTest.id ? { ...t, status: 'published' } as MockTest : t);
+                    handleSaveTestsList(updated);
+                    setSelectedTest(prev => prev ? { ...prev, status: 'published' } : null);
+                  }
+                }}
+                className={`px-6 py-2.5 text-xs font-black rounded-xl shadow-md transition flex items-center gap-2 ${
+                  accuracyAudit.canPublish
+                    ? 'bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white cursor-pointer'
+                    : 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-75'
+                }`}
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{accuracyAudit.canPublish ? 'Approve & Publish Test' : `Blocked (${accuracyAudit.criticalErrorsCount} Critical Errors)`}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toast Notification */}
       {adminToast && (

@@ -63,6 +63,7 @@ export function openDatabase(): Promise<IDBDatabase> {
 // ---------------- Mock Questions Storage ----------------
 
 export async function idbSaveQuestions(testId: string, questions: MockQuestion[]): Promise<void> {
+  if (typeof window === 'undefined' || !window.indexedDB) return;
   try {
     const db = await openDatabase();
     return new Promise((resolve, reject) => {
@@ -87,6 +88,7 @@ export async function idbSaveQuestions(testId: string, questions: MockQuestion[]
 }
 
 export async function idbGetQuestions(testId: string): Promise<MockQuestion[]> {
+  if (typeof window === 'undefined' || !window.indexedDB) return [];
   try {
     const db = await openDatabase();
     return new Promise((resolve) => {
@@ -110,6 +112,7 @@ export async function idbGetQuestions(testId: string): Promise<MockQuestion[]> {
 }
 
 export async function idbDeleteQuestions(testId: string): Promise<void> {
+  if (typeof window === 'undefined' || !window.indexedDB) return;
   try {
     const db = await openDatabase();
     return new Promise((resolve) => {
@@ -127,6 +130,7 @@ export async function idbDeleteQuestions(testId: string): Promise<void> {
 // ---------------- Mock Tests Storage ----------------
 
 export async function idbSaveTests(tests: MockTest[]): Promise<void> {
+  if (typeof window === 'undefined' || !window.indexedDB) return;
   try {
     const db = await openDatabase();
     return new Promise((resolve, reject) => {
@@ -147,6 +151,7 @@ export async function idbSaveTests(tests: MockTest[]): Promise<void> {
 }
 
 export async function idbGetTests(): Promise<MockTest[]> {
+  if (typeof window === 'undefined' || !window.indexedDB) return [];
   try {
     const db = await openDatabase();
     return new Promise((resolve) => {
@@ -187,6 +192,7 @@ export interface BackgroundPdfParseJob {
 }
 
 export async function idbSavePdfJob(job: BackgroundPdfParseJob): Promise<void> {
+  if (typeof window === 'undefined' || !window.indexedDB) return;
   try {
     const db = await openDatabase();
     return new Promise((resolve, reject) => {
@@ -202,6 +208,7 @@ export async function idbSavePdfJob(job: BackgroundPdfParseJob): Promise<void> {
 }
 
 export async function idbGetPdfJob(jobId: string): Promise<BackgroundPdfParseJob | null> {
+  if (typeof window === 'undefined' || !window.indexedDB) return null;
   try {
     const db = await openDatabase();
     return new Promise((resolve) => {
@@ -217,6 +224,7 @@ export async function idbGetPdfJob(jobId: string): Promise<BackgroundPdfParseJob
 }
 
 export async function idbGetAllPdfJobs(): Promise<BackgroundPdfParseJob[]> {
+  if (typeof window === 'undefined' || !window.indexedDB) return [];
   try {
     const db = await openDatabase();
     return new Promise((resolve) => {
@@ -232,6 +240,7 @@ export async function idbGetAllPdfJobs(): Promise<BackgroundPdfParseJob[]> {
 }
 
 export async function idbDeletePdfJob(jobId: string): Promise<void> {
+  if (typeof window === 'undefined' || !window.indexedDB) return;
   try {
     const db = await openDatabase();
     return new Promise((resolve) => {
@@ -249,6 +258,7 @@ export async function idbDeletePdfJob(jobId: string): Promise<void> {
 // ---------------- High-Res PDF Page Image Cache for Diagram Recropping ----------------
 
 export async function idbSavePageImage(jobId: string, pageNumber: number, dataUrl: string): Promise<void> {
+  if (typeof window === 'undefined' || !window.indexedDB) return;
   try {
     const db = await openDatabase();
     return new Promise((resolve, reject) => {
@@ -265,6 +275,7 @@ export async function idbSavePageImage(jobId: string, pageNumber: number, dataUr
 }
 
 export async function idbGetPageImage(jobId: string, pageNumber: number): Promise<string | null> {
+  if (typeof window === 'undefined' || !window.indexedDB) return null;
   try {
     const db = await openDatabase();
     return new Promise((resolve) => {
@@ -287,6 +298,7 @@ export async function idbGetPageImage(jobId: string, pageNumber: number): Promis
 }
 
 export async function idbFindPageImageForQuestion(pageNumber: number): Promise<string | null> {
+  if (typeof window === 'undefined' || !window.indexedDB) return null;
   try {
     const db = await openDatabase();
     return new Promise((resolve) => {

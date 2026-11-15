@@ -27,6 +27,7 @@ import {
 } from '../lib/mockTestData';
 import { idbGetQuestions } from '../lib/idbStorage';
 import { cleanQuestionTextForMatchTable } from '../lib/geminiPdfParser';
+import { MathRenderer } from './common/MathRenderer';
 
 interface CbtTestInterfaceProps {
   test: MockTest;
@@ -561,20 +562,20 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
       <div className="flex-1 flex overflow-hidden">
         
         {/* Main Question Workspace */}
-        <main className="flex-1 flex flex-col overflow-y-auto p-3 sm:p-6 bg-slate-50">
-          <div className="max-w-4xl w-full mx-auto flex-1 flex flex-col bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
+        <main className="flex-1 flex flex-col overflow-y-auto p-1.5 sm:p-5 bg-slate-50">
+          <div className="w-full max-w-5xl mx-auto flex-1 flex flex-col bg-white rounded-xl sm:rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
             
             {/* Question Meta Sub-Header */}
-            <div className="bg-slate-50/80 px-4 sm:px-6 py-3 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-2">
+            <div className="bg-slate-50/80 px-3.5 sm:px-6 py-2.5 sm:py-3 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <span className="w-8 h-8 rounded-xl bg-blue-600 text-white font-black text-sm flex items-center justify-center shadow-2xs font-['Outfit',sans-serif]">
+                <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-blue-600 text-white font-black text-xs sm:text-sm flex items-center justify-center shadow-2xs font-['Outfit',sans-serif]">
                   {currentQuestion?.questionNumber || currentQIndex + 1}
                 </span>
                 <div>
-                  <span className="text-xs font-black text-slate-900 block font-['Outfit',sans-serif]">
+                  <span className="text-xs sm:text-sm font-black text-slate-900 block font-['Outfit',sans-serif]">
                     Question {currentQuestion?.questionNumber} of {totalQuestionsCount}
                   </span>
-                  <span className="text-[10.5px] text-slate-500 font-semibold">
+                  <span className="text-[10px] sm:text-[11px] text-slate-500 font-semibold">
                     {currentQuestion?.subject} {currentQuestion?.chapter ? `• ${currentQuestion.chapter}` : ''}
                   </span>
                 </div>
@@ -597,7 +598,7 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
               const sharedFigureUrl = currentQuestion?.figureUrl || currentQuestion?.questionImageUrl || (currentQuestion?.figures && currentQuestion?.figures[0]);
 
               return (
-                <div className="p-4 sm:p-6 flex-1 overflow-y-auto space-y-4">
+                <div className="p-3.5 sm:p-6 flex-1 overflow-y-auto space-y-4">
                   
                   {/* Fallback notice if user requested Hindi but question only has English */}
                   {displayContent.isFallback && (
@@ -607,21 +608,24 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
                     </div>
                   )}
 
-                  {/* Question Text */}
-                  <div className="text-sm sm:text-base font-semibold text-slate-900 leading-relaxed font-sans whitespace-pre-line">
-                    {cleanQuestionTextForMatchTable(displayContent.questionText, displayContent.matchTable)}
+                  {/* Question Text with KaTeX and Scientific Math Rendering */}
+                  <div className="text-sm sm:text-base font-semibold text-slate-900 leading-relaxed font-sans">
+                    <MathRenderer
+                      text={cleanQuestionTextForMatchTable(displayContent.questionText, displayContent.matchTable)}
+                      className="inline-block w-full"
+                    />
                   </div>
 
                   {/* Match-the-Column Structured Table (Preserves exam table format) */}
                   {displayContent.matchTable && displayContent.matchTable.rows && displayContent.matchTable.rows.length > 0 && (
-                    <div className="my-3 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-2xs max-w-xl">
-                      <table className="w-full text-left text-xs sm:text-sm border-collapse">
+                    <div className="my-3 overflow-x-auto rounded-xl border border-slate-300 bg-white shadow-2xs w-full max-w-2xl">
+                      <table className="w-full min-w-[320px] text-left text-xs sm:text-sm border-collapse">
                         <thead>
-                          <tr className="bg-slate-100 border-b border-slate-300 text-slate-800 font-black">
-                            <th className="py-2 px-3.5 border-r border-slate-300 w-1/2">
+                          <tr className="bg-slate-100/90 border-b border-slate-300 text-slate-800 font-bold">
+                            <th className="py-2.5 px-3.5 border-r border-slate-300 w-1/2">
                               {displayContent.matchTable.column1Header || (currentLanguage === 'hi' ? 'कॉलम-I' : 'Column-I')}
                             </th>
-                            <th className="py-2 px-3.5 w-1/2">
+                            <th className="py-2.5 px-3.5 w-1/2">
                               {displayContent.matchTable.column2Header || (currentLanguage === 'hi' ? 'कॉलम-II' : 'Column-II')}
                             </th>
                           </tr>
@@ -629,14 +633,44 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
                         <tbody className="divide-y divide-slate-200">
                           {displayContent.matchTable.rows.map((row, rIdx) => (
                             <tr key={rIdx} className={rIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70'}>
-                              <td className="py-2 px-3.5 border-r border-slate-200 font-medium">
-                                <span className="font-black text-blue-700 mr-2">{row.leftKey}</span>
-                                <span className="text-slate-900">{row.leftText}</span>
+                              <td className="py-2.5 px-3.5 border-r border-slate-200 font-medium">
+                                <span className="font-bold text-blue-700 mr-2">{row.leftKey}</span>
+                                <MathRenderer as="span" text={row.leftText} className="text-slate-900 inline" />
                               </td>
-                              <td className="py-2 px-3.5 font-medium">
-                                <span className="font-black text-indigo-700 mr-2">{row.rightKey}</span>
-                                <span className="text-slate-900">{row.rightText}</span>
+                              <td className="py-2.5 px-3.5 font-medium">
+                                <span className="font-bold text-indigo-700 mr-2">{row.rightKey}</span>
+                                <MathRenderer as="span" text={row.rightText} className="text-slate-900 inline" />
                               </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Generic Structured Data Table */}
+                  {displayContent.structuredTable && displayContent.structuredTable.rows && displayContent.structuredTable.rows.length > 0 && (
+                    <div className="my-3 overflow-x-auto rounded-xl border border-slate-300 bg-white shadow-2xs w-full max-w-2xl">
+                      <table className="w-full min-w-[320px] text-left text-xs sm:text-sm border-collapse">
+                        {displayContent.structuredTable.headers && displayContent.structuredTable.headers.length > 0 && (
+                          <thead>
+                            <tr className="bg-slate-100/90 border-b border-slate-300 text-slate-800 font-bold">
+                              {displayContent.structuredTable.headers.map((hdr, hIdx) => (
+                                <th key={hIdx} className="py-2.5 px-3.5 border-r last:border-r-0 border-slate-300">
+                                  <MathRenderer as="span" text={hdr} className="inline" />
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                        )}
+                        <tbody className="divide-y divide-slate-200">
+                          {displayContent.structuredTable.rows.map((row, rIdx) => (
+                            <tr key={rIdx} className={rIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70'}>
+                              {row.map((cell, cIdx) => (
+                                <td key={cIdx} className="py-2.5 px-3.5 border-r last:border-r-0 border-slate-200 font-medium text-slate-900">
+                                  <MathRenderer as="span" text={cell} className="inline" />
+                                </td>
+                              ))}
                             </tr>
                           ))}
                         </tbody>
@@ -648,9 +682,9 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
                   {sharedFigureUrl && (
                     <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 max-w-lg">
                       <div className="flex items-center justify-between text-[11px] text-slate-500 font-medium mb-1.5">
-                        <span className="flex items-center gap-1">
+                        <span className="flex items-center gap-1 font-bold text-blue-700">
                           <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                          Original Scientific Figure (Preserved from PDF):
+                          Scientific Figure:
                         </span>
                         <button
                           type="button"
@@ -671,12 +705,12 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
                   )}
 
                   {/* Four Options (A, B, C, D) */}
-                  <div className="space-y-2.5 pt-2">
-                    <span className="text-xs font-black text-slate-500 uppercase tracking-wider block">
+                  <div className="space-y-2 pt-2">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
                       {currentLanguage === 'hi' ? 'सही विकल्प चुनें:' : 'Choose the correct option:'}
                     </span>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 sm:gap-3">
                       {(displayContent.options || []).map((opt) => {
                         const isSelected = currentQuestion ? answers[currentQuestion.questionNumber] === opt.label : false;
                         const optFigure = currentQuestion?.optionFigures?.[opt.label] || opt.imageUrl;
@@ -685,9 +719,9 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
                           <div
                             key={opt.label}
                             onClick={() => handleSelectOption(opt.label)}
-                            className={`p-3 sm:p-3.5 rounded-xl border-2 transition-all cursor-pointer flex items-start gap-3 ${
+                            className={`p-3 sm:p-4 rounded-xl border-2 transition-all cursor-pointer flex items-start gap-3 ${
                               isSelected
-                                ? 'border-blue-600 bg-blue-50/80 text-blue-950 font-bold shadow-xs'
+                                ? 'border-blue-600 bg-blue-50/90 text-blue-950 font-bold shadow-xs'
                                 : 'border-slate-200 bg-white hover:border-slate-300 text-slate-800'
                             }`}
                           >
@@ -700,17 +734,22 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
                               {opt.label}
                             </div>
 
-                            {/* Option Content (Supports text, chemical structures/diagrams, or both) */}
+                            {/* Option Content (Supports KaTeX/math text, chemical structures/diagrams, or both) */}
                             <div className="flex-1 min-w-0 text-xs sm:text-sm">
-                              {opt.value && <div className="leading-snug">{opt.value}</div>}
+                              {opt.value && (
+                                <MathRenderer
+                                  text={opt.value}
+                                  className="leading-snug font-medium text-slate-900"
+                                />
+                              )}
 
                               {/* Image Option (e.g. Chemical structure) */}
                               {optFigure && (
-                                <div className="mt-1.5">
+                                <div className="mt-2">
                                   <img
                                     src={optFigure}
-                                    alt={`Option ${opt.label} chemical structure`}
-                                    className="max-h-24 object-contain rounded-lg border border-slate-200 bg-white p-1"
+                                    alt={`Option ${opt.label} diagram`}
+                                    className="max-h-28 object-contain rounded-lg border border-slate-200 bg-white p-1.5 shadow-2xs"
                                   />
                                 </div>
                               )}
@@ -783,16 +822,21 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
                   btnStyle = 'bg-rose-500 text-white border-rose-600';
                 }
 
+                const hasDiagram = Boolean(q.imageUrl || (q as any).languages?.en?.imageUrl || (q as any).languages?.hi?.imageUrl);
+
                 return (
                   <button
                     key={q.id ? `${q.id}-${idx}` : `q-${q.questionNumber}-${idx}`}
                     type="button"
                     onClick={() => setCurrentQIndex(idx)}
-                    className={`h-9 rounded-xl text-xs font-black border transition-all flex items-center justify-center cursor-pointer ${btnStyle} ${
+                    className={`relative h-9 rounded-xl text-xs font-black border transition-all flex items-center justify-center cursor-pointer ${btnStyle} ${
                       isCurrent ? 'ring-2 ring-blue-600 ring-offset-2 scale-105' : ''
                     }`}
                   >
                     {q.questionNumber}
+                    {hasDiagram && (
+                      <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400" title="Includes scientific diagram / figure" />
+                    )}
                   </button>
                 );
               })}
@@ -932,6 +976,8 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
                     btnStyle = 'bg-rose-500 text-white border-rose-600';
                   }
 
+                  const hasDiagram = Boolean(q.imageUrl || (q as any).languages?.en?.imageUrl || (q as any).languages?.hi?.imageUrl);
+
                   return (
                     <button
                       key={q.id ? `${q.id}-${idx}` : `q-${q.questionNumber}-${idx}`}
@@ -940,11 +986,14 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
                         setCurrentQIndex(idx);
                         setIsPaletteDrawerOpen(false);
                       }}
-                      className={`h-9 rounded-xl text-xs font-black border transition-all flex items-center justify-center cursor-pointer ${btnStyle} ${
+                      className={`relative h-9 rounded-xl text-xs font-black border transition-all flex items-center justify-center cursor-pointer ${btnStyle} ${
                         isCurrent ? 'ring-2 ring-blue-600' : ''
                       }`}
                     >
                       {q.questionNumber}
+                      {hasDiagram && (
+                        <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400" title="Includes scientific diagram / figure" />
+                      )}
                     </button>
                   );
                 })}

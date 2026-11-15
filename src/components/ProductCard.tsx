@@ -141,16 +141,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         </div>
       ) : null}
 
-      {/* Direct Clean Product Cover Image (Increased Width & Height) */}
+      {/* Direct Clean Product Cover Image */}
       <div 
         onClick={() => onSelect(product)}
-        className="cursor-pointer pt-2 pb-2 flex items-center justify-center relative overflow-hidden rounded-xl bg-slate-50/80 min-h-[160px] sm:min-h-[175px]"
+        className="cursor-pointer pt-1.5 pb-1.5 flex items-center justify-center relative overflow-hidden rounded-xl bg-slate-50/80 min-h-[144px] sm:min-h-[158px]"
       >
         {product.coverImage && !imgError ? (
           <img
             src={resolveImageUrl(product.coverImage)}
             alt={product.title}
-            className="w-full h-40 sm:h-44 object-contain rounded-lg transition-transform duration-200 group-hover:scale-103"
+            className="w-full h-36 sm:h-40 object-contain rounded-lg transition-transform duration-200 group-hover:scale-103"
             referrerPolicy="no-referrer"
             loading="lazy"
             onError={(e) => {
@@ -169,7 +169,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             }}
           />
         ) : (
-          <div className="w-full h-40 sm:h-44 bg-gradient-to-br from-blue-700 via-indigo-800 to-slate-900 rounded-lg flex flex-col items-center justify-between p-3 text-white text-center shadow-xs border border-blue-500/30 relative overflow-hidden">
+          <div className="w-full h-36 sm:h-40 bg-gradient-to-br from-blue-700 via-indigo-800 to-slate-900 rounded-lg flex flex-col items-center justify-between p-3 text-white text-center shadow-xs border border-blue-500/30 relative overflow-hidden">
             <div className="w-full flex items-center justify-between text-[8px] font-black uppercase tracking-widest text-yellow-400">
               <span className="flex items-center gap-1">
                 {product.type === 'pdf' ? <FileText className="w-2.5 h-2.5" /> : <BookOpen className="w-2.5 h-2.5" />}
@@ -255,7 +255,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         </div>
 
         {/* Action Button Row */}
-        <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center gap-2">
+        <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-2">
           {isPdfPurchased ? (
             /* Purchased PDF Action: Download & Read Online */
             <div className="w-full flex items-center gap-2">
@@ -263,7 +263,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 id={`download-pdf-btn-${product.id}`}
                 onClick={handleDownloadPdf}
                 disabled={isDownloading}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-75"
+                className="flex-1 min-h-[40px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-75"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>{isDownloading ? 'Saving...' : 'Download PDF'}</span>
@@ -273,7 +273,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 id={`read-pdf-btn-${product.id}`}
                 onClick={handleReadPdf}
                 title="Read Online"
-                className="py-2 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] rounded-xl transition active:scale-95 border border-blue-200 cursor-pointer flex items-center gap-1"
+                className="min-h-[40px] py-2 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] rounded-xl transition active:scale-95 border border-blue-200 cursor-pointer flex items-center gap-1"
               >
                 <BookOpen className="w-3.5 h-3.5" />
                 <span>Read</span>
@@ -285,7 +285,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               <button
                 id={`buy-btn-${product.id}`}
                 onClick={() => onQuickBuy(product)}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] py-2 px-3.5 rounded-xl flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer"
+                className="flex-1 min-h-[40px] bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer"
               >
                 {product.type === 'pdf' ? (
                   <>
@@ -304,7 +304,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 id={`add-cart-${product.id}`}
                 onClick={() => onAddToCart(product)}
                 title="Add to Cart"
-                className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-700 hover:text-blue-600 rounded-xl transition active:scale-95 border border-slate-200 cursor-pointer"
+                className="min-h-[40px] min-w-[40px] p-2 bg-slate-50 hover:bg-slate-100 text-slate-700 hover:text-blue-600 rounded-xl transition active:scale-95 border border-slate-200 cursor-pointer flex items-center justify-center"
               >
                 <ShoppingCart className="w-4 h-4" />
               </button>

@@ -96,10 +96,10 @@ export const HomeFullCourseCard: React.FC<HomeFullCourseCardProps> = ({
         <div className="absolute -bottom-20 -left-20 w-64 h-64 bg-gradient-to-tr from-emerald-500/15 via-teal-500/15 to-cyan-500/10 rounded-full blur-3xl pointer-events-none group-hover:scale-110 transition-transform duration-700" />
 
         {/* Inner Card Frame */}
-        <div className="relative rounded-[14px] sm:rounded-[22px] bg-slate-900/90 backdrop-blur-xl p-3.5 sm:p-5 text-white overflow-hidden space-y-3">
+        <div className="relative rounded-[14px] sm:rounded-[22px] bg-slate-900/90 backdrop-blur-xl p-3 sm:p-4 text-white overflow-hidden space-y-2.5">
           
           {/* Header Row: Category Badge + Class Filter Selector + Status */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-white/10 pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-2.5">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-black bg-gradient-to-r from-amber-400 via-orange-500 to-rose-500 text-slate-950 shadow-xs uppercase tracking-wider">
                 <Sparkles className="w-3 h-3 text-slate-950 fill-current animate-pulse" />
@@ -228,7 +228,7 @@ export const HomeFullCourseCard: React.FC<HomeFullCourseCardProps> = ({
                 <button
                   type="button"
                   onClick={handleSampleClick}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700/80 transition cursor-pointer active:scale-95"
+                  className="flex-1 min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700/80 transition cursor-pointer active:scale-95"
                   title="View free course sample files on Google Drive"
                 >
                   <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
@@ -240,7 +240,7 @@ export const HomeFullCourseCard: React.FC<HomeFullCourseCardProps> = ({
                     type="button"
                     onClick={handleAccessClick}
                     disabled={isAccessing}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 text-slate-950 text-xs font-black shadow-md transition cursor-pointer active:scale-95 animate-pulse"
+                    className="flex-1 min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 text-slate-950 text-xs font-black shadow-md transition cursor-pointer active:scale-95 animate-pulse"
                   >
                     <Unlock className="w-3.5 h-3.5" />
                     <span>{isAccessing ? 'Opening...' : 'Access Course'}</span>
@@ -253,7 +253,7 @@ export const HomeFullCourseCard: React.FC<HomeFullCourseCardProps> = ({
                       e.stopPropagation();
                       onViewCourse();
                     }}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-black shadow-md shadow-indigo-600/30 transition cursor-pointer active:scale-95 group-hover:translate-x-0.5"
+                    className="flex-1 min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-black shadow-md shadow-indigo-600/30 transition cursor-pointer active:scale-95 group-hover:translate-x-0.5"
                   >
                     <span>View Course</span>
                     <ArrowRight className="w-3.5 h-3.5" />

@@ -1,0 +1,906 @@
+{
+  "officialAnswerKey": {
+    "1": "A",
+    "2": "B",
+    "3": "B",
+    "4": "B",
+    "5": "D",
+    "6": "C",
+    "7": "C",
+    "8": "A",
+    "9": "A",
+    "10": "C",
+    "11": "C",
+    "12": "A",
+    "13": "D",
+    "14": "C",
+    "15": "A",
+    "16": "C",
+    "17": "A",
+    "18": "B",
+    "19": "A",
+    "20": "A",
+    "21": "C",
+    "22": "C",
+    "23": "C",
+    "24": "B",
+    "25": "C",
+    "26": "A",
+    "27": "D",
+    "28": "C",
+    "29": "D",
+    "30": "D",
+    "31": "A",
+    "32": "A",
+    "33": "B",
+    "34": "B",
+    "35": "C",
+    "36": "B",
+    "37": "C",
+    "38": "A",
+    "39": "B",
+    "40": "D",
+    "41": "A",
+    "42": "C",
+    "43": "B",
+    "44": "C",
+    "45": "B",
+    "46": "C",
+    "47": "A",
+    "48": "C",
+    "49": "D",
+    "50": "A",
+    "51": "C",
+    "52": "A",
+    "53": "C",
+    "54": "D",
+    "55": "C",
+    "56": "C",
+    "57": "A",
+    "58": "A",
+    "59": "A",
+    "60": "A",
+    "61": "D",
+    "62": "C",
+    "63": "B",
+    "64": "A",
+    "65": "D",
+    "66": "D",
+    "67": "B",
+    "68": "D",
+    "69": "A",
+    "70": "A",
+    "71": "A",
+    "72": "B",
+    "73": "C",
+    "74": "C",
+    "75": "A",
+    "76": "B",
+    "77": "A",
+    "78": "C",
+    "79": "A",
+    "80": "B",
+    "81": "D",
+    "82": "C",
+    "83": "D",
+    "84": "C",
+    "85": "D",
+    "86": "D",
+    "87": "A",
+    "88": "B",
+    "89": "B",
+    "90": "C",
+    "91": "B",
+    "92": "A",
+    "93": "D",
+    "94": "D",
+    "95": "A",
+    "96": "A",
+    "97": "D",
+    "98": "C",
+    "99": "A",
+    "100": "B",
+    "101": "D",
+    "102": "A",
+    "103": "C",
+    "104": "D",
+    "105": "A",
+    "106": "B",
+    "107": "D",
+    "108": "C",
+    "109": "A",
+    "110": "D",
+    "111": "A",
+    "112": "B",
+    "113": "B",
+    "114": "C",
+    "115": "B",
+    "116": "A",
+    "117": "C",
+    "118": "D",
+    "119": "B",
+    "120": "B",
+    "121": "C",
+    "122": "D",
+    "123": "C",
+    "124": "B",
+    "125": "D",
+    "126": "A",
+    "127": "C",
+    "128": "C",
+    "129": "A",
+    "130": "A",
+    "131": "B",
+    "132": "B",
+    "133": "B",
+    "134": "A",
+    "135": "A",
+    "136": "A",
+    "137": "B",
+    "138": "A",
+    "139": "C",
+    "140": "A",
+    "141": "C",
+    "142": "A",
+    "143": "B",
+    "144": "B",
+    "145": "C",
+    "146": "C",
+    "147": "C",
+    "148": "B",
+    "149": "C",
+    "150": "B",
+    "151": "B",
+    "152": "C",
+    "153": "A",
+    "154": "C",
+    "155": "C",
+    "156": "B",
+    "157": "B",
+    "158": "D",
+    "159": "A",
+    "160": "D",
+    "161": "B",
+    "162": "B",
+    "163": "B",
+    "164": "B",
+    "165": "B",
+    "166": "C",
+    "167": "B",
+    "168": "B",
+    "169": "D",
+    "170": "A",
+    "171": "B",
+    "172": "C",
+    "173": "C",
+    "174": "A",
+    "175": "B",
+    "176": "C",
+    "177": "C",
+    "178": "C",
+    "179": "C",
+    "180": "C"
+  },
+  "solutions": {
+    "1": {
+      "correctAnswer": "A",
+      "explanation": "Now  Q = 100 J  So   increased  ΔU = ΔQ = ΔW  ΔW = P Δ V = 50 [4 − 10] = −300 J  ΔQ = 100 J ΔU = 400 J"
+    },
+    "2": {
+      "correctAnswer": "B",
+      "explanation": "There are seven fundamental quantities :  Mass,   Length,   Time,   Temperature,   Electric  current,   Luminous   intensity,   Amount   of  substance.  Electric charge is not include in these quantities"
+    },
+    "3": {
+      "correctAnswer": "B",
+      "explanation": "For F   to be minimum, q   an q   should be  minimum, we know that  Hence,  = 2.304 × 10   N  F e   =   . 1 4 πε 0  q 1 q 2  r 2  e   1   2  (q 1 ) min   = (q 2 ) min   = e = 1. 6 × 10 –19   C (F e ) min   =   (   9×10 9   ) (   1.6×10 –19   ) (   1.6×10 –19   )  ( 1.0 )   2  –28"
+    },
+    "4": {
+      "correctAnswer": "B",
+      "explanation": "Given  x = 2 + 4t  y = 3t + 8t  a   = 0  a   = +16  a   = +16 i.e. uniformly accelerated  Also, from given equation  4y = 3x – 6 + 2x   + 8   – 8x  i.e. parabolic path.  2  v x   =   = 4   ( constant ) dx dt  v y   =   = 3 + 16t  dy dt  x  y  net  t =   x−2 4  ∴   y = 3   + 8 (   ) 2 (x−2) 4 x−2 4  =   x −   +   ( x 2   + 4 − 4x ) 3 4 3 2 1 2  y =   x −   +   + 2 − 2x 3 4 3 2 x 2  2  ⇒   2  ⇒ 4y = 2x 2   − 5x + 2"
+    },
+    "5": {
+      "correctAnswer": "D",
+      "explanation": "Given :  Kinetic energy of proton, E = 2 MeV = 2 x  10   eV = 3.2 x 10   J  Magnetic field, B = 2.5 T  Kinetic energy is given by :  K =   mv  m is the mass of proton, m = 1.67 x 10   kg  v   =  v   = 3.83 x 10  v = 1.95 x 10   m/s  Force on the proton is given by:  F = qvBsin θ  Here, θ = 90°  F = qvB  = 1.6 × 10   × 10   × 2.5  6   —13  1 2   2  —27  2   2×3.2×10 −13  1.67×10 27  2   14  7  -19   7  F = 7. 8 × 10 −12   N ≈ 8 × 10 −12   N"
+    },
+    "6": {
+      "correctAnswer": "C",
+      "explanation": "By Hooke's law  Therefore, the correct answer is (3).  Y =   Fl AΔl  Δl ∝   Fl A  =   ×  Δl 2  Δl 1  F 2 l 2  F 1 l 1  A 1  A 2  =   × 2f×2 L f×L  π ( r ) 2  π (2r) 2  Δl 1   = Δl 2  Δl 2   = l"
+    },
+    "7": {
+      "correctAnswer": "C",
+      "explanation": "By the Newton's law of cooling  For case -I  or  According to question   in next 10 min it cools  from 2T to a unknown temperature T' then  or  = k   (   − To ) dT dt T 1 +T 2  2  ∴  = k   [   − T ] 3T−2T 10 3T+2T 2  = k   [   ] T 10 3T 2  k =   1 15  = k   [   − T ] 2T−T' 10 2T+T' 2  =   × 2T−T' 10 1 15 T' 2  6T − 3T' = T' T' =   T 3 2"
+    },
+    "8": {
+      "correctAnswer": "A",
+      "explanation": "Consider any three sections (1), (2) and (3) in  the three pipes of   different radii, as shown the  figure. If v   and v   be the velocity of   water at  section (1) and (2) respectively, then :-  and  The rate of discharge the three pipes are  and  Now,  Solving, we get,   and  Threfore, the correct answer is (A).  1   2  A 1   =   π   (10) 2   cm 2   ; A 2   =   π (5) 2   cm 2   ; A 3   =   π (3) 2   cm 2  v 1   = v 2   =?   v 3   = 5 cm /s A 1 v 1   = 100   π v 1   cm 3   /s ; A 2 v 2   = 25   π v 2   cm 3   /s A 3 v 3   = 9 π   × 5 = 45   π   cm 3   /s Q = A 1 v 1   = A 2 v 2   + A 3 v 3  ⇒ 600   π   = 100 π v 1   = 25 π v 2   + 45 π  v 1   = 6 cm /s v 2   = 22. 2 cm /s"
+    },
+    "9": {
+      "correctAnswer": "A",
+      "explanation": "One farad is defined as the capacitance C of a  capacitor   across   which,   when   charged   with   Q  coulomb, when there is potential   difference of  1 volt. So,  [ C ]= [   ] = [   ] = [   ]  Q V Q 2  W A 2 T   2  M   1 L 2 T   −2  [ C ]= [ M   −1 L −2 T   4 A 2 ]"
+    },
+    "10": {
+      "correctAnswer": "C",
+      "explanation": "Orbital speed near the earth's surface is  Conserving energy,  or  h = R  v 0   =   √   GM R  mv 2 0 –   = − 1 2 GMm R GMm R+h  –   =–   =– 1 2 GM R GM R GM R+h GM 2R  ⇒"
+    },
+    "11": {
+      "correctAnswer": "C",
+      "explanation": "The horizontal range of the projectile is  R =   u 2   sin 2 θ  g  {Here u 1   = 40 m/s,   θ 1   = 30 ∘ , u 2   = 60 m/s,   θ 2   = 60 ∘ } =   (   ) 2 R 1  R 2  u 1  u 2  sin 2 θ 1  sin 2 θ 2  =   (   ) 2 R 1  R 2  40 60 sin 60° sin 120°  ⇒   =  R 1  R 2  4 9"
+    },
+    "12": {
+      "correctAnswer": "A",
+      "explanation": "Given :  Changing rate of radius =   unit  Magnetic field   =   unit  Induced emf e = 1   V  The induced emf is given by  r =  10 −2  10 −3  μ  e = −   = −   = −B (2 π r)  d ϕ  dt BdA dt dr dt  r =   e B ( 2 π ) (   )  dr dt  1×10 −6  10 −3 ×2×3.14×10 −2  1. 6 cm"
+    },
+    "13": {
+      "correctAnswer": "D",
+      "explanation": "=   ⇒ t = 80 h t 10 6 2 –2 2  2 2 –0 2"
+    },
+    "14": {
+      "correctAnswer": "C",
+      "explanation": "X = 3 YZ 2  [Y] =   = =   [ M −3 L −2 T 8 A 4 ]  [X] [Z] 2  [ M −1 L −2 T 4 A 2 ]  [ MT −2   A ] 2"
+    },
+    "15": {
+      "correctAnswer": "A",
+      "explanation": "Near the earth's surface,  or   = Universal constant.  v 0   =   √   = GM R 2 π R T  ∴   T 2   =   =   = 4 π 2 R 3  GM 4 π 2 R 3  G.   π R 3 ρ  4 3  3 π  G ρ  ρ T 2   =   3 π  G"
+    },
+    "16": {
+      "correctAnswer": "C",
+      "explanation": "Tcos θ   = mg Tsin θ   =   mv 2  R  tan θ   =   v 2  Rg  ⇒ tan θ   =   20 2  40×10  ⇒ tan θ   = 1 ⇒   θ   =   π  4"
+    },
+    "17": {
+      "correctAnswer": "A",
+      "explanation": "By theory"
+    },
+    "18": {
+      "correctAnswer": "B",
+      "explanation": "The electric field due to infinite plane sheet of  charge  The force on sphere S due to electrostatic  repulsion is  Hence, from figure  E =   σ  2 ε 0  F e   =   QE   =   σQ  2 ε 0  tan θ   =   =   or   θ   = tan –1 (   )  QE mg  σ E 2 ε 0   mg  σ Q 2 ε 0   mg"
+    },
+    "19": {
+      "correctAnswer": "A",
+      "explanation": "From figure  AS system is in equilibrium, therefore  F = 10 N  T 1   cos 45° = mg T 1   sin 45° = F  ∴   tan 45° =   F mg  ⇒ F = mg"
+    },
+    "20": {
+      "correctAnswer": "A",
+      "explanation": "ω   =   = =   [ 1 −   (   ) γ −1  ]  P 1 V 1 −P 2 V 2  γ −1 nRT−nRT 2  γ −1 nRT 1  γ −1 V 1  V 2"
+    },
+    "21": {
+      "correctAnswer": "C",
+      "explanation": "In a given scientific notation of a number, all  non zero numbers are significant.  Hence   in   significant   digita   are  5.  11. 118 × 10 −6"
+    },
+    "22": {
+      "correctAnswer": "C",
+      "explanation": "KE = work done   =   qΔV  =   e [1 V   ] = 1 eV"
+    },
+    "23": {
+      "correctAnswer": "C",
+      "explanation": "Given,  ........ (1)  ......... (2)  By equation (1)  m = 10 kg   μ S   = 0. 25  θ   = 30°,   g = 10 m/s F cos 30° = f F sin 30° + N = mg N = mg − F sin 30° F cos 30° =   μ S   (mg − F sin 30°) F (cos 30° +   μ S   sin 30°)=   μ S   mg F =   0.25×10×10 ×0.25×  √3 2 1 2  F =   ⇒ 25. 2 N 50 1.98"
+    },
+    "24": {
+      "correctAnswer": "B",
+      "explanation": "Given-  ,  .  angle of shear  shear strains   .  L = 2 m r = 1 cm = 10 −2   m twist =   θ   = 0 .8 rad  ϕ   =   = r θ  L 10 −2 ×0.8 2  = 0 .4 ×10 −2  = 0 .004   rad"
+    },
+    "25": {
+      "correctAnswer": "C",
+      "explanation": "Mean time:  By rounding off   :  t m   =   = 32 30+32+35+31 4  Δ t   = ±2   s  ∴   t   + Δ t   = 32 ± 2   s"
+    },
+    "26": {
+      "correctAnswer": "A",
+      "explanation": "The resistance of wire of length   cross-  sectional area A and resistivity   is given by  If d is the density and m is the mass of wire,  then area of wire  therefore,  Since  Now  ℓ  ρ  R =   ρ   ℓ A  A =   m ℓd  R =   =   ℓ 2 ρ ℓ  m ℓd  ℓd m  = constant  ρd  m  × 100 = 2 (   × 100 ) ΔR R Δ ℓ  ℓ  × 100 = 0. 1% Δ ℓ  ℓ  × 100 = 2 ( 0. 1 ) % = 0. 2%  ΔR R"
+    },
+    "27": {
+      "correctAnswer": "D",
+      "explanation": "R ∝ A 1/3  =   (   ) 1/3  =   (   ) 1/3   =   ( 27 )  1/3  = 3  R 2  R 1  A 2  A 1  162 6  R 2   = 3R 1   = 3 × 3 × 10 −15   m = 9 × 10 −15   m"
+    },
+    "28": {
+      "correctAnswer": "C",
+      "explanation": "The correct option is  Specific heat of copper S   = 400 J kg   °C  Latent heat of fusion L   =3.5×105 J kg  Mass of copper block Mcu = 2 kg  Heat released by cu block = Heat gained by ice  to melt.  C   kg 8 7  cu   –1   –1  f   –1  M cu S cu   Δ   θ   = ML f  ⇒ 2 × 400 × 500 = M × 3. 5 × 10 5  ⇒ M = =   kg  2×400×500 3.5×10 5  8 7"
+    },
+    "29": {
+      "correctAnswer": "D",
+      "explanation": "Least count of vernier calipers  LC = 1 MSD − 1 VSD  20 divisions of vernier scale = 16 divisions of  main scale  ∴   LC = 1 MSD − 1 VSD  = 1 mm − 0.8 mm = 0.2 mm  =   Smallest division on main scale Number of divisions on vernier scale  ∴   1VSD=   mm = 0 .8 mm 16 20"
+    },
+    "30": {
+      "correctAnswer": "D",
+      "explanation": "The maximum current allowed in bulb,  Resistance of the bulb  When the bulb is connected across voltage V'  (=110 V) then power consumed,  i =   =   =   A P V 100 220 5 11  R =   =   = 484Ω V i 220 5  P' =   (V') 2  R  =   = 25 W  (110) 2  484"
+    },
+    "31": {
+      "correctAnswer": "A",
+      "explanation": "∵   λ   ∝   ⇒   λ   ∝   , λ   ∝  ∴  1 √m   e  1 √m e   p  1 √m p  =   √ λ e  λ p  m p  m e"
+    },
+    "32": {
+      "correctAnswer": "A",
+      "explanation": "Convex   mirror   form   virtual   and   diminished  image  Concave   mirror   may   form   real   and   virtual  image and may be diminished and inlarge.  → →"
+    },
+    "33": {
+      "correctAnswer": "B",
+      "explanation": "From work energy theorem  and we know that  therefore  W =   = 46 J  W = Δ KE P =   dW dt t 2  ∫  t 1  Pdt =  4  ∫  2  ( 3t 2   − 2t + 1 )   dt"
+    },
+    "34": {
+      "correctAnswer": "B",
+      "explanation": "By theory"
+    },
+    "35": {
+      "correctAnswer": "C",
+      "explanation": "B p ( x 1 y )   = 0 = x = 3y  μ 0 I 2 π y  μ 0 (3I) 2 π x"
+    },
+    "36": {
+      "correctAnswer": "B",
+      "explanation": "v   = – v × slope  a = – ω   y  p   2"
+    },
+    "37": {
+      "correctAnswer": "C",
+      "explanation": "F = 15 cm  F = √x 1 x 2   = √9 × 25 = √225"
+    },
+    "38": {
+      "correctAnswer": "A",
+      "explanation": "λ =   Å = 10877 Å = hc E 12400 1.14"
+    },
+    "39": {
+      "correctAnswer": "B",
+      "explanation": "Consider the two coherent sources are I   and I  Therefore;  ....(1)  And  Therefore;  =  So, option (B) is correct.  1   2  I max   =   ( √I 1   + √I 2 ) 2  100 =   ( √I + √I ) 2  =   ( 2√I ) 2  = 4I I = 25 units I 1   = I and I 2   ∝ (A 2 ) 2  A 2   = A −   A =   (   ) 20 100 4A 5  I 2   ∝ (A 2 ) 2   ∝   (   ) 2 4A 5  I 2   ∝   A 2 16 25  I 2   =   I 16 25  I ′ max   =   ( √I +   √   I )  2  =   ( √I +   √I ) 2  = I (   ) 2 16 25 4 5 9 5  I =   × 25 = 81 81 25 81 25"
+    },
+    "40": {
+      "correctAnswer": "D",
+      "explanation": "=   =   =   =  ( F 0   )   1  ( F 0   )   2  1 2  V 1 2 L 1 V 2 2 L 2  V 1  V 2  L 2  L 1  V 1  V 2  4 1  =   = V 1  V 2  1 8  √   T  μ 1  √ T/ μ 2  =   =   =  μ 2  μ 2  1 64  ρ ⋅A 2  ρ A 1  1 64  =   = 64 A 1  A 2  π r 2 1  π r 2 2  = 8  r 1  r 2"
+    },
+    "41": {
+      "correctAnswer": "A",
+      "explanation": "Using formula of Electric field  E =   V  d  =   0.5 5×10 −7  = 1 × 10 6   V/m"
+    },
+    "42": {
+      "correctAnswer": "C",
+      "explanation": "We have,  S 2 D =   √ S 1 D 2   + S 1   S 2 2  =   √ 4 2   + 3 2  = 5 m Δx = S 2 D − S 1 D = 5 − 4 = 1 m ΔΦ =   Δx =   ( 1 )   = Now, I = I 1   + I 2   + 2√I 1 I 2 cos ϕ  I = I 0   + I 0   + 2√I 0 I 0   cos   = 2I 0 2 π λ  2 π  4  π  2  π  2"
+    },
+    "43": {
+      "correctAnswer": "B",
+      "explanation": "For   minima  Similarly,  Now, according to qn. y   – y   = 3 mm  3 rd   sin   θ   ≈   θ   ≈ tan   θ   =   =  y 3  D  3 λ a  =   =  y 3  D  3 λ a  y 1   =   λD a  3   1  ⇒   = 3 mm 2 λD a  ⇒ a =   2×6000×10 −10 ×50×10 −2  3×10 −3  = 20 × 10 −5   m = 2 × 10 −4   m"
+    },
+    "44": {
+      "correctAnswer": "C",
+      "explanation": "Capacitance of capacitor  ... (i)  If a slab of thickness t is introduced between  the plates with   new separation d then its new  capacitance  ....(ii)  As q = CV, charge on the capacitor is same in  both cases, therefore to mention same p.d., the  capacitance C and C' must be same, i.e., from  (i) and (ii)  Here, d' = d + 2.4 mm = d + 2.4 × 10   m  t = 3 mm = 3×10   m  C 0   =   ε 0 A d  C' =   ε 0  d'–t+   t k  =  ε 0 A d  ε 0 A d'–t+   t k  ⇒ d = d'– t +   t k  –3  –3  ∴   d = d + 2. 4 × 10 –3 – 3 × 10 –3   +   3×10 –3  k  ⇒– 3 +   =– 2. 4 3 k  ⇒ k = 5"
+    },
+    "45": {
+      "correctAnswer": "B",
+      "explanation": "R = 0.25m =  m = 2kg  KE =  V   = 8  V=   m/s  I =  1 4  I 2 1 2  4 × 2 × 10 ×   = v 2 1 16  2  2√2 =   ×   = mR 2  2 2 2 1 16 1 16\nChemistry - Section A"
+    },
+    "46": {
+      "correctAnswer": "C",
+      "explanation": "(C) Methyl 2-chlorocarbonylbenzoate"
+    },
+    "47": {
+      "correctAnswer": "A",
+      "explanation": "C   H   OH(l) + 3O   (g)   →   2CO   (g) + 3H   O(l)  ΔU = -1500 kJ mol  ΔH = ?  T = 298 K  Δn   = -1  R = 8.314 J mol  ΔH = ΔU + Δn   RT  = – 1500 + (–1) × 8.314 × 10   × 298  = –1500   – 2.47 = – 1502.47   kJ mol  2   5   2   2   2  -1  g  -1  g  –3  –1"
+    },
+    "48": {
+      "correctAnswer": "C",
+      "explanation": "we know that ;N   V   = N   V  N = M   n. ;for H   SO   n=2  N   = 0.10   2 ;N   = 0.05   2  V   = 50ml ; V   = x  N   V   = N   V  0.1   2   50 = 0.05   2   x  x =  x = 100ml  1   1   2   2  ×   2   4  1   ×   2   ×  1   2  1   1   2   2  × ×   ×   ×  0.2×50 0.1"
+    },
+    "49": {
+      "correctAnswer": "D",
+      "explanation": "Noble gases –  (i)   colourless  (ii) odourless  (iii) tasteless and non inflammable  Noble gases are colorless, odorless, tasteless,  and   nonflammable   gases   under   standard  conditions.   In   the   periodic   table,   the   noble  gases   are   arranged   according   to   their   boiling  point. Noble gases are widely used in different  fields,   from   incandescent   lighting   to   excimer  lasers."
+    },
+    "50": {
+      "correctAnswer": "A",
+      "explanation": "(A) 16 g of  Molarmass of  Moles of   mole  1 mole of   contains   atoms  atoms have  electrons or   electrons  (B) 1 g of  At STP 1 g   i. e.,   mole  at STP 1 mole = 22.4 L  mole = 11.2 L  (C) 1 mole of  1 mole of  (D) 0.5 mole of  0.5 mole  Hence, the correct order is A-II, B-IV, C-I, D-  III.  CH 4 (g) CH 4   = 12 + 4 × 1 = 16 g mol −1  CH 4   =   = 1 16 16  CH 4   6. 022 × 10 23  6. 022 × 10 23   6. 022 × 10 24  60. 22 × 10 23  H 2 (g) H 2   1 2   H 2 1 2  N 2 (g) N 2   = 1 × 28 = 28 g SO 2 (g) SO 2   =   × 64 = 32 g 1 2"
+    },
+    "51": {
+      "correctAnswer": "C",
+      "explanation": "For symmetry  The   arrangement   of   bp   and   lp   around   F   is  tetrahedral.   Therefore,   angle   should   appear  around F and not around H atom."
+    },
+    "52": {
+      "correctAnswer": "A",
+      "explanation": "As per de-Broglie  hence   (hyperbola curve)  λ   =   h p  λ   ∝   1 p  λ   ↑, P ↓"
+    },
+    "53": {
+      "correctAnswer": "C",
+      "explanation": "Thus heat required to prepare 1 mole of  Molecular weight of CaC   = 40+24 = 64  64 g of   CaC   requires   153.8 kcal   of heat.  128 g of   CaC   requires   307.6 kcal   of heat.  CaCO 3 (s) → CaO(s) + CO 2 (g); Δ H° = 42. 8 kcal CaO(s) + 3C(s) → CaC 2 (s) + CO(g); Δ H° = 111 kcal CaCO 3 (s) + 3C(s) → CaC 2 (s) + CO(g) + CO 2 (g) Δ H = 153. 8   kcal  CaC 2   from CaCO 3   = 153. 8 kcal  2  2  2"
+    },
+    "54": {
+      "correctAnswer": "D",
+      "explanation": "The solution which obey Raoult's law over the  entire   range   of   concentration   are   known   as  ideal solutions.  Thus, Δ P = P   − P   = 0 .  Since   for   an   ideal   solution   since   the   solute-  solute   and   solvent-solvent   intermolecular  attraction forces are equal to the solute-solvent  intermolecular attractive forces, the enthalpy of  mixing   (   Δ   H   )   of   the   pure   components   to  form   the   solution   is   zero   and   the   volume   of  mixing ( Δ   V ) is also zero.  However, for an ideal solution, entropy mixing (  Δ   S ) is not zero. it positive because a solvent  (or   solute)   in   a   solution   has   more   molecular  disorder.  observed   Raoult  mix  mix  mix"
+    },
+    "55": {
+      "correctAnswer": "C",
+      "explanation": "There are six geome  trical isomers possible for C   (Cl)(Br)(I)(F) 2"
+    },
+    "56": {
+      "correctAnswer": "C",
+      "explanation": "a = resonance + 1°  b = resonance + 2°  c = 1° – carbon  d = 2° – carbon  Bond energy   α   1 stability of radical"
+    },
+    "57": {
+      "correctAnswer": "A",
+      "explanation": "(Reaction)   (Type   of   redox  reaction)  (A)   (IV)   Combination  (B)  (I)   Decomposition  (C)  (II)   Displacement  (D)  (III)   Disproportionation  (A) In this reaction N   combine with O   gives  2mole of NO gas  (B) when we heated Pb(NO   )   decompose   and  give oxygen gas and NO   and PbO  (C)   In this reaction Na displaced H   ion  (D)   Disproportionation reaction is a reaction in  which,   the   same   element   is   simultaneously  oxidized and reduced  here NO   oxidized as well as reduced  N 2(g)   + O 2(g)   → 2 NO (g)  2 Pb (NO 3 ) 2(s)   → 2 PbO (s)   + 4 NO 2(g)   + O 2(g)  2 Na (s)   + 2H 2 O (l)   → 2 NaOH (aq.)   + H 2(g)  2 NO 2(g)   + 2 −   OH ( aq.   )   → NO − 2(aq.)   + NO − 3(aq.)   + H 2 O (l)  2   2  3   2  2  +  2"
+    },
+    "58": {
+      "correctAnswer": "A",
+      "explanation": "sec   , M sec −1   −1"
+    },
+    "59": {
+      "correctAnswer": "A",
+      "explanation": "gives   maximum   osmotic   pressure  because it is gives 5 ion.  Al 2   (SO 4 ) 3"
+    },
+    "60": {
+      "correctAnswer": "A",
+      "explanation": "(1)   MCl>MCl   >MCl   along   the   period   ionic  nature of metals decrease  (2)   Polarisability of halide ions increases in the  order   F   −   .   Polarisability   is   directly  proportional to the size of the anion.  (3)   Na   2+   3+ . Higher is the charge density,  higher is the polarizing power. Charge density is  the ratio of charge to size.  (4) Covalent character = LiF  Covalent character increases with anion size increase.  2   3  −  +"
+    },
+    "61": {
+      "correctAnswer": "D",
+      "explanation": "nA   →   product  rate = K[A]   = k[A]   = K  When n = 0, then the rate is equal to K and it is  only possible when n is zero.  So,   the   units   of   rate   and   rate   constant   are  identical in zero order reactions.  n   0"
+    },
+    "62": {
+      "correctAnswer": "C",
+      "explanation": "pK   = 8   pK   =8;  pH =   pK a –   log C 1 2 1 2  ⇒ 5 =   pK a   +   × 2 1 2 1 2  a   ⇒   b  pOH =   pK b –   log C = 4 + 2 = 6 1 2 1 2"
+    },
+    "63": {
+      "correctAnswer": "B",
+      "explanation": "No −H bonding  Intermolecular H- bonding  stabilized conjugate base (or Anion)  Less stable conjugate base   ⇒  No-intramolecular H-bonding   ⇒   least stable  At meta position sleigh  intramolecular H-bonding stabilized conjugate  base.  ∴   Acidic strength order : b > d > a > c"
+    },
+    "64": {
+      "correctAnswer": "A",
+      "explanation": "Electronegativity, Metallic character do not have  any unit"
+    },
+    "65": {
+      "correctAnswer": "D",
+      "explanation": ""
+    },
+    "66": {
+      "correctAnswer": "D",
+      "explanation": "Metal oxide which reacts with both acid as well  as bases to produce salts and water is known  as amphoteric oxide.  Chronium   (III)   oxide   (Cr   O   )   is   amphoteric.  Although is soluble in water, it dissolves in acid  to   produce   hydrated   chromium   ions,  [Cr(H   O)   ]   which   react   with   a   base   to   give  salt of [Cr(OH)   ]   .  BeO + H 2 SO 4   → BeSO 4   + H 2 O; BeO + NaOH → Na 2   BeO 2   + H 2 O ZnO + H 2 SO 4   → ZnSO 4   + H 2 O ; ZnO + NaOH → Na 2   ZnO 2   + H 2 O  2   3  2   6   3+  6   3"
+    },
+    "67": {
+      "correctAnswer": "B",
+      "explanation": "pOH= –log (16×10   )=1.8  pH = 12–1.8=10.2  [OH – ] =   = 0. 016 0.04×3–0.02×2 5  –3"
+    },
+    "68": {
+      "correctAnswer": "D",
+      "explanation": "Phenolphthalein is a weak acid."
+    },
+    "69": {
+      "correctAnswer": "A",
+      "explanation": "Ph − C ≡ C − CH 3"
+    },
+    "70": {
+      "correctAnswer": "A",
+      "explanation": ""
+    },
+    "71": {
+      "correctAnswer": "A",
+      "explanation": "Water   molecule   has   hydrogen   bonding   so  molecules get dissociated so it is liquid."
+    },
+    "72": {
+      "correctAnswer": "B",
+      "explanation": "= 0.25+0.25=0.50 E o cell  3 Ni   +2 Au +3   →   3 Ni +2 +   2 Au (1 M)   (0. 1) E cell   = 0. 50–   log 0.0591 6 (0.1) 3  (1) 2  E cell   = 0. 50 +   = 0. 529V 0.0591×3 6"
+    },
+    "73": {
+      "correctAnswer": "C",
+      "explanation": "In   the   given   question,   the   nature   of   leaving  group is the factor responsible for the reactivity  of compounds towards   reaction.  Out of all the alkyl halides,  The   will be the more reactive  as the electronegativity of iodine is less among  all the halogen elements as it is considered as  the   good   leaving   group   which   facilitates   the  occurrence of   reaction at a good rate.  S N 2 CH 3   − CH 2   − F , CH 3   − CH 2   − Cl, CH 3   − CH 2   − Br , CH 3   − CH 2   − I CH 3   − CH 2   − I S N 2"
+    },
+    "74": {
+      "correctAnswer": "C",
+      "explanation": ""
+    },
+    "75": {
+      "correctAnswer": "A",
+      "explanation": "= (116.5+110.3+105.2)  mho cm   mol  = 121.6 cm   mol  λ ∞ AgCl   =   λ ∞ AgNO 3  +   λ ∞ NaCl –   λ ∞ NaNO 3  2   –1  2   –1"
+    },
+    "76": {
+      "correctAnswer": "B",
+      "explanation": "The Force of attraction between the molecular  affects the melting point of a compound.  Stronger   intermolecular   interaction   results   in  higher melting points.  Ionic   compounds   usually   have   high   melting  points because electrostatic forces holding the  ion are much stronger.  CsCl has ionic bond thus it has highest M.P.  He   gas   held   together   by   weak   vander   Waal  bond and NH   and CHCl   have covalent bond. 3   3"
+    },
+    "77": {
+      "correctAnswer": "A",
+      "explanation": "SD = strong donating  WW = weak withdrawing  WD = weak donating  ∴   iv > ii > i > iii  Br   reacts with AlCl   to form an electrophile   .  Aluminum have vacant d-orbitals are present  so, it can easily accommodate the lone pairs of  Bromine atom and form AlCl   Br   complex  Now,   will attack more fastly. at that carbon  atom   and   at   that   compound   where   electron  density is more  2   3  ⊕  Br  ∵  3   ⊝  ⊕  Br"
+    },
+    "78": {
+      "correctAnswer": "C",
+      "explanation": "= 0.04×10  = 4×10  K C   =   10 29  ( 5×10 52 ) 2  K C   =   10 29  25×10 104  –75  –77"
+    },
+    "79": {
+      "correctAnswer": "A",
+      "explanation": "Hence, bond order =  Hence, bond order =   .  O + 2   (15 e − ) =   K   :   K ∗ ( σ 2 s ) 2 ( σ ∗ 2 s ) 2 ( σ 2 p x ) 2  ( π 2 p y ) 2 ( π 2 p z ) 2 ( π ∗ 2 p y ) 1 ( π ∗ 2 p z ) 0  (10 − 5) = 2.5 1 2  N   + 2   (13 e − ) =   KK ∗ ( σ 2 s ) 2 ( σ ∗ 2 s ) 2 ( σ 2 p x ) 2 ( π 2 p y ) 2 ( π 2 p z ) 1  (9 − 4) = 2.5 1 2"
+    },
+    "80": {
+      "correctAnswer": "B",
+      "explanation": "In the pair are should react of the other should  not react.  (a) Only aldehyde react with fehlings  (b)   does not react   with NaHSO  (c)   shows iodoform, but other will  not  (d) Acid reacts with NaHCO   but phenol does  not  3  3"
+    },
+    "81": {
+      "correctAnswer": "D",
+      "explanation": "Complex: [Fe(CN   )]  Let the oxidation state of Fe = x  x + 6 ( − 1 ) = − 4  x = + 2  The electronic configuration of Fe = [Ar] 3d  4s  The electronic configuration of Fe   = [ Ar]  3d   4s  CN   is a strong field ligand. So, due to the  presence of strong-field ligands, the pairing of  3d-electrons takes place.  Hyridization : d   sp  Magnetic character : Diamagnetic  Spin : Low spin complex  6   4−  6  2  2+  6   0  −  2   3"
+    },
+    "82": {
+      "correctAnswer": "C",
+      "explanation": "NCERT :- R   Cd reacts only with   to give  respective ketones  2"
+    },
+    "83": {
+      "correctAnswer": "D",
+      "explanation": "Metal   carbonyl   shows   synergic   bonding  interactions in a carbonyl complex  The   bond is formed by the donation  of a pair of electrons from a filled d orbital of  metal into the vacant antibonding   orbital of  carbon monoxide.  CO   is   a   good   acceptor   (lewis   acid)   due   to  empty   orbitals   and   a   good   donor   (lewis  acid).  (M − C)   π π ∗  π π   σ"
+    },
+    "84": {
+      "correctAnswer": "C",
+      "explanation": ""
+    },
+    "85": {
+      "correctAnswer": "D",
+      "explanation": "All statement in given question are correct."
+    },
+    "86": {
+      "correctAnswer": "D",
+      "explanation": "Simple distillation is a procedure by which two  liquids   with   different   boiling   points   can   be  separated.   Simple   distillation   (the   procedure  outlined   below)   can   be   used   effectively   to  separate   liquids   that   have   at   least  difference in their boiling points.  Thus, a mixture of propan-1-ol and propanone  can be separated by simple distillation.  Hence, both Assertion and Reason are correct  and   Reason   is   the   correct   explanation   for  Assertion.  20 ∘ C"
+    },
+    "87": {
+      "correctAnswer": "A",
+      "explanation": "Ion is formed by gaining or losing electrons. To  form cation electron are lost from the valency  shell,   so   Zn   atoms   to   Zn   ions   there   is   a  decrease in the no. of valency electron.  ++"
+    },
+    "88": {
+      "correctAnswer": "B",
+      "explanation": "Sulphides of NH   IA & IIA are soluble 4 +"
+    },
+    "89": {
+      "correctAnswer": "B",
+      "explanation": "NaCl + K 2   Cr 2   O 7  H 2   SO 4  − − − → CrO 2   Cl 2   ( Chromyl chloride )  ( Orange red colour )"
+    },
+    "90": {
+      "correctAnswer": "C",
+      "explanation": "2NaCl+H   SO   Na   SO   +2HCl  2KI+H   SO   K   SO   +2HI  2HI+H   SO   2H   O+SO   +I  2   4   →   2   4  2   4   →   2   4  2   4   →   2   2   2\nBiology - Section A"
+    },
+    "91": {
+      "correctAnswer": "B",
+      "explanation": "Watermelon,   cucumber,   and   pumpkin   have  modified   auxiliary   buds   that   form   thin,   wiry,  leafless and spirally coiled branches and it helps  the weak plant to climb the support known as  stem tendrils."
+    },
+    "92": {
+      "correctAnswer": "A",
+      "explanation": "scapula (shoulder blade) is a triangular flat bone  of the pectoral girdle located on the dorsal part  of the thorax.  Cranium is made up of flat bones that fuse end-  to-end with the help of dense fibrous connective  tissues. These joints in the cranium do not allow  any movement and are called fibrous joints.  Sternum,   also   called   as   breast   bone   is   a   flat  bone on the ventral midline of the thorax.  The joints between the adjacent vertebrae in the  vertebral column are an example of cartilaginous  joints   as   these   are   joined   with   the   help   of  cartilage."
+    },
+    "93": {
+      "correctAnswer": "D",
+      "explanation": "Photophosphorylation   is   the   synthesis   of   ATP  from   ADP   and   inorganic   phosphate   in   the  presence   of   light.   Like   in   respiration,   in  photosynthesis too, ATP synthesis is linked to  development   of   a   proton   gradient   across   a  membrane.   Chemiosmosis   involves   the  pumping of protons through special channels in  the membranes of mitochondria from the inner  to   the   outer   compartment.   The   pumping  establishes   a   proton   (H   )   gradient.   After   the  gradient   is   established,   protons   diffuse   down  the gradient through a transport protein called  ATP synthase.  This   time   these   are   the   membranes   of  thylakoid. The proton accumulation is towards  the inside of the membrane, i.e., in the lumen.  The causes that develop proton gradient across  the membrane are as follows-  (a) Since splitting of the water molecule takes  place on the inner side of the membrane, the  protons or hydrogen ions that are produced by  the   splitting   of   water   accumulate   within   the  lumen of the thylakoids.  (b)   As   electrons   move   through   the  photosystems,   protons   are   transported   across  the membrane.  (c) The NADP reductase enzyme is located on  the stroma side of the membrane. Along with  electrons   that   come   from   the   acceptor   of  electrons of PS I, protons are necessary for the  reduction   of   NADP+   to   NADPH+   H+.   These  protons are also removed from the stroma.  +"
+    },
+    "94": {
+      "correctAnswer": "D",
+      "explanation": "Each   restriction endonuclease   recognises   a  specific   palindromic   nucleotide   sequences  in the DNA. It will   bind to the DNA   and cut  each of the   two strands of double helix   at  specific points. Restriction enzymes   cut the  strand of   DNA   a little away from the centre of  the   palindrome site;   but between the   same  two bases on the opposite strands   ."
+    },
+    "95": {
+      "correctAnswer": "A",
+      "explanation": "12th NCERT, Page No.- 33"
+    },
+    "96": {
+      "correctAnswer": "A",
+      "explanation": "Adaptation   is   a   quality   of   the   organism  (morphological,   physiological,   behavioral)   that  enables   it   to   survive   and   reproduce   in   its  habitat. Adaptations allow organisms to live in  different types of habits .They develop-due to  natural   selection   of   suitable   variations  appearing   in   living   beings   through   mutations  and recombination."
+    },
+    "97": {
+      "correctAnswer": "D",
+      "explanation": "A   taxon   is   a   group   of   any   one   rank   of  organisms. It is a collection of more than one  population of the organisms or organisms seen  by the taxonomists for forming a unit.  Hence, the correct answer is   a group of any  one rank of organisms ."
+    },
+    "98": {
+      "correctAnswer": "C",
+      "explanation": "NCERT 11   Page No.270, 270 th"
+    },
+    "99": {
+      "correctAnswer": "A",
+      "explanation": "A is deoxygenated blood leaving the tissues  11th OLD NCERT, PAGE NO.- 286"
+    },
+    "100": {
+      "correctAnswer": "B",
+      "explanation": "Class 11th NCERT Page No. 65 The fruit"
+    },
+    "101": {
+      "correctAnswer": "D",
+      "explanation": "Oligodendrocytes   are   neuroglial   cells  that   produce   myelin   sheath   around   axons   in  CNS.  Schwann   cells   are   neuroglial   cells  that   produce   myelin   sheath   around   axons   in  PNS.  Astrocytes   forms   blood   brain   barrier   along  with blood capillaries present in the brain. This  barrier prevents the entry of neurotoxins from  blood into tissues of brain.  Osteoclast   is   a   large   multinucleated   cell  responsible for the dissolution and absorption of  bone."
+    },
+    "102": {
+      "correctAnswer": "A",
+      "explanation": "Joseph   Priestley   (1733-1804)   in   1770  performed   a   series   of   experiments   that  revealed the essential role of air in the growth  of   green   plants.   Joseph   Priestley   (1770)  observed   that   a   candle   burning   in   a   closed  space   -   a   bell   jar,   soon   gets   extinguished.  Similarly, a mouse kept in a closed space would  soon get suffocated and die. However, when he  placed   a   mint   plant   in   the   same   bell   jar,   he  found   that   the   mouse   stayed   alive   and   the  candle continued to burn. Priestly hypothesized  that   foul   air   or   phlogiston   produced   during  burning of candles or animal (mice) respiration  could   be   converted   into   pure   air   by   plants  (mint)."
+    },
+    "103": {
+      "correctAnswer": "C",
+      "explanation": "Genetic   engineering,   also   called   recombinant  DNA   technology,   involves   the   group   of  techniques   used   to   cut   up   and   join   together  genetic material, especially DNA from different  biological species.  A   plasmid   or   vector   is   a   small,  extrachromosomal   DNA   molecule   within   a   cell  that   is   physical.   Artificial   plasmids   are   widely  used as vectors in molecular cloning.  Gel   electrophoresis   is   used   to   separate  macromolecules   like   DNA,   RNA   and   proteins.  DNA fragments are separated according to their  size.   Proteins   can   be   separated   according   to  their   size   and   their   charge   (different   proteins  have different charges).  DNA   ligases   are   enzymes   that   catalyze   the  joining together of two DNA ends, in a manner  that   requires   either   adenosine   triphosphate  (ATP) or NAD   . +"
+    },
+    "104": {
+      "correctAnswer": "D",
+      "explanation": "12th NCERT, Page No.- 31,35,38"
+    },
+    "105": {
+      "correctAnswer": "A",
+      "explanation": "Organisms,   populations,   communities   and  biomes  12th NCERT PAGE NO.- 191"
+    },
+    "106": {
+      "correctAnswer": "B",
+      "explanation": "Metabolism"
+    },
+    "107": {
+      "correctAnswer": "D",
+      "explanation": "Cruciferae  Class 11th NCERT Page No. 67"
+    },
+    "108": {
+      "correctAnswer": "C",
+      "explanation": "Pre-synaptic   membrane -   it   involves   the  release   of   neurotransmitters   in   chemical  synapse.  Post   synaptic   membrane -Contain   receptor  sites for neurotransmitters."
+    },
+    "109": {
+      "correctAnswer": "A",
+      "explanation": "The   oxygen-evolving   complex   (OEC),   also  known   as   the   water-splitting   complex,   is   a  water-oxidizing enzyme involved in the photo-  oxidation of water during the light reactions of  photosynthesis.   The   splitting   of   water   is  associated with the PS II: water is split into  ,   and electrons. This creates oxygen, one of  the   net   products   of   photosynthesis.   The  electrons   needed   to   replace   those   removed  from   photosystem   I   are   provided   by  photosystem II.  The NADP reductase enzyme is located on the  stroma side of the membrane (Outer surface of  thylakoid membrane). Along with electrons that  come   from   the   acceptor   of   electrons   of   PS   I,  protons   are   necessary   for   the   reduction   of  to   .  For   biosynthesis   of   chlorophyll,   raw   materials  required are succinyl Co-A and glycine.  The   primary   electron   acceptor   of   PSII   is  pheophytin, an organic molecule that resembles  chlorophyll  H +  [0] H 2 O ⟶ 4H +   + O 2   + 4e −  NADP+   NADPH + H +"
+    },
+    "110": {
+      "correctAnswer": "D",
+      "explanation": "Class 12   NCERT Page No. 165 th"
+    },
+    "111": {
+      "correctAnswer": "A",
+      "explanation": "12th NCERT, Page No.- 27"
+    },
+    "112": {
+      "correctAnswer": "B",
+      "explanation": "Most   important   factor   is   temperature   which  directly affects the organisms by affecting their  enzymes   hence   also   affects   the   geographical  distribution."
+    },
+    "113": {
+      "correctAnswer": "B",
+      "explanation": "Archaebacteria is called Living Fossils because  they are the simplest and oldest living species  available on the earth."
+    },
+    "114": {
+      "correctAnswer": "C",
+      "explanation": "Statement   I   is   incorrect   but   statement   II   is  correct  11th OLD NCERT, PAGE NO.- 283"
+    },
+    "115": {
+      "correctAnswer": "B",
+      "explanation": "11th Old   NCERT PAGE NO. 84  Incorrect   Statement:   Tissues   in   plants   are  classified into meristematic tissues (responsible  for   growth)   and   permanent   tissues   (which   do  not   divide).   Permanent   tissues   are   further  classified into simple (made of one type of cell)  and complex (made of more than one type of  cell).  Correct statements:  A plant is indeed made up of different kinds of  tissues,   such   as   meristematic   and   permanent  tissues.  Different organs in a plant (e.g., roots, stems,  leaves)   show   differences   in   their   internal  structure.  Monocots   and   dicots   within   angiosperms   are  anatomically   different   (e.g.,   vascular   bundle  arrangement, root structure)."
+    },
+    "116": {
+      "correctAnswer": "A",
+      "explanation": "Class 11th New NCERT Page No. 236"
+    },
+    "117": {
+      "correctAnswer": "C",
+      "explanation": "During aerobic respiration, O   is consumed and  CO   is released. The ratio of the volume of CO  evolved   to   the   volume   of   O   consumed   in  respiration   is   called   the   respiratory   quotient  (RQ).   The   respiratory   quotient   depends   upon  the   type   of   respiratory   substrate   used   during  respiration.   When   carbohydrates   are   used   as  substrate and are completely oxidised, the RQ  will be 1, because equal amounts of CO   and O  are evolved and consumed, respectively.  Though pure fats or proteins cannot be directly  used   as   substrates,   they   can   enter   as  intermediary   substrates   of   glycolysis   and   the  Krebs’ Cycle. Proteins and fats have to undergo  a   series   of   chemical   reactions   to   form   simple  compound and then only they can enter Krebs  Cycle.   After   forming   simple   compounds   only  then   they   can   enter   the   cycle   and   help   to  produce energy which takes a lot of time. Due  to these reasons pure proteins and fats are not  used as respiratory substrates.  2  2   2  2  2   2"
+    },
+    "118": {
+      "correctAnswer": "D",
+      "explanation": "Class 12   NCERT Page No. 169 th"
+    },
+    "119": {
+      "correctAnswer": "B",
+      "explanation": "12th NCERT, Page No.- 44"
+    },
+    "120": {
+      "correctAnswer": "B",
+      "explanation": "Control of Opuntia by a predator   (moth), a type  of insect"
+    },
+    "121": {
+      "correctAnswer": "C",
+      "explanation": "Among the following:  1)   Paramecium   resembles   the   shape   of   shoe  and its habitat is freshwater. It is a unicellular  organism.   It   belongs   to   the   Protista   kingdom  and the genus is ciliated protozoa.  2)   Plasmodium   is   the   causative   organism   for  malaria. It belongs to the sporozoan subclass of  the genus of parasitic protozoans.  3)   Amoeba   belongs to the Amoeboid protozoa.  4)   Trypanosoma   is   the   causative   organism  responsible   for   sleeping   sickness.   It   is   a  flagellated protozoan.  Hence, the correct option is \"3\" - A - iii, B -  iv, C - i, D - ii."
+    },
+    "122": {
+      "correctAnswer": "D",
+      "explanation": "For   safe   transfusion,   recipient's   RBC   should  not   contain   antibodies   against   donor's  antigens.  Reptiles   and   amphibia   have   incomplete  double circulation .  Eosinophils   (2-3 per cent) resist infections and  are also   associated with   allergic reactions .  The   hepatic   portal   system   is   the   venous  system   that   returns   blood   from   the   digestive  tract and spleen to the liver."
+    },
+    "123": {
+      "correctAnswer": "C",
+      "explanation": "11th Old   NCERT PAGE NO. 85"
+    },
+    "124": {
+      "correctAnswer": "B",
+      "explanation": "The   antidiuretic   hormone   released   by   the  pituitary gland stimulates reabsorption of water  by the kidneys. The deficiency of this hormone  causes increased urine production, a condition  called diabetes insipidus.  Graves disease is an immune system disorder  that   results   in   the   overproduction   of   thyroid  hormones.  Addison's disease is caused by a deficiency of  the hormones secreted by the adrenal cortex.  Pancreas   is   a   composite   gland   which   acts   as  both   exocrine   and   endocrine   gland.   The  deficiency of insulin, a hormone secreted by the  pancreas,   causes   a   complex   disorder   called  diabetes mellitus which is associated with loss  of   glucose   through   urine   and   formation   of  harmful compounds known as ketone bodies."
+    },
+    "125": {
+      "correctAnswer": "D",
+      "explanation": "Human mitochondrial ATP synthase has two functional  domains:  1) One domain situated in a mitochondrial matrix known as  F  2) F   located in the inner mitochondrial membrane.  Hence, the correct answer is option \"4\" - Peripheral  membrane protein with ATP synthetase activity.  1  o is"
+    },
+    "126": {
+      "correctAnswer": "A",
+      "explanation": "Adenosine   deaminase   enzymes   are   crucial  for the   immune system to function , and their  absence is caused by the   deletion of a gene.  It is cured by   gene therapy.  Insulin   consists of   chains A and B   that are  linked   together by   disulfide bridges.  Transgenic mice   are   being   used   to   test   the  safety of the   polio vaccine.  RNAi   involves   the   silencing   of   a   specific  mRNA   due   to   a   complementary   dsRNA  molecule   that   binds   to   and   prevents  translation   of the mRNA."
+    },
+    "127": {
+      "correctAnswer": "C",
+      "explanation": "12th NCERT, Page No.- 119"
+    },
+    "128": {
+      "correctAnswer": "C",
+      "explanation": "Flow of energy declines as it passes from lower  to   higher   trophic   level.   The   energy   decreases  from one trophic level to the next trophic level  because energy is lost as metabolic heat during  transfer   of   energy.   Hence,   the   pyramid   of  energy is always upright in any ecosystem and  it   cannot   be   inverted   in   a   stable   ecosystem.  When   food   energy   passes   from   producers   to  herbivores to carnivores, only 10% of energy is  transferred   from   one   trophic   level   to   another  trophic level."
+    },
+    "129": {
+      "correctAnswer": "A",
+      "explanation": "Cell   of   diatoms   are   surrounded   by   cell   wall,  frustules,   which   has   silica   deposits.   Shells   of  diatoms   are   highly   resistant   to   decomposition  due to presence of silica and are deposited in  ocean   beds   leading   to   formation   of  diatomaceous   earth.   Extraction,   grounding,  sieving   and   sinteration   of   diatomaceous   earth  obtain   keiselguhr   which   is   used   in   filtration  techniques.  Diatoms   are   placed   in   class   Bacillariophyceae  which   makes   Myxophyceae   includes   slime  molds which are characterized by presence of  different morphology at different life stages and  absence   of   cell   wall.   Pheophyceae   includes  brown   algae   which   are   characterized   by  presence   of   aliginic   acid   with   cellulose   in   cell  wall and obtains algin, it is used as emulsifying  agent and a stabilizer. Rhodophyceae includes  red algae which have calcium carbonate in cell  wall,   it   makes   the   cell   permeable   to   small  molecules but impermeable to macromolecules.  Red   algae   secrete   calcium   carbonate   shells  which are accumulated in sea bottom and forms  red corals. \"Diatomite\" (Kieselguhr) is obtained  from."
+    },
+    "130": {
+      "correctAnswer": "A",
+      "explanation": "In mechanism of concentration of the filtrate,  the   proximity   between   the   Henle’s   loop   and  vasa   recta,   as   well   as   the   counter   current   in  them   help   in   maintaining   an   increasing  osmolarity   towards   the   inner   medullary  interstitium,   i.e.,   from   300   mOsmolL   in   the  cortex to about 1200 mOsmolL   in the inner  medulla.  –1  –1"
+    },
+    "131": {
+      "correctAnswer": "B",
+      "explanation": "Endodermis is the innermost layer of dicot stem  of   cortex   and   consists   of   barrel   shaped  parenchyma   cells   containing   abundant   starch  grains–known as starch sheath."
+    },
+    "132": {
+      "correctAnswer": "B",
+      "explanation": "Diabetes mellitus leads to a complex disorder  called   prolonged   hyperglycemia,   which   is  associated   with   the   loss   of   glucose   through  urine known as   glycosuria .  When   the   cell   are   unable   to   utilize  carbohydrates for energy instead they use fats  &   proteins.   This   fat   degradation   produces  ketone bodies.   The presence of these ketone  bodies in urine is known as   ketonuria .  Thus,   presence   of   Ketonuria   and  Glycosuria   in urine are indicative of Diabetes  Mellitus."
+    },
+    "133": {
+      "correctAnswer": "B",
+      "explanation": "264 g of   C O   and 108 g of water   are formed  from   180 g sugar and 192 g oxygen   during  respiration.   In   this   process,   686   kcal   of  energy are   released.  Hence, the correct answer is   option (B): 264  g of   C O   , 108 g of water, and 686 cal of  energy.  2  2"
+    },
+    "134": {
+      "correctAnswer": "A",
+      "explanation": "Bacillus thuringiensis is biopesticide, commonly  known   as   Bt,   is   a   naturally   occurring,   gram-  positive,   spore-forming   soil   bacterium.   Bt   has  been   known   to   be   reservoir   of   several  insecticidal   proteins,   such   as   endotoxins,  cytolytic   proteins,   vegetative   insecticidal  proteins, etc.  During sporulation, it synthesizes a cytoplasmic  inclusion containing one or more proteins that  are toxic to insect larvae. Upon completion of  sporulation   the   parent   bacterium   lyses   to  release   the   spore   and   the   inclusion.   In   these  inclusions,   the   toxins   exist   as   inactive  protoxins. When the inclusions are ingested by  insect   larvae,   the   alkaline   pH   solubilizes   the  crystal. The protoxin is then converted in to an  active   toxin   after   processing   by   the   host  proteases present in the midgut."
+    },
+    "135": {
+      "correctAnswer": "A",
+      "explanation": "12th NCERT, Page No.- 111"
+    },
+    "136": {
+      "correctAnswer": "A",
+      "explanation": "Up right  12th NCERT PAGE NO.- 212"
+    },
+    "137": {
+      "correctAnswer": "B",
+      "explanation": "Pteridophytes   are   developed   plants   which   can  survive   on   land   as   they   have   well   developed  vascular tissues. The main plant body of these  plants   is   diploid,   called   sporophyte   which  produces spores after meiosis. These spores on  germination   give   rise   to   gametophytic   plants  which   produce   gametes.   The   spores   do   not  develop a hard coating around them and thus  are unable to form seeds."
+    },
+    "138": {
+      "correctAnswer": "A",
+      "explanation": "It is initiated by stretch receptors in the ureters"
+    },
+    "139": {
+      "correctAnswer": "C",
+      "explanation": "Type of pyramid   Ecosystem  Pyramid of energy   Grassland ecosystem"
+    },
+    "140": {
+      "correctAnswer": "A",
+      "explanation": "Mendelism   is   related   to   heredity.   The   three  prominent   law   given   by   Mendel   proved   its  relationship   with   inheritance.   The   law   of  segregation   states   that   each   character   is  regulated by a gene which exists in two forms  for a particular character known as allele which  segregates into different gametes. The law of  independent assortment states that alleles for  separate traits are passed independently of one  another   from   parents   to   offspring.   Law   of  dominance states that the dominant characters  mask the effect of the recessive allele."
+    },
+    "141": {
+      "correctAnswer": "C",
+      "explanation": "11th NCERT, PAGE NO.- 172"
+    },
+    "142": {
+      "correctAnswer": "A",
+      "explanation": "Class 12   NCERT Page No. 181, 185 th"
+    },
+    "143": {
+      "correctAnswer": "B",
+      "explanation": "Algae are surrounded by mucilagenous sheath  and below the sheath, cell wall is present which  is   made   up   of   cellulose   and   pectin,   but  galactans,   mannans   and   mineral   like   calcium  carbonate are present in cell wall also."
+    },
+    "144": {
+      "correctAnswer": "B",
+      "explanation": "Class XI   NCERT Page No. 213 th"
+    },
+    "145": {
+      "correctAnswer": "C",
+      "explanation": "The   age   pyramids   for   human   population  generally shows age distribution of males and  females   in   a   combined   diagram.   The   shape  reflects the growth status of the population as  shown below.  The given age pyramid represents the declining  population.   A   population   can   shrink   due   to  declining birth rate."
+    },
+    "146": {
+      "correctAnswer": "C",
+      "explanation": "Class 12   NCERT Page No. 67 th"
+    },
+    "147": {
+      "correctAnswer": "C",
+      "explanation": "If assertion is true but reason is false.  11th NCERT, PAGE NO.- 169"
+    },
+    "148": {
+      "correctAnswer": "B",
+      "explanation": "Class 12   NCERT Page No. 170, 171 th"
+    },
+    "149": {
+      "correctAnswer": "C",
+      "explanation": "Naked seeds of gymnosperms mean the seeds  are   not   covered   inside   in   an   ovary   but   are  present   on   megasporophyll,   the   leaf   like  structures."
+    },
+    "150": {
+      "correctAnswer": "B",
+      "explanation": "Class 12   NCERT Page No. 260 th"
+    },
+    "151": {
+      "correctAnswer": "B",
+      "explanation": "Sickle   cell   disease   (SCD)   is   a   group   of   blood  disorders   typically   inherited   from   a   person's  parents. The most common type is known as  sickle   cell   anaemia   (SCA).   It   results   in   an  abnormality   in   the   oxygen-carrying   protein  haemoglobin found in red blood cells. Sickle cell  disease   occurs   when   a   person   inherits   two  abnormal   copies   of   the   β-globin   gene   (HBB)  that   makes   haemoglobin,   one   from   each  parent.   This   gene   occurs   in   chromosome   11.  Several subtypes exist, depending on the exact  mutation in each haemoglobin gene. An attack  can be set off by temperature changes, stress,  dehydration, and high altitude. A person with a  single   abnormal   copy   does   not   usually   have  symptoms and is said to have sickle cell trait.  Hence,   the   correct   answer   is   β   chain   of  haemoglobin."
+    },
+    "152": {
+      "correctAnswer": "C",
+      "explanation": "Gibberellins   ( Gibberellic   Acids )   are   plant  hormones   that   control,   among   other   things,  stem   elongation,   germination,   dormancy,  flowering, floral development, and leaf and  fruit   senescence.   Gibberellin   spraying   on  juvenile   conifers   accelerates   maturity,  resulting in early seed production ."
+    },
+    "153": {
+      "correctAnswer": "A",
+      "explanation": "In Aschelminthes, the body cavity is not lined  by   mesoderm,   instead,   the   mesoderm   is  present   as   scattered   pouches   in   between   the  ectoderm and endoderm. Hence, they are called  pseudocoelomates."
+    },
+    "154": {
+      "correctAnswer": "C",
+      "explanation": "Class 12th NCERT (N ew) Page No.157"
+    },
+    "155": {
+      "correctAnswer": "C",
+      "explanation": "Class 12   NCERT Page No. 74 th"
+    },
+    "156": {
+      "correctAnswer": "B",
+      "explanation": "Haploid plant cultures can be obtained by pollen  grains by the technique of pollen culture. Pollen  culture is a technique of production of haploid  plants by culture of pollen grains obtained from  anther   of   a   plant   under   aseptic   condition   on  artificial   media   of   known   composition.   When  the anther is used as the explant material for  the   cultivation   of   new   plants   by   the   tissue  culture technique, then there are some plants  which are developed as haploid and the other  plants   are   developed   as   the   diploid   plants.  There are different types of tissues which are  present in the anther. The pollen grains and the  respective   cells   like   the   vegetative   cell   and  generative cell will give rise to the plants which  are   haploid   because   they   are   formed   through  microsporogenesis. The other cells like the cells  of anther wall, endothecium, middle layers are  diploid in nature and give rise to diploid plants."
+    },
+    "157": {
+      "correctAnswer": "B",
+      "explanation": "Cephalochordates   and   vertebrates   have   a  hollow, dorsal nerve cord, pharyngeal gill slits,  and   a   notochord.   In   most   vertebrates,   the  embryonic notochord is eventually replaced by  bony vertebrae or cartilaginous tissue; among  cephalochordates,   the   notochord   is   retained  into   adulthood   and   is   never   replaced   by  vertebrae.But   urochordates   have   notochord   in  the tail region in their larval stage only."
+    },
+    "158": {
+      "correctAnswer": "D",
+      "explanation": "Xerophytes desert plants   grow in physical or  physiological   dryness.   The   water   is   not   easily  available   and   they   need   to   conserve   water.  These   plants   have   well   developed   roots   to  absorb water. They have other adaptations to  reduce   transpiration   loss   of   water,   like  multilayered epidermis, sunken stomata, thick  waxy   cuticle,   stomata   are   present   in   lower  epidermis   sunken   in   substomatal   chambers,  which has hairs."
+    },
+    "159": {
+      "correctAnswer": "A",
+      "explanation": "Mutagen   is   a   physical   or   chemical   agent   that  changes the genetic material, usually DNA, of  an organism and thus increases the frequency  of   mutations   above   the   natural   background  level.   As   many   mutations   can   cause   cancer,  mutagens   are   therefore   also   likely   to   be  carcinogens,   although   not   always   necessarily  so   Due to mutation phenotype and genotype of  offspring affect.  Toxin - A toxin is a harmful substance produced  within living cells or organism  Cytotoxin - Cytotoxic   agents are known as all  the elements that are toxic to the cells, which  include   the   factors   that   prevent   their   growth  and sometimes   cause   death, and are also used  to treat certain disorders.  Alkaloid   -   Alkaloids   are   a   class   of   basic,  naturally   occurring   organic   compounds   that  contain   at   least   one   nitrogen   atom.   Alkaloids  stimulate   human   organisms,   for   example,  central nervous system, or directly work on the  human brain."
+    },
+    "160": {
+      "correctAnswer": "D",
+      "explanation": "In   cleistogamous   flowers,   the   anthers   and  stigma   lie   close   to   each   other.   When   anthers  dehisce in the flower buds, pollen grains come  in contact with the stigma to effect pollination.  Thus,   cleistogamous   flowers   are   invariably  autogamous   as there is   no chance of cross-  pollen   landing on the stigma.   Cleistogamous  flowers produce assured seed-set even in  the absence of pollinators. eg- viola, oxalis  etc.   While in chasmogamous flowers are similar  to   flowers   of   other   species   with   exposed  anthers and stigma. Their flower are coloured  contain aroma and nectar."
+    },
+    "161": {
+      "correctAnswer": "B",
+      "explanation": "Physalia - Portuguese man of war, Pennatula -  Sea pen, Gorgonia - Sea fan, and Menandrina -  Brain coral."
+    },
+    "162": {
+      "correctAnswer": "B",
+      "explanation": "In kingdom Animalia, the outer covering of the  cell is known as a cell membrane, while the cell  wall   is   the   outer   covering   of   the   plant   cell,  fungal cell, and some bacterial cells."
+    },
+    "163": {
+      "correctAnswer": "B",
+      "explanation": "A   is   plumule   which   helps   in   shoot   system  formation.  B   is   Radicle   which   helps   in   root   system  formation.  C is Cotyledon which helps in food storage."
+    },
+    "164": {
+      "correctAnswer": "B",
+      "explanation": "The   central dogma   is the process by which the  instruction   in   the   DNA   is   converted   into  proteins.  Central dogma was proposed by   Francis Crick .  The   formation   of   DNA   from   DNA   is   called  replication .  The formation   of RNA from DNA is known as  transcription .  The   conversion   of   RNA   into   proteins   is   called  translation ."
+    },
+    "165": {
+      "correctAnswer": "B",
+      "explanation": "Fasciola hepatica, also known as the sheep liver  fluke,   is   a   triploblastic   organism(first   in  platyhelminthes to chordates).  Nereis   (Annelida)   is   the   first   true   coelomate,  which   is   a   fluid-filled   body   cavity   lined   by  mesoderm.  Antedon,   also   known   as   the   sea   lily   is   a  member of the phylum Echinodermata is First  enterocoelomate.  Adamsia (Cnidarians) are the first organisms to  have   tissue-level   organization,   and   are  considered   to   be   at   the   tissue   grade   of  organization."
+    },
+    "166": {
+      "correctAnswer": "C",
+      "explanation": "The fluid mosaic model was first proposed by  S.J.   Singer   and   Garth   L.   Nicolson   in   1972   to  explain the structure of the plasma membrane.  The   model   has   evolved   somewhat   over   time,  but it still best accounts for the structure and  functions of the plasma membrane as we now  understand them."
+    },
+    "167": {
+      "correctAnswer": "B",
+      "explanation": "The theory that each gene is responsible for the  synthesis   of   a   single   polypeptide.   It   was  originally stated as the \"one gene, one enzyme  hypothesis\"   by   George   Beadle,   but   was   later  modified when it was realized that genes also  encoded   non-enzyme   proteins   and   individual  polypeptide chains. It is now known that some  genes code for various types of RNA involved in  protein synthesis."
+    },
+    "168": {
+      "correctAnswer": "B",
+      "explanation": "Biomolecules with molecular weights more than  one   thousand   Dalton   are   called  biomacromolecules.   These   are   found   in   the  acid-insoluble   fraction.   Lipids   are   not   strictly  macromolecules as their molecular weights do  not exceed 800 Da but form a part of the acid  insoluble   pool.   The   molecules   in   the   insoluble  fraction   with   the   exception   of   lipids   are  polymeric   substances.   Lipids   are   indeed   small  molecular   weight   compounds   and   are   present  not   only   as   such   but   also   arranged   into  structures   like   cell   membrane   and   other  membranes. So the acid insoluble fraction has  only four types of organic compounds, proteins,  polysaccharides   nucleic   acids   and   lipids   but  except   for   lipids   none   of   them   are  micromolecules."
+    },
+    "169": {
+      "correctAnswer": "D",
+      "explanation": "Inside the primary cell wall."
+    },
+    "170": {
+      "correctAnswer": "A",
+      "explanation": "Class 12th NCERT Page No. 102"
+    },
+    "171": {
+      "correctAnswer": "B",
+      "explanation": "Different types of epithelial cell junctions are:-  1) Desmosomes ( Semi or full).  2) Gap junctions  3) Tight junctions  4) Adheren points.  GAP JUNCTION:-   These junctions connect cells  with   one   another   for   transporting   molecules  directly into the other cell without moving from  the extracellular fluid. These gap junctions are  useful at the time of embryonic development,  this   is   the   time   when   every   cell   should  communicate   with   each   other   in   order   to  develop   fully   at   the   right   time.   If   these   are  blocked, embryos will not develop normally.  TIGHT JUNCTION -   These junctions are narrow  junctions that prevent solute leakage and seal  the epithelial cells in between.  ADHERING JUNCTION - These are cell adhesion  complexes   that   help   in   maintaining   the  structural support against harsh and changing  environments   against   the   biogeochemical  changes."
+    },
+    "172": {
+      "correctAnswer": "C",
+      "explanation": "Pectate Ca & Mg  11th NCERT PAGE NO.- 94"
+    },
+    "173": {
+      "correctAnswer": "C",
+      "explanation": "•   Polymines   maintained   DNA   coiled   in  prokaryotes,   they   did   this   by   binding   to   the  minor groove of DNA.  • Eukaryotes wrap their DNA around the protein  called   histone.   It helps in packaging the DNA  into smaller pieces.  •   Prokaryotes   do   not   have   histone   proteins,  they   have   non-histone   protein   and   they  compress their DNA by   supercoiling.  Hence,   the   correct   option   is   \"3\"   -  Polyamines."
+    },
+    "174": {
+      "correctAnswer": "A",
+      "explanation": "Mushroom glands- 6th 7th abdominal segment.  Testes- 4th 6th abdominal segment.  Spermathecal- 6th abdominal segment.  Anal cerci- 10th abdominal segment.  Mushroomshaped gland is present in the 6th-  7th abdominal segments which functions as an  accessory   reproductive   gland.   The   external  genitalia   are   represented.Male   reproductive  system consists of a pair of testes lying one on  each   lateral   side   in   the   4th   -6th   abdominal  segments.   From   each   testis   arises   a   thin   vas  deferens,   which   opens   into   ejaculatory   duct  through seminal vesicle.A pair of spermatheca  is present in the 6th segment which opens into  the   genital   chamber.Anal   cerci   are   a   pair   of  appendages at the end of the abdomen arising  from   the   10th   segment   of   the   body   of   the  cockroaches   in   both   sexes   males   and  females.   Cerci   are pincer-shaped."
+    },
+    "175": {
+      "correctAnswer": "B",
+      "explanation": "G, phase is also known as the first gap. It is  usually   the   longest   period   of   the   cell   cycle.  However   in   some   embryonic   cells   that   are  rapidly   dividing   G,   might   only   last   a   few  minutes. It synthesizes MRNA and proteins."
+    },
+    "176": {
+      "correctAnswer": "C",
+      "explanation": "1 .   Acquired   immunity   is   a   specific   type   of  defence   which   is   not   present   at   the   time   of  birth .  2 .   Anamnestic   response   or   secondary   immune  response is a   highly intensified response due  to memory of first encounter.  3 .   When our body   encounters a pathogen   for the  first   time   then   the   body   elicits   the   primary  immune response.  4 .   When there is   a subsequent encounter   with  the same pathogen, secondary or   anamnestic  immune   response is elicited."
+    },
+    "177": {
+      "correctAnswer": "C",
+      "explanation": "Mitosis is the process of cell division where a  haploid cell has the ability to divide and form  two daughter cells. In mitosis, the cell phases  are   interphase,   prophase,   metaphase,  anaphase, and telophase. Mitosis occurs in all  types of cells that are somatic cells but doesn’t  occur in gamete cells.  It also occur in haploid male   honey bee not in  female."
+    },
+    "178": {
+      "correctAnswer": "C",
+      "explanation": "(a) Filariasis - (iii) Wuchereria bancrofti  (b) Amoebiasis - (iv) Entamoeba histolytica  (c) Pneumonia - (i) Haemophilus influenzae  (d) Ringworm - (ii) Trichophyton"
+    },
+    "179": {
+      "correctAnswer": "C",
+      "explanation": "Karyokinesis has 4 stages  (i) Prophase  (ii) Metaphase  (iii) Anaphase  (iv) Telophase"
+    },
+    "180": {
+      "correctAnswer": "C",
+      "explanation": "12th NCERT, PAGE NO.- 157"
+    }
+  }
+}

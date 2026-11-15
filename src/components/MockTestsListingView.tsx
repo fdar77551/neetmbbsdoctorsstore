@@ -30,12 +30,12 @@ import {
 } from 'lucide-react';
 import { 
   MockTest, 
-  MockQuestion, 
-  MockTestPurchase, 
   MockTestAttempt, 
   MockSubject, 
   UserProfile,
-  MockTestPackagePricing 
+  MockTestPackagePricing,
+  TestCategory,
+  TestCategoryThemePreset
 } from '../types';
 import { 
   getStoredMockTests, 
@@ -48,17 +48,152 @@ import {
   getStoredMockPurchases,
   getMockTestPricingPackages,
   hasUserPurchasedPackage,
-  getCombinedMockTestLeaderboard
+  getCombinedMockTestLeaderboard,
+  syncAllMockTestsFromSources
 } from '../lib/mockTestData';
+import {
+  DEFAULT_TEST_CATEGORIES,
+  fetchTestCategoriesFromServer,
+  filterTestsForCategoryDeduped,
+  getStoredTestCategories,
+  normalizeTestCategories,
+  resolveTestCategoryIds
+} from '../lib/testCategoriesData';
 import { getCurrentUser } from '../lib/storage';
 import { MockTestLeaderboardModal } from './MockTestLeaderboardModal';
 import { MockTestDetailModal } from './MockTestDetailModal';
 import { MockTestShareModal } from './MockTestShareModal';
 
-export type MockTestPageView = 'portal' | 'chapter_wise' | 'full_subject' | 'full_syllabus' | 'purchased' | 'history' | 'free_sample' | 'leaderboard';
+export type MockTestPageView = 
+  | 'portal' 
+  | 'chapter_wise' 
+  | 'full_subject' 
+  | 'full_syllabus' 
+  | 'purchased' 
+  | 'history' 
+  | 'free_sample' 
+  | 'leaderboard'
+  | (string & {});
+
+interface ThemeStyleConfig {
+  borderHover: string;
+  badgeBg: string;
+  softTag: string;
+  accentText: string;
+  heroGradient: string;
+  pillBg: string;
+  gradientBar: string;
+}
+
+const THEME_STYLE_MAP: Record<TestCategoryThemePreset | 'default', ThemeStyleConfig> = {
+  blue: {
+    borderHover: 'border-blue-200/90 hover:border-blue-500',
+    badgeBg: 'bg-blue-600/90 border-blue-400/40 text-white',
+    softTag: 'bg-blue-50 text-blue-700 border-blue-200',
+    accentText: 'text-blue-600',
+    heroGradient: 'bg-gradient-to-r from-blue-500/10 via-sky-500/10 to-white border-blue-200',
+    pillBg: 'bg-blue-50 text-blue-700 border-blue-200',
+    gradientBar: 'from-blue-600 via-sky-600 to-indigo-700'
+  },
+  purple: {
+    borderHover: 'border-purple-200/90 hover:border-purple-500',
+    badgeBg: 'bg-purple-600/90 border-purple-400/40 text-white',
+    softTag: 'bg-purple-50 text-purple-700 border-purple-200',
+    accentText: 'text-purple-700',
+    heroGradient: 'bg-gradient-to-r from-purple-500/10 via-indigo-500/10 to-white border-purple-200',
+    pillBg: 'bg-purple-50 text-purple-700 border-purple-200',
+    gradientBar: 'from-purple-600 via-fuchsia-600 to-indigo-700'
+  },
+  amber: {
+    borderHover: 'border-amber-200/90 hover:border-amber-500',
+    badgeBg: 'bg-amber-500/95 border-amber-300/40 text-white',
+    softTag: 'bg-amber-50 text-amber-800 border-amber-200',
+    accentText: 'text-amber-700',
+    heroGradient: 'bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-white border-amber-200',
+    pillBg: 'bg-amber-50 text-amber-800 border-amber-200',
+    gradientBar: 'from-amber-500 via-orange-500 to-rose-600'
+  },
+  emerald: {
+    borderHover: 'border-emerald-200/90 hover:border-emerald-500',
+    badgeBg: 'bg-emerald-600/90 border-emerald-400/40 text-white',
+    softTag: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    accentText: 'text-emerald-700',
+    heroGradient: 'bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-white border-emerald-200',
+    pillBg: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    gradientBar: 'from-emerald-500 via-teal-600 to-cyan-700'
+  },
+  violet: {
+    borderHover: 'border-violet-200/90 hover:border-violet-500',
+    badgeBg: 'bg-violet-600/90 border-violet-400/40 text-white',
+    softTag: 'bg-violet-50 text-violet-800 border-violet-200',
+    accentText: 'text-violet-700',
+    heroGradient: 'bg-gradient-to-r from-violet-500/10 via-fuchsia-500/10 to-white border-violet-200',
+    pillBg: 'bg-violet-50 text-violet-700 border-violet-200',
+    gradientBar: 'from-violet-600 via-purple-600 to-indigo-700'
+  },
+  indigo: {
+    borderHover: 'border-indigo-200/90 hover:border-indigo-500',
+    badgeBg: 'bg-indigo-600/90 border-indigo-400/40 text-white',
+    softTag: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+    accentText: 'text-indigo-700',
+    heroGradient: 'bg-gradient-to-r from-indigo-500/10 via-blue-500/10 to-white border-indigo-200',
+    pillBg: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+    gradientBar: 'from-indigo-600 via-blue-700 to-slate-900'
+  },
+  rose: {
+    borderHover: 'border-rose-200/90 hover:border-rose-500',
+    badgeBg: 'bg-rose-600/90 border-rose-400/40 text-white',
+    softTag: 'bg-rose-50 text-rose-800 border-rose-200',
+    accentText: 'text-rose-700',
+    heroGradient: 'bg-gradient-to-r from-rose-500/10 via-pink-500/10 to-white border-rose-200',
+    pillBg: 'bg-rose-50 text-rose-700 border-rose-200',
+    gradientBar: 'from-rose-500 via-pink-600 to-red-700'
+  },
+  cyan: {
+    borderHover: 'border-cyan-200/90 hover:border-cyan-500',
+    badgeBg: 'bg-cyan-600/90 border-cyan-400/40 text-white',
+    softTag: 'bg-cyan-50 text-cyan-800 border-cyan-200',
+    accentText: 'text-cyan-700',
+    heroGradient: 'bg-gradient-to-r from-cyan-500/10 via-sky-500/10 to-white border-cyan-200',
+    pillBg: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+    gradientBar: 'from-cyan-500 via-sky-600 to-blue-700'
+  },
+  teal: {
+    borderHover: 'border-teal-200/90 hover:border-teal-500',
+    badgeBg: 'bg-teal-600/90 border-teal-400/40 text-white',
+    softTag: 'bg-teal-50 text-teal-800 border-teal-200',
+    accentText: 'text-teal-700',
+    heroGradient: 'bg-gradient-to-r from-teal-500/10 via-emerald-500/10 to-white border-teal-200',
+    pillBg: 'bg-teal-50 text-teal-700 border-teal-200',
+    gradientBar: 'from-teal-500 via-emerald-600 to-slate-800'
+  },
+  slate: {
+    borderHover: 'border-slate-300 hover:border-slate-700',
+    badgeBg: 'bg-slate-800/95 border-slate-600 text-white',
+    softTag: 'bg-slate-100 text-slate-800 border-slate-200',
+    accentText: 'text-slate-800',
+    heroGradient: 'bg-gradient-to-r from-slate-200/50 via-slate-100 to-white border-slate-300',
+    pillBg: 'bg-slate-100 text-slate-800 border-slate-200',
+    gradientBar: 'from-slate-800 via-slate-900 to-indigo-950'
+  },
+  default: {
+    borderHover: 'border-indigo-200/90 hover:border-indigo-500',
+    badgeBg: 'bg-indigo-600/90 border-indigo-400/40 text-white',
+    softTag: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+    accentText: 'text-indigo-700',
+    heroGradient: 'bg-gradient-to-r from-indigo-500/10 via-blue-500/10 to-white border-indigo-200',
+    pillBg: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+    gradientBar: 'from-indigo-600 via-blue-600 to-slate-900'
+  }
+};
+
+function getThemeStyles(preset?: TestCategoryThemePreset): ThemeStyleConfig {
+  return (preset && THEME_STYLE_MAP[preset]) || THEME_STYLE_MAP.default;
+}
 
 interface MockTestsListingViewProps {
   userProfile?: UserProfile | null;
+  isAdmin?: boolean;
   onStartTest: (test: MockTest, language?: 'en' | 'hi') => void;
   onViewResult?: (test: MockTest, attempt: MockTestAttempt) => void;
   onBuyTest?: (test: MockTest) => void;
@@ -71,6 +206,7 @@ interface MockTestsListingViewProps {
 
 export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
   userProfile,
+  isAdmin = false,
   onStartTest,
   onViewResult,
   onBuyTest,
@@ -84,24 +220,23 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
   const handleAuth = onOpenAuth || onRequireAuth || (() => {});
 
   const [tests, setTests] = useState<MockTest[]>(() => getStoredMockTests());
+  const [categories, setCategories] = useState<TestCategory[]>(() => getStoredTestCategories());
+  const [brokenBannerIds, setBrokenBannerIds] = useState<Record<string, boolean>>({});
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Multi-page navigation state:
-  // 'portal' = Main Landing Portal with the 3 Category Cards
-  // 'chapter_wise' = Dedicated Page for Chapter Wise Tests
-  // 'full_subject' = Dedicated Page for Full Subject Tests
-  // 'full_syllabus' = Dedicated Page for Full Syllabus Tests
-  // 'purchased' = Dedicated Page for Purchased Tests
-  // 'history' = Dedicated Page for Attempt History
-  // 'free_sample' = Quick Portal for All Free Sample Tests
-  // 'leaderboard' = Real-Time All India Leaderboard
+  // Dynamic multi-page navigation state across default + custom admin categories
   const [pageView, setPageView] = useState<MockTestPageView>(() => {
     if (initialPageView) return initialPageView;
     if (typeof window !== 'undefined') {
-      const hash = window.location.hash.toLowerCase();
+      const rawHash = window.location.hash;
+      const hash = rawHash.toLowerCase();
+      if (hash.startsWith('#cat:')) {
+        return decodeURIComponent(rawHash.slice(5));
+      }
       if (hash.includes('chapter-wise')) return 'chapter_wise';
       if (hash.includes('full-subject')) return 'full_subject';
-      if (hash.includes('full-syllabus')) return 'full_syllabus';
+      if (hash.includes('full-syllabus') || hash.includes('cbt-mock') || hash.includes('pyq')) return 'full_syllabus';
+      if (hash.includes('custom-practice')) return 'chapter_wise';
       if (hash.includes('purchased')) return 'purchased';
       if (hash.includes('history')) return 'history';
       if (hash.includes('leaderboard')) return 'leaderboard';
@@ -117,8 +252,11 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
   // Full Subject Sub-Navigation: Physics, Chemistry, Biology, or All
   const [fullSubjectSubFilter, setFullSubjectSubFilter] = useState<'all' | MockSubject>('all');
 
-  // Free vs Premium Quick Toggle
+  // Modern Segmented Filter Controls
+  const [homeSubjectFilter, setHomeSubjectFilter] = useState<'all' | 'Physics' | 'Chemistry' | 'Biology'>('all');
+  const [difficultyFilter, setDifficultyFilter] = useState<'all' | 'easy' | 'moderate' | 'hard'>('all');
   const [priceFilter, setPriceFilter] = useState<'all' | 'free' | 'premium'>('all');
+  const [homeActiveTab, setHomeActiveTab] = useState<'all' | 'featured' | 'recent' | 'cbt'>('all');
 
   // Real-Time Cloudflare D1 Leaderboard State
   const [leaderboardCategory, setLeaderboardCategory] = useState<'all' | 'chapter_wise' | 'full_subject' | 'full_syllabus'>('all');
@@ -173,6 +311,24 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
     }
   };
 
+  // Fetch live test categories AND published mock tests from authoritative backend sources on mount
+  useEffect(() => {
+    let mounted = true;
+    fetchTestCategoriesFromServer().then(fetched => {
+      if (mounted) {
+        setCategories(normalizeTestCategories(fetched));
+      }
+    }).catch(() => {});
+    syncAllMockTestsFromSources().then(synced => {
+      if (mounted && Array.isArray(synced)) {
+        setTests(synced);
+      }
+    }).catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // Navigate to dedicated page with hash synchronization for browser Back/Forward buttons
   const navigateToPage = (newPage: MockTestPageView) => {
     setPageView(newPage);
@@ -180,9 +336,19 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
     if (typeof window !== 'undefined') {
       if (newPage === 'portal') {
         window.history.pushState(null, '', window.location.pathname + window.location.search);
-      } else {
-        const slug = newPage.replace('_', '-');
+      } else if (
+        newPage === 'chapter_wise' ||
+        newPage === 'full_subject' ||
+        newPage === 'full_syllabus' ||
+        newPage === 'purchased' ||
+        newPage === 'history' ||
+        newPage === 'free_sample' ||
+        newPage === 'leaderboard'
+      ) {
+        const slug = newPage.replace(/_/g, '-');
         window.history.pushState(null, '', `#${slug}`);
+      } else {
+        window.history.pushState(null, '', `#cat:${encodeURIComponent(newPage)}`);
       }
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -191,19 +357,24 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
   // Sync hash on popstate / hashchange (Browser Back button support)
   useEffect(() => {
     const handleHashChange = () => {
-      const hash = (typeof window !== 'undefined' ? window.location.hash : '').toLowerCase();
-      if (hash.includes('chapter-wise')) setPageView('chapter_wise');
+      const rawHash = typeof window !== 'undefined' ? window.location.hash : '';
+      const hash = rawHash.toLowerCase();
+      if (hash.startsWith('#cat:')) {
+        setPageView(decodeURIComponent(rawHash.slice(5)));
+      } else if (hash.includes('chapter-wise')) setPageView('chapter_wise');
       else if (hash.includes('full-subject')) setPageView('full_subject');
-      else if (hash.includes('full-syllabus')) setPageView('full_syllabus');
+      else if (hash.includes('full-syllabus') || hash.includes('cbt-mock') || hash.includes('pyq')) setPageView('full_syllabus');
       else if (hash.includes('purchased')) setPageView('purchased');
       else if (hash.includes('history')) setPageView('history');
+      else if (hash.includes('leaderboard')) setPageView('leaderboard');
+      else if (hash.includes('free-sample') || hash.includes('free-tests')) setPageView('free_sample');
       else setPageView('portal');
     };
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // Auto-open shared test if opened via direct link ?testId=xxx
+  // Auto-open shared test if opened via direct link ?testId=xxx (works for standalone & unlisted direct links)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -212,26 +383,47 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
         const found = tests.find(t => t.id === testId);
         if (found) {
           setSharedTestModal(found);
-          const cat = getTestCategory(found);
-          setPageView(cat);
+          const ids = resolveTestCategoryIds(found);
+          if (ids.length > 0 && !found.isStandalone) {
+            setPageView(ids[0]);
+          }
         }
       }
     }
   }, [tests]);
 
-  // Reactive listener to updates from storage / Firebase
+  // Reactive listener to updates from storage / Firebase / Admin category manager
   useEffect(() => {
-    const handleUpdate = () => {
+    const handleAttemptsOrPurchasesUpdate = () => {
       setTests(getStoredMockTests());
       setAttemptsUpdateTrigger(prev => prev + 1);
     };
-    window.addEventListener('neetmbbs_mock_attempts_updated', handleUpdate);
-    window.addEventListener('neetmbbs_mock_tests_updated', handleUpdate);
-    window.addEventListener('neetmbbs_mock_purchases_updated', handleUpdate);
+    const handleTestsUpdate = (e?: Event) => {
+      const fromServer = Boolean((e as CustomEvent)?.detail?.fromServer);
+      if (fromServer) {
+        setTests(getStoredMockTests());
+      } else {
+        syncAllMockTestsFromSources()
+          .then(synced => setTests(synced))
+          .catch(() => setTests(getStoredMockTests()));
+      }
+      setAttemptsUpdateTrigger(prev => prev + 1);
+    };
+    const handleCategoriesUpdate = () => {
+      setCategories(getStoredTestCategories());
+      fetchTestCategoriesFromServer().then(fetched => {
+        setCategories(normalizeTestCategories(fetched));
+      }).catch(() => {});
+    };
+    window.addEventListener('neetmbbs_mock_attempts_updated', handleAttemptsOrPurchasesUpdate);
+    window.addEventListener('neetmbbs_mock_tests_updated', handleTestsUpdate);
+    window.addEventListener('neetmbbs_mock_purchases_updated', handleAttemptsOrPurchasesUpdate);
+    window.addEventListener('neetmbbs_test_categories_updated', handleCategoriesUpdate);
     return () => {
-      window.removeEventListener('neetmbbs_mock_attempts_updated', handleUpdate);
-      window.removeEventListener('neetmbbs_mock_tests_updated', handleUpdate);
-      window.removeEventListener('neetmbbs_mock_purchases_updated', handleUpdate);
+      window.removeEventListener('neetmbbs_mock_attempts_updated', handleAttemptsOrPurchasesUpdate);
+      window.removeEventListener('neetmbbs_mock_tests_updated', handleTestsUpdate);
+      window.removeEventListener('neetmbbs_mock_purchases_updated', handleAttemptsOrPurchasesUpdate);
+      window.removeEventListener('neetmbbs_test_categories_updated', handleCategoriesUpdate);
     };
   }, []);
 
@@ -258,6 +450,20 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
       handleAuth();
       return;
     }
+
+    const isFree = test.isFree || test.price === 0;
+    const isPurchased = hasUserPurchasedMockTest(effectiveUser?.uid, effectiveUser?.email, test.id);
+
+    // If test is not free and user has not purchased it, redirect to purchase flow
+    if (!isAdmin && !isFree && !isPurchased) {
+      if (onBuyTest) {
+        onBuyTest(test);
+      } else {
+        setSharedTestModal(test);
+      }
+      return;
+    }
+
     if (isTestBilingual(test)) {
       setLanguageSelectModalTest(test);
     } else {
@@ -265,29 +471,69 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
     }
   };
 
-  // Only published tests in student view
+  // Only published & non-draft tests in student view
   const publishedTests = useMemo(() => {
-    return tests.filter(t => t.status === 'published');
+    return tests.filter(t => t.status === 'published' && t.visibility !== 'draft');
   }, [tests]);
 
-  // 3 Category Test Counts
-  const counts = useMemo(() => {
-    let chapterWise = 0;
-    let fullSubject = 0;
-    let fullSyllabus = 0;
-    publishedTests.forEach(t => {
-      const cat = getTestCategory(t);
-      if (cat === 'chapter_wise') chapterWise++;
-      else if (cat === 'full_subject') fullSubject++;
-      else fullSyllabus++;
-    });
-    return { chapterWise, fullSubject, fullSyllabus };
+  // Publicly listable tests (excludes 'unlisted' tests which are accessible via direct link or Purchased tab)
+  const publicTests = useMemo(() => {
+    return publishedTests.filter(t => t.visibility !== 'unlisted');
   }, [publishedTests]);
+
+  // Normalized visible categories (ONLY the 3 permanent defaults + admin-created visible custom categories)
+  const visibleCategories = useMemo(() => {
+    return normalizeTestCategories(categories)
+      .filter(c => c.isVisible !== false)
+      .sort((a, b) => {
+        const oA = typeof a.displayOrder === 'number' ? a.displayOrder : 99;
+        const oB = typeof b.displayOrder === 'number' ? b.displayOrder : 99;
+        if (oA !== oB) return oA - oB;
+        return a.name.localeCompare(b.name);
+      });
+  }, [categories]);
+
+  // Map category ID -> Category object for fast lookup
+  const categoryMap = useMemo(() => {
+    const map = new Map<string, TestCategory>();
+    normalizeTestCategories(categories).forEach(c => {
+      map.set(c.id, c);
+      if (c.slug) map.set(c.slug, c);
+    });
+    DEFAULT_TEST_CATEGORIES.forEach(d => {
+      if (!map.has(d.id)) map.set(d.id, d);
+    });
+    return map;
+  }, [categories]);
+
+  // Active category object if user opened a category page (default OR custom)
+  const activeCategoryObj = useMemo(() => {
+    if (
+      pageView === 'portal' ||
+      pageView === 'purchased' ||
+      pageView === 'history' ||
+      pageView === 'free_sample' ||
+      pageView === 'leaderboard'
+    ) {
+      return null;
+    }
+    return categoryMap.get(pageView) || null;
+  }, [pageView, categoryMap]);
+
+  // True, deduplicated live counts per category (ZERO artificial Math.max inflation)
+  const categoryCounts = useMemo(() => {
+    const countsById: Record<string, number> = {};
+    visibleCategories.forEach(cat => {
+      countsById[cat.id] = filterTestsForCategoryDeduped(publicTests, cat.id, { includeUnlisted: false }).length;
+    });
+    return countsById;
+  }, [publicTests, visibleCategories]);
 
   // Dynamically derive chapters for currently chosen chapter subject (Strictly non-hardcoded)
   const availableChapters = useMemo(() => {
-    return getAvailableChaptersForSubject(publishedTests, chapterSubject);
-  }, [publishedTests, chapterSubject]);
+    const chapterTests = filterTestsForCategoryDeduped(publicTests, 'chapter_wise', { includeUnlisted: false });
+    return getAvailableChaptersForSubject(chapterTests, chapterSubject);
+  }, [publicTests, chapterSubject]);
 
   // Reset chapter selection if subject changes and previous chapter is not in list
   useEffect(() => {
@@ -296,16 +542,29 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
     }
   }, [chapterSubject, availableChapters, selectedChapter]);
 
-  // Filtered Tests for the Active Dedicated Page
+  // Filtered Tests for the Active Dedicated Page or Homepage (always deduplicated)
   const displayedTests = useMemo(() => {
-    return publishedTests.filter(test => {
-      const cat = getTestCategory(test);
+    let baseList: MockTest[];
+
+    if (pageView === 'purchased') {
+      baseList = publishedTests.filter(t => hasUserPurchasedMockTest(effectiveUser?.uid, effectiveUser?.email, t.id));
+    } else if (pageView === 'free_sample') {
+      baseList = publicTests.filter(t => t.isFree || t.price === 0);
+    } else if (activeCategoryObj) {
+      baseList = filterTestsForCategoryDeduped(publicTests, activeCategoryObj.id, { includeUnlisted: false });
+    } else {
+      baseList = publicTests;
+    }
+
+    const seenIds = new Set<string>();
+    return baseList.filter(test => {
+      if (!test || !test.id || seenIds.has(test.id)) return false;
 
       // Search Query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchesTitle = test.title.toLowerCase().includes(q);
-        const matchesNumber = test.testNumber.toLowerCase().includes(q);
+        const matchesNumber = (test.testNumber || '').toLowerCase().includes(q);
         const matchesChapter = test.chapter ? test.chapter.toLowerCase().includes(q) : false;
         const matchesDesc = (test.description || '').toLowerCase().includes(q);
         if (!matchesTitle && !matchesNumber && !matchesChapter && !matchesDesc) return false;
@@ -320,9 +579,22 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
         if (!isPaid) return false;
       }
 
-      // 1. Chapter Wise Page Filter
+      // Global Subject Filter
+      if (homeSubjectFilter !== 'all') {
+        const matchesSubj = test.subject === homeSubjectFilter || (test.subjects && test.subjects.includes(homeSubjectFilter));
+        if (!matchesSubj) return false;
+      }
+
+      // Difficulty Filter
+      if (difficultyFilter !== 'all') {
+        const diff = (test.difficulty || 'moderate').toLowerCase();
+        if (diff !== difficultyFilter && !(difficultyFilter === 'moderate' && diff === 'medium')) {
+          return false;
+        }
+      }
+
+      // Chapter Wise Sub-Filters
       if (pageView === 'chapter_wise') {
-        if (cat !== 'chapter_wise') return false;
         const matchSubj = test.subject === chapterSubject || (test.subjects && test.subjects.includes(chapterSubject));
         if (!matchSubj) return false;
         if (selectedChapter !== 'all') {
@@ -330,55 +602,53 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
             return false;
           }
         }
-        return true;
       }
 
-      // 2. Full Subject Page Filter
-      if (pageView === 'full_subject') {
-        if (cat !== 'full_subject') return false;
-        if (fullSubjectSubFilter !== 'all') {
-          const matchSubj = test.subject === fullSubjectSubFilter || (test.subjects && test.subjects.includes(fullSubjectSubFilter));
-          if (!matchSubj) return false;
+      // Full Subject Sub-Filter
+      if (pageView === 'full_subject' && fullSubjectSubFilter !== 'all') {
+        const matchSubj = test.subject === fullSubjectSubFilter || (test.subjects && test.subjects.includes(fullSubjectSubFilter));
+        if (!matchSubj) return false;
+      }
+
+      // Portal active tab
+      if (pageView === 'portal') {
+        if (homeActiveTab === 'featured') {
+          if (!(test.isFree || test.price === 0 || /08|gold|major/i.test(test.testNumber || test.title))) {
+            return false;
+          }
+        } else if (homeActiveTab === 'cbt') {
+          const ids = resolveTestCategoryIds(test);
+          if (!ids.includes('full_syllabus')) return false;
         }
-        return true;
       }
 
-      // 3. Full Syllabus Page Filter
-      if (pageView === 'full_syllabus') {
-        return cat === 'full_syllabus';
-      }
-
-      // 4. Purchased Tests Page Filter
-      if (pageView === 'purchased') {
-        return hasUserPurchasedMockTest(effectiveUser?.uid, effectiveUser?.email, test.id);
-      }
-
-      // 5. Free Sample Tests Page Filter
-      if (pageView === 'free_sample') {
-        return test.isFree || test.price === 0;
-      }
-
+      seenIds.add(test.id);
       return true;
     });
-  }, [publishedTests, pageView, chapterSubject, selectedChapter, fullSubjectSubFilter, priceFilter, searchQuery, effectiveUser]);
+  }, [
+    publishedTests,
+    publicTests,
+    activeCategoryObj,
+    pageView,
+    chapterSubject,
+    selectedChapter,
+    fullSubjectSubFilter,
+    priceFilter,
+    homeSubjectFilter,
+    difficultyFilter,
+    homeActiveTab,
+    searchQuery,
+    effectiveUser
+  ]);
 
-  // Free sample test counts per category
+  // Free sample test count (accurate live total)
   const freeCounts = useMemo(() => {
-    let chapterWiseFree = 0;
-    let fullSubjectFree = 0;
-    let fullSyllabusFree = 0;
     let totalFree = 0;
-    publishedTests.forEach(t => {
-      if (t.isFree || t.price === 0) {
-        totalFree++;
-        const cat = getTestCategory(t);
-        if (cat === 'chapter_wise') chapterWiseFree++;
-        else if (cat === 'full_subject') fullSubjectFree++;
-        else fullSyllabusFree++;
-      }
+    publicTests.forEach(t => {
+      if (t.isFree || t.price === 0) totalFree++;
     });
-    return { chapterWiseFree, fullSubjectFree, fullSyllabusFree, totalFree };
-  }, [publishedTests]);
+    return { totalFree };
+  }, [publicTests]);
 
   // Fetch real-time Cloudflare D1 leaderboard
   const fetchRealTimeLeaderboard = async (cat: string = leaderboardCategory) => {
@@ -467,43 +737,49 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
   const renderTestCard = (test: MockTest, isSampleFreeSection?: boolean) => {
     const isPurchased = hasUserPurchasedMockTest(effectiveUser?.uid, effectiveUser?.email, test.id);
     const isCompleted = userAttempts.some(a => a.testId === test.id);
-    const testCat = getTestCategory(test);
+    const resolvedIds = resolveTestCategoryIds(test);
+    const primaryCatId = resolvedIds[0] || getTestCategory(test);
+    const primaryCatObj = categoryMap.get(primaryCatId);
     const isFree = test.isFree || test.price === 0;
 
-    const cardTheme = testCat === 'chapter_wise'
-      ? {
-          border: 'hover:border-orange-400',
-          badge: 'bg-orange-50 text-orange-700 border-orange-200'
-        }
-      : testCat === 'full_subject'
-      ? {
-          border: 'hover:border-emerald-400',
-          badge: 'bg-emerald-50 text-emerald-700 border-emerald-200'
-        }
-      : {
-          border: 'hover:border-blue-400',
-          badge: 'bg-blue-50 text-blue-700 border-blue-200'
-        };
+    const theme = getThemeStyles(primaryCatObj?.themePreset);
+    const cardTheme = {
+      border: theme.borderHover.split(' ').find(c => c.startsWith('hover:')) || 'hover:border-blue-500',
+      badge: theme.softTag
+    };
+
+    const categoryBadgeLabel = test.isStandalone && resolvedIds.length === 0
+      ? 'Standalone Test'
+      : primaryCatId === 'chapter_wise'
+      ? (test.subject || 'Chapter Test')
+      : primaryCatId === 'full_subject'
+      ? (test.subject ? `${test.subject} Full` : 'Full Subject')
+      : primaryCatId === 'full_syllabus'
+      ? 'Full PCB (720M)'
+      : (primaryCatObj?.name || 'Special Series');
+
+    const difficulty = (test.difficulty || 'Moderate').toLowerCase();
+    const diffColor = difficulty === 'easy' 
+      ? 'text-emerald-700 bg-emerald-50 border-emerald-200' 
+      : difficulty === 'hard'
+      ? 'text-rose-700 bg-rose-50 border-rose-200'
+      : 'text-amber-700 bg-amber-50 border-amber-200';
 
     return (
       <div
         key={test.id}
-        className={`bg-white rounded-2xl border ${isFree ? 'border-emerald-200/90 shadow-2xs hover:border-emerald-400 hover:shadow-md' : 'border-slate-200/90 shadow-2xs hover:shadow-md'} transition-all overflow-hidden flex flex-col justify-between ${cardTheme.border} group`}
+        className={`bg-white rounded-2xl border ${isFree ? 'border-emerald-200/90 shadow-2xs hover:border-emerald-400 hover:shadow-md' : 'border-slate-200/90 shadow-2xs hover:shadow-md'} transition-all overflow-hidden flex flex-col justify-between ${cardTheme.border} group min-w-0`}
       >
-        {/* Top Content Area */}
-        <div className="p-4 sm:p-5 space-y-2.5">
-          {/* Header Badges */}
-          <div className="flex items-center justify-between gap-1.5">
-            <div className="flex items-center gap-1.5 overflow-hidden">
-              <span className="text-[10.5px] font-black text-slate-900 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md font-['Outfit',sans-serif]">
+        {/* Top Compact Content Area */}
+        <div className="p-3 sm:p-3.5 space-y-2">
+          {/* Header Badges (Max 2 concise badges left + access pill right) */}
+          <div className="flex items-center justify-between gap-1.5 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+              <span className="text-[10px] font-black text-slate-900 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-md font-['Outfit',sans-serif] shrink-0">
                 {test.testNumber || 'NEET'}
               </span>
-              <span className={`text-[9.5px] font-black uppercase px-2 py-0.5 rounded-md border ${cardTheme.badge} truncate`}>
-                {testCat === 'chapter_wise' 
-                  ? (test.subject || 'Chapter Test') 
-                  : testCat === 'full_subject' 
-                  ? (test.subject ? `${test.subject} Full` : 'Full Subject')
-                  : 'Full PCB (720M)'}
+              <span className={`text-[9.5px] font-black uppercase px-1.5 py-0.5 rounded-md border ${cardTheme.badge} truncate`}>
+                {categoryBadgeLabel}
               </span>
             </div>
 
@@ -518,65 +794,72 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
                   <ShieldCheck className="w-3 h-3 text-blue-600" /> Unlocked
                 </span>
               ) : isFree ? (
-                <span className="inline-flex items-center gap-1 text-[9.5px] font-black text-emerald-700 bg-emerald-100/90 border border-emerald-300 px-2.5 py-0.5 rounded-full shadow-2xs">
-                  <Sparkles className="w-3 h-3 text-emerald-600" /> Free Sample Test
+                <span className="inline-flex items-center gap-1 text-[9.5px] font-black text-emerald-700 bg-emerald-100/90 border border-emerald-300 px-2 py-0.5 rounded-full">
+                  <Sparkles className="w-3 h-3 text-emerald-600" /> Free
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-[9.5px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full">
+                <span className="inline-flex items-center gap-1 text-[9.5px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
                   <Lock className="w-2.5 h-2.5 text-amber-500" /> ₹{test.price}
                 </span>
               )}
             </div>
           </div>
 
-          {/* Chapter indicator if Chapter Wise */}
-          {testCat === 'chapter_wise' && test.chapter && (
-            <div className="inline-flex items-center gap-1 text-[10px] font-bold text-orange-700 bg-orange-50/80 border border-orange-200/80 px-2 py-0.5 rounded-md">
-              <BookOpen className="w-3 h-3 text-orange-600" />
-              <span className="truncate max-w-[220px]">{test.chapter}</span>
-            </div>
-          )}
+          {/* Title & Single-line Chapter if present */}
+          <div className="space-y-0.5">
+            {test.chapter && (
+              <div className="flex items-center gap-1 text-[10px] font-bold text-blue-700 truncate">
+                <BookOpen className="w-3 h-3 text-blue-600 shrink-0" />
+                <span className="truncate">{test.chapter}</span>
+              </div>
+            )}
+            <h3 
+              onClick={() => setSharedTestModal(test)}
+              className="text-sm font-black text-slate-900 font-['Outfit',sans-serif] leading-snug line-clamp-2 group-hover:text-blue-600 transition cursor-pointer"
+              title="Click to view test syllabus & details"
+            >
+              {test.title}
+            </h3>
+          </div>
 
-          {/* Title */}
-          <h3 
-            onClick={() => setSharedTestModal(test)}
-            className="text-sm font-black text-slate-900 font-['Outfit',sans-serif] leading-snug line-clamp-2 group-hover:text-blue-600 transition cursor-pointer"
-            title="Click to view test syllabus & details"
-          >
-            {test.title}
-          </h3>
-
-          {/* Description */}
-          <p className="text-[11px] text-slate-500 leading-relaxed line-clamp-2">
-            {test.description || test.shortDescription || (isFree ? 'Official Free Sample Mock Test for students to practice CBT test interface.' : 'NEET pattern questions with detailed answer keys and explanations.')}
+          {/* Compact 1-line Description */}
+          <p className="text-[11px] text-slate-500 leading-snug line-clamp-1">
+            {test.description || test.shortDescription || (isFree ? 'Free NTA CBT mock test with step-by-step solutions.' : 'NEET pattern questions with detailed explanations.')}
           </p>
 
-          {/* Metrics Bar */}
-          <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[10.5px] font-bold text-slate-600">
-            <span className="inline-flex items-center gap-1 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-md">
+          {/* Compact Scannable Metadata Row */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-0.5 text-[11px] text-slate-500 font-medium tabular-nums">
+            <span className="font-bold text-slate-800 flex items-center gap-1">
               <HelpCircle className="w-3 h-3 text-blue-600" />
-              <span>{test.totalQuestions} Qs</span>
+              {(() => {
+                const storedCount = getStoredMockQuestions(test.id).length;
+                const total = storedCount > 0 ? storedCount : test.totalQuestions;
+                return `${total} Qs`;
+              })()}
             </span>
-            <span className="inline-flex items-center gap-1 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-md">
-              <Clock className="w-3 h-3 text-indigo-600" />
-              <span>{test.durationMinutes}m</span>
+            <span>·</span>
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3 text-slate-400" />
+              {test.durationMinutes}m
             </span>
-            <span className="inline-flex items-center gap-1 bg-emerald-50/70 border border-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md">
-              <span>+4/-1 Marks</span>
+            <span>·</span>
+            <span className="font-bold text-slate-700">
+              {test.maxMarks || 720}M
             </span>
-            <span className="inline-flex items-center gap-1 bg-purple-50/70 border border-purple-100 text-purple-800 px-2 py-0.5 rounded-md">
-              <span>{test.maxMarks || 720}M</span>
+            <span>·</span>
+            <span className={`text-[10px] font-bold capitalize px-1.5 py-0.2 rounded border ${diffColor}`}>
+              {test.difficulty || 'Moderate'}
             </span>
           </div>
         </div>
 
         {/* Card Action Buttons Toolbar */}
-        <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5">
+        <div className="px-3 sm:px-3.5 py-2.5 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={() => onOpenLeaderboard ? onOpenLeaderboard(test) : setActiveLeaderboardTest(test)}
-              className="p-2 hover:bg-white text-slate-500 hover:text-amber-600 rounded-xl transition cursor-pointer border border-transparent hover:border-slate-200"
+              className="min-h-[38px] min-w-[38px] p-1.5 hover:bg-white text-slate-500 hover:text-amber-600 rounded-xl transition cursor-pointer border border-transparent hover:border-slate-200 flex items-center justify-center"
               title="View Leaderboard & Rankings"
             >
               <Trophy className="w-3.5 h-3.5" />
@@ -585,7 +868,7 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
             <button
               type="button"
               onClick={() => setShareModalTest(test)}
-              className="p-2 hover:bg-white text-slate-500 hover:text-blue-600 rounded-xl transition cursor-pointer border border-transparent hover:border-slate-200"
+              className="min-h-[38px] min-w-[38px] p-1.5 hover:bg-white text-slate-500 hover:text-blue-600 rounded-xl transition cursor-pointer border border-transparent hover:border-slate-200 flex items-center justify-center"
               title="Share this test"
             >
               <Share2 className="w-3.5 h-3.5" />
@@ -594,19 +877,19 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
             <button
               type="button"
               onClick={() => setSharedTestModal(test)}
-              className="text-[11px] font-bold text-slate-600 hover:text-blue-600 px-2 py-1 rounded-lg transition cursor-pointer"
+              className="min-h-[38px] text-[11px] font-bold text-slate-600 hover:text-blue-600 px-2 py-1 rounded-lg transition cursor-pointer"
             >
               Syllabus
             </button>
           </div>
 
-          {/* Primary Start / Unlock Button */}
-          <div>
+          {/* Primary Start / Unlock Button (>= 44px touch target on mobile) */}
+          <div className="shrink-0">
             {isCompleted ? (
               <button
                 type="button"
                 onClick={() => handleTestStartClick(test)}
-                className="px-3.5 py-1.5 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1 active:scale-98"
+                className="min-h-[42px] sm:min-h-[38px] px-3.5 py-1.5 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1 active:scale-98"
               >
                 <RotateCcw className="w-3 h-3" />
                 <span>Reattempt</span>
@@ -615,7 +898,7 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
               <button
                 type="button"
                 onClick={() => handleTestStartClick(test)}
-                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1 active:scale-98"
+                className="min-h-[42px] sm:min-h-[38px] px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1 active:scale-98"
               >
                 <Play className="w-3 h-3 fill-white" />
                 <span>Start Test</span>
@@ -624,16 +907,16 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
               <button
                 type="button"
                 onClick={() => handleTestStartClick(test)}
-                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1"
+                className="min-h-[42px] sm:min-h-[38px] px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1"
               >
                 <Play className="w-3 h-3 fill-white" />
-                <span>Start Free Test</span>
+                <span>Start Free</span>
               </button>
             ) : (
               <button
                 type="button"
                 onClick={() => onBuyTest ? onBuyTest(test) : setSharedTestModal(test)}
-                className="px-4 py-1.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 active:scale-98 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1"
+                className="min-h-[42px] sm:min-h-[38px] px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 active:scale-98 text-white text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1"
               >
                 <Lock className="w-3 h-3" />
                 <span>Unlock ₹{test.price}</span>
@@ -712,165 +995,235 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
               </div>
             </div>
 
-            {/* THE THREE MAIN MOCK TEST TYPES (CARDS THAT OPEN NEW PAGES) */}
-            <div>
-              <div className="flex items-center justify-between mb-3 px-1">
+            {/* DYNAMIC TEST CATEGORIES GRID (ONLY 3 PERMANENT DEFAULTS + ADMIN-CREATED VISIBLE CATEGORIES) */}
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
                 <div>
-                  <h2 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit',sans-serif]">
-                    Select Test Type
+                  <h2 className="text-lg sm:text-xl font-black text-slate-900 font-['Outfit',sans-serif] tracking-tight">
+                    Select Test Category
                   </h2>
                   <p className="text-xs text-slate-500">
-                    Click any test type to open its dedicated page and view all tests
+                    Explore curated test series mapped cleanly to the NTA NEET pattern
                   </p>
                 </div>
-                <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
-                  {publishedTests.length} Total Tests Live
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-600 bg-white border border-slate-200 px-3 py-1 rounded-full shadow-2xs">
+                    {publicTests.length} Total {publicTests.length === 1 ? 'Test' : 'Tests'} Live
+                  </span>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                {visibleCategories.map(cat => {
+                  const count = categoryCounts[cat.id] ?? 0;
+                  const theme = getThemeStyles(cat.themePreset);
+                  const hasBanner = Boolean(cat.bannerImageUrl && !brokenBannerIds[cat.id]);
 
-                {/* 1️⃣ CHAPTER WISE TESTS PORTAL CARD */}
-                <div
-                  onClick={() => navigateToPage('chapter_wise')}
-                  className="group relative overflow-hidden rounded-2xl p-4 sm:p-4.5 bg-gradient-to-br from-white via-orange-50/30 to-amber-50/50 hover:to-orange-100/60 border-2 border-orange-200/90 hover:border-orange-500 shadow-2xs hover:shadow-lg transition-all duration-200 cursor-pointer flex flex-col justify-between"
-                >
-                  <div className="space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 via-orange-500 to-rose-500 text-white flex items-center justify-center shadow-sm shadow-orange-500/20 group-hover:scale-105 transition-transform">
-                        <BookOpen className="w-5 h-5" />
+                  const topRightLabel =
+                    cat.id === 'chapter_wise'
+                      ? `From ₹${pricingPackages.chapterWiseBiologyPrice}`
+                      : cat.id === 'full_subject'
+                      ? `Pass ₹${pricingPackages.fullSubjectAll3Price}`
+                      : cat.badgeText || (cat.isDefault ? '720M Full PCB' : 'Custom Series');
+
+                  const accentPills =
+                    cat.id === 'chapter_wise'
+                      ? [
+                          { label: `⚛️ Physics (₹${pricingPackages.chapterWisePhysicsPrice})`, cls: 'bg-blue-50 text-blue-700 border-blue-200' },
+                          { label: `🧪 Chem (₹${pricingPackages.chapterWiseChemistryPrice})`, cls: 'bg-sky-50 text-sky-800 border-sky-200' },
+                          { label: `🧬 Bio (₹${pricingPackages.chapterWiseBiologyPrice})`, cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+                        ]
+                      : (cat.accentTags && cat.accentTags.length > 0 ? cat.accentTags : ['NCERT Mapped', 'NTA CBT Pattern']).map(tag => ({
+                          label: tag,
+                          cls: theme.softTag
+                        }));
+
+                  return (
+                    <div
+                      key={cat.id}
+                      onClick={() => navigateToPage(cat.id)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          navigateToPage(cat.id);
+                        }
+                      }}
+                      className={`group relative overflow-hidden rounded-2xl bg-white border-2 ${theme.borderHover} shadow-2xs hover:shadow-xl transition-all duration-300 cursor-pointer flex flex-col justify-between focus:outline-hidden focus:ring-2 focus:ring-blue-500 min-w-0`}
+                    >
+                      <div className={`relative h-24 sm:h-28 overflow-hidden bg-gradient-to-br ${theme.gradientBar}`}>
+                        {hasBanner && (
+                          <img
+                            src={cat.bannerImageUrl}
+                            alt={cat.name}
+                            onError={() => setBrokenBannerIds(prev => ({ ...prev, [cat.id]: true }))}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-90"
+                          />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-900/35 to-transparent" />
+
+                        <div className="absolute top-2 left-2.5 flex items-center gap-1.5">
+                          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full backdrop-blur-xs shadow-xs border ${theme.badgeBg}`}>
+                            {count === 0 ? '0 Tests' : `${count} ${count === 1 ? 'Test' : 'Tests'}`}
+                          </span>
+                        </div>
+
+                        {topRightLabel && (
+                          <div className="absolute top-2 right-2.5">
+                            <span className="text-[10px] font-black text-white bg-slate-900/80 backdrop-blur-xs border border-white/25 px-2 py-0.5 rounded-md shadow-xs">
+                              {topRightLabel}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="absolute bottom-2 left-3 right-3">
+                          <h3 className="text-base sm:text-lg font-black text-white font-['Outfit',sans-serif] leading-tight drop-shadow-sm group-hover:text-cyan-200 transition-colors truncate">
+                            {cat.name}
+                          </h3>
+                          <p className="text-[11px] text-slate-200 line-clamp-1">
+                            {cat.description || 'Structured NEET mock test series with official NTA CBT timer & analytics.'}
+                          </p>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-orange-100 text-orange-800 border border-orange-200 shadow-2xs">
-                          {counts.chapterWise} Tests
-                        </span>
+
+                      <div className="p-3 sm:p-3.5 space-y-2 flex-1 flex flex-col justify-between">
+                        <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold text-slate-600">
+                          {accentPills.slice(0, 3).map((pill, i) => (
+                            <span key={i} className={`px-2 py-0.5 rounded-md border ${pill.cls}`}>
+                              {pill.label}
+                            </span>
+                          ))}
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs font-black min-h-[32px]">
+                          <span className={`${theme.accentText} text-[11px]`}>
+                            {cat.badgeText || (cat.isDefault ? 'Official Series' : 'Custom Category')}
+                          </span>
+                          <span className={`inline-flex items-center gap-1 ${theme.accentText} group-hover:translate-x-1 transition-transform text-xs`}>
+                            <span>{cat.ctaText || 'Open Page'}</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </span>
+                        </div>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            </div>
 
-                    <div>
-                      <div className="flex items-center justify-between gap-1">
-                        <h3 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit',sans-serif] leading-snug group-hover:text-orange-600 transition-colors">
-                          Chapter Wise Tests
-                        </h3>
-                        <span className="text-[10px] font-black text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md shrink-0">
-                          From ₹{pricingPackages.chapterWiseBiologyPrice}
-                        </span>
-                      </div>
-                      <p className="text-[11.5px] text-slate-600 mt-1 leading-relaxed line-clamp-2">
-                        Deep-dive topic by topic. Master individual chapters in Physics, Chemistry, and Biology.
-                      </p>
-                    </div>
+            {/* LIVE TESTS EXPLORER & COMPACT FILTER HUB */}
+            <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-5 border border-slate-200/90 shadow-2xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3.5">
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit',sans-serif]">
+                    Explore Live Mock Tests
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Filter by subject, difficulty, price, or search test titles directly
+                  </p>
+                </div>
+                <div className="relative min-w-[240px] sm:w-72">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search test name or chapter..."
+                    className="w-full pl-9 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-slate-50 focus:bg-white transition"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
 
-                    <div className="flex flex-wrap items-center gap-1 text-[10px] font-bold text-slate-600 pt-0.5">
-                      <span className="px-2 py-0.5 rounded-md bg-orange-50 text-orange-700 border border-orange-200">⚛️ Physics (₹{pricingPackages.chapterWisePhysicsPrice})</span>
-                      <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200">🧪 Chem (₹{pricingPackages.chapterWiseChemistryPrice})</span>
-                      <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">🧬 Bio (₹{pricingPackages.chapterWiseBiologyPrice})</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2.5 mt-2.5 border-t border-orange-100/90 flex items-center justify-between text-xs font-black">
-                    <span className="text-orange-700 text-[11px]">Explore Chapters &amp; Tests</span>
-                    <span className="inline-flex items-center gap-1 text-orange-600 group-hover:translate-x-1 transition-transform text-xs">
-                      <span>Open Page</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </span>
-                  </div>
+              {/* Segmented Controls Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-2.5">
+                {/* Subject Filter */}
+                <div className="flex items-center gap-1 overflow-x-auto">
+                  {(['all', 'Physics', 'Chemistry', 'Biology'] as const).map(subj => (
+                    <button
+                      key={subj}
+                      type="button"
+                      onClick={() => setHomeSubjectFilter(subj)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer border ${
+                        homeSubjectFilter === subj
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {subj === 'all' ? 'All Subjects' : subj === 'Physics' ? '⚛️ Physics' : subj === 'Chemistry' ? '🧪 Chemistry' : '🧬 Biology'}
+                    </button>
+                  ))}
                 </div>
 
-                {/* 2️⃣ FULL SUBJECT TESTS PORTAL CARD */}
-                <div
-                  onClick={() => navigateToPage('full_subject')}
-                  className="group relative overflow-hidden rounded-2xl p-4 sm:p-4.5 bg-gradient-to-br from-white via-emerald-50/30 to-teal-50/50 hover:to-emerald-100/60 border-2 border-emerald-200/90 hover:border-emerald-500 shadow-2xs hover:shadow-lg transition-all duration-200 cursor-pointer flex flex-col justify-between"
-                >
-                  <div className="space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 via-teal-500 to-cyan-600 text-white flex items-center justify-center shadow-sm shadow-emerald-500/20 group-hover:scale-105 transition-transform">
-                        <FlaskConical className="w-5 h-5" />
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-2xs">
-                          {counts.fullSubject} Tests
-                        </span>
-                      </div>
-                    </div>
+                {/* Difficulty & Price Filter */}
+                <div className="flex items-center gap-1.5 overflow-x-auto">
+                  {(['all', 'easy', 'moderate', 'hard'] as const).map(diff => (
+                    <button
+                      key={diff}
+                      type="button"
+                      onClick={() => setDifficultyFilter(diff)}
+                      className={`px-2.5 py-1.2 rounded-lg text-xs font-bold capitalize transition cursor-pointer border ${
+                        difficultyFilter === diff
+                          ? 'bg-slate-900 text-white border-slate-900 shadow-2xs'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {diff === 'all' ? 'All Levels' : diff}
+                    </button>
+                  ))}
 
-                    <div>
-                      <div className="flex items-center justify-between gap-1">
-                        <h3 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit',sans-serif] leading-snug group-hover:text-emerald-600 transition-colors">
-                          Full Subject Tests
-                        </h3>
-                        <span className="text-[10px] font-black text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-md shrink-0">
-                          Pass ₹{pricingPackages.fullSubjectAll3Price}
-                        </span>
-                      </div>
-                      <p className="text-[11.5px] text-slate-600 mt-1 leading-relaxed line-clamp-2">
-                        Complete syllabus tests per subject. 100% of Physics, 100% of Chemistry, or 100% of Biology.
-                      </p>
-                    </div>
+                  <div className="h-4 w-px bg-slate-200 mx-1" />
 
-                    <div className="flex flex-wrap items-center gap-1 text-[10px] font-bold text-slate-600 pt-0.5">
-                      <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">180 Marks / Subject</span>
-                      <span className="px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200">45 Qs Standard</span>
-                      <span className="px-2 py-0.5 rounded-md bg-cyan-50 text-cyan-800 border border-cyan-200">All 3 Subjects</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2.5 mt-2.5 border-t border-emerald-100/90 flex items-center justify-between text-xs font-black">
-                    <span className="text-emerald-700 text-[11px]">Explore Full Subjects</span>
-                    <span className="inline-flex items-center gap-1 text-emerald-600 group-hover:translate-x-1 transition-transform text-xs">
-                      <span>Open Page</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </span>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPriceFilter(prev => prev === 'all' ? 'free' : prev === 'free' ? 'premium' : 'all')}
+                    className={`px-3 py-1.2 rounded-lg text-xs font-bold transition cursor-pointer border ${
+                      priceFilter === 'free'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                        : priceFilter === 'premium'
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    {priceFilter === 'all' ? 'All Prices' : priceFilter === 'free' ? '⚡ Free Tests' : '🔒 Premium'}
+                  </button>
                 </div>
+              </div>
 
-                {/* 3️⃣ FULL SYLLABUS TESTS PORTAL CARD */}
-                <div
-                  onClick={() => navigateToPage('full_syllabus')}
-                  className="group relative overflow-hidden rounded-2xl p-4 sm:p-4.5 bg-gradient-to-br from-white via-blue-50/30 to-indigo-50/50 hover:to-blue-100/60 border-2 border-blue-200/90 hover:border-blue-500 shadow-2xs hover:shadow-lg transition-all duration-200 cursor-pointer flex flex-col justify-between"
-                >
-                  <div className="space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 text-white flex items-center justify-center shadow-sm shadow-blue-500/20 group-hover:scale-105 transition-transform">
-                        <Trophy className="w-5 h-5" />
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200 shadow-2xs">
-                          {counts.fullSyllabus} Tests
-                        </span>
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between gap-1">
-                        <h3 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit',sans-serif] leading-snug group-hover:text-blue-600 transition-colors">
-                          Full Syllabus Tests
-                        </h3>
-                        <span className="text-[10px] font-black text-indigo-800 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md shrink-0">
-                          Pass ₹{pricingPackages.fullSyllabusAllPrice}
-                        </span>
-                      </div>
-                      <p className="text-[11.5px] text-slate-600 mt-1 leading-relaxed line-clamp-2">
-                        The ultimate NEET simulation. Comprehensive 720-marks Grand Tests featuring PCB with All India Rank.
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-1 text-[10px] font-bold text-slate-600 pt-0.5">
-                      <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200">720 Marks NEET</span>
-                      <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">PCB Combined</span>
-                      <span className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200">AIR Ranking</span>
-                    </div>
+              {/* Matching Tests Grid */}
+              <div className="pt-2">
+                {displayedTests.length === 0 ? (
+                  <div className="text-center py-12 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200 p-6 space-y-2">
+                    <BookOpen className="w-8 h-8 text-slate-300 mx-auto" />
+                    <h4 className="text-xs font-bold text-slate-700">No mock tests match your selected filters</h4>
+                    <p className="text-[11px] text-slate-400">Try switching subjects, clearing the search query, or checking other categories.</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHomeSubjectFilter('all');
+                        setDifficultyFilter('all');
+                        setPriceFilter('all');
+                        setSearchQuery('');
+                      }}
+                      className="mt-1 px-3 py-1 text-xs font-bold text-blue-600 hover:underline cursor-pointer"
+                    >
+                      Reset All Filters
+                    </button>
                   </div>
-
-                  <div className="pt-2.5 mt-2.5 border-t border-blue-100/90 flex items-center justify-between text-xs font-black">
-                    <span className="text-blue-700 text-[11px]">Explore Grand Mocks</span>
-                    <span className="inline-flex items-center gap-1 text-blue-600 group-hover:translate-x-1 transition-transform text-xs">
-                      <span>Open Page</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </span>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4">
+                    {displayedTests.map(test => renderTestCard(test))}
                   </div>
-                </div>
-
+                )}
               </div>
             </div>
 
@@ -962,18 +1315,22 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
                 <button
                   type="button"
                   onClick={() => navigateToPage('portal')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-98 text-slate-700 text-xs font-bold transition cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 min-h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-98 text-slate-700 text-xs font-bold transition cursor-pointer"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
                   <span>All Categories</span>
                 </button>
                 <span className="text-slate-300">/</span>
                 <span className="text-xs font-black text-slate-900 font-['Outfit',sans-serif]">
-                  {pageView === 'chapter_wise' && 'Chapter Wise Tests'}
-                  {pageView === 'full_subject' && 'Full Subject Tests'}
-                  {pageView === 'full_syllabus' && 'Full Syllabus Grand Tests'}
-                  {pageView === 'purchased' && 'My Purchased Tests'}
-                  {pageView === 'history' && 'My Attempt History'}
+                  {activeCategoryObj
+                    ? activeCategoryObj.name
+                    : pageView === 'free_sample'
+                    ? 'Free Sample Tests'
+                    : pageView === 'purchased'
+                    ? 'My Purchased Tests'
+                    : pageView === 'leaderboard'
+                    ? 'All India Rank Leaderboard'
+                    : 'My Attempt History'}
                 </span>
               </div>
 
@@ -1005,54 +1362,62 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
               </div>
             </div>
 
-            {/* Dedicated Hero Header Banner for this category */}
+            {/* Dedicated Hero Header Banner for this category / utility page */}
             <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 border shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3 ${
-              pageView === 'chapter_wise'
-                ? 'bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-white border-orange-200'
-                : pageView === 'full_subject'
+              activeCategoryObj
+                ? getThemeStyles(activeCategoryObj.themePreset).heroGradient
+                : pageView === 'free_sample'
                 ? 'bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-white border-emerald-200'
-                : pageView === 'full_syllabus'
-                ? 'bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-white border-blue-200'
                 : pageView === 'purchased'
                 ? 'bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-white border-indigo-200'
                 : 'bg-gradient-to-r from-slate-900 to-slate-800 text-white border-slate-700'
             }`}>
               <div className="space-y-1">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-black uppercase tracking-wider mb-1 bg-white/80 border border-slate-200/80 shadow-2xs">
-                  {pageView === 'chapter_wise' && <BookOpen className="w-3 h-3 text-orange-600" />}
-                  {pageView === 'full_subject' && <FlaskConical className="w-3 h-3 text-emerald-600" />}
-                  {pageView === 'full_syllabus' && <Trophy className="w-3 h-3 text-blue-600" />}
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-black uppercase tracking-wider mb-1 bg-white/80 text-slate-800 border border-slate-200/80 shadow-2xs">
+                  {pageView === 'chapter_wise' && <BookOpen className="w-3 h-3 text-blue-600" />}
+                  {pageView === 'full_subject' && <FlaskConical className="w-3 h-3 text-purple-600" />}
+                  {pageView === 'full_syllabus' && <Trophy className="w-3 h-3 text-amber-600" />}
+                  {activeCategoryObj && !activeCategoryObj.isDefault && <Layers className="w-3 h-3 text-indigo-600" />}
+                  {pageView === 'free_sample' && <Gift className="w-3 h-3 text-emerald-600" />}
                   {pageView === 'purchased' && <ShieldCheck className="w-3 h-3 text-indigo-600" />}
-                  {pageView === 'history' && <History className="w-3 h-3 text-purple-400" />}
+                  {pageView === 'history' && <History className="w-3 h-3 text-purple-600" />}
                   <span>
-                    {pageView === 'chapter_wise' && 'Chapter Level Mastery'}
-                    {pageView === 'full_subject' && '100% Complete Subject Evaluation'}
-                    {pageView === 'full_syllabus' && '720 Marks Full PCB Grand Test'}
-                    {pageView === 'purchased' && 'Your Active Subscriptions'}
-                    {pageView === 'history' && 'Past Performance & Solutions'}
+                    {activeCategoryObj
+                      ? (activeCategoryObj.badgeText || (activeCategoryObj.isDefault ? 'Official Series' : 'Custom Series'))
+                      : pageView === 'free_sample'
+                      ? 'Zero Cost CBT Practice'
+                      : pageView === 'purchased'
+                      ? 'Your Active Subscriptions'
+                      : 'Past Performance & Solutions'}
                   </span>
                 </div>
 
                 <h2 className="text-xl sm:text-2xl font-black font-['Outfit',sans-serif] tracking-tight">
-                  {pageView === 'chapter_wise' && 'Chapter Wise Mock Tests'}
-                  {pageView === 'full_subject' && 'Full Subject Mock Tests'}
-                  {pageView === 'full_syllabus' && 'Full Syllabus Grand Mock Tests'}
-                  {pageView === 'purchased' && 'My Purchased Mock Tests'}
-                  {pageView === 'history' && 'Your Mock Test Attempts'}
+                  {activeCategoryObj
+                    ? activeCategoryObj.name
+                    : pageView === 'free_sample'
+                    ? 'Free Sample Mock Tests'
+                    : pageView === 'purchased'
+                    ? 'My Purchased Mock Tests'
+                    : 'Your Mock Test Attempts'}
                 </h2>
 
-                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed max-w-2xl">
-                  {pageView === 'chapter_wise' && 'Practice high-yield questions chapter by chapter across Physics, Chemistry, and Biology.'}
-                  {pageView === 'full_subject' && 'Test your readiness across complete subjects under official NTA exam time limits.'}
-                  {pageView === 'full_syllabus' && 'Complete 720-marks NEET PCB tests with section A & B questions and live All India Rank.'}
-                  {pageView === 'purchased' && 'Access all the tests you have purchased or unlocked.'}
-                  {pageView === 'history' && 'Review your past test scores, accuracy, and answer explanations.'}
+                <p className={`text-xs sm:text-sm leading-relaxed max-w-2xl ${pageView === 'history' ? 'text-slate-300' : 'text-slate-600'}`}>
+                  {activeCategoryObj
+                    ? activeCategoryObj.description
+                    : pageView === 'free_sample'
+                    ? 'Attend free sample tests immediately to experience the official NTA CBT exam interface.'
+                    : pageView === 'purchased'
+                    ? 'Access all the tests you have purchased or unlocked.'
+                    : 'Review your past test scores, accuracy, and answer explanations.'}
                 </p>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
                 <span className="text-xs font-black px-3 py-1.5 rounded-xl bg-white shadow-2xs border border-slate-200 text-slate-800">
-                  {pageView === 'history' ? `${userAttempts.length} Attempts` : `${displayedTests.length} Tests Available`}
+                  {pageView === 'history'
+                    ? `${userAttempts.length} Attempts`
+                    : `${displayedTests.length} ${displayedTests.length === 1 ? 'Test' : 'Tests'} Available`}
                 </span>
               </div>
             </div>
@@ -1737,7 +2102,7 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
             {pageView !== 'history' && pageView !== 'leaderboard' && (() => {
               const freeTests = displayedTests.filter(t => t.isFree || t.price === 0);
               const paidTests = displayedTests.filter(t => !t.isFree && t.price > 0);
-              const isCategoryView = pageView === 'chapter_wise' || pageView === 'full_subject' || pageView === 'full_syllabus';
+              const isCategoryView = Boolean(activeCategoryObj);
 
               return (
                 <div className="space-y-6 sm:space-y-8">
@@ -1750,16 +2115,14 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
                       <h3 className="text-sm sm:text-base font-bold text-slate-800">
                         {pageView === 'chapter_wise'
                           ? `No chapter tests published for ${chapterSubject} ${selectedChapter !== 'all' ? `(${selectedChapter})` : ''} yet`
-                          : pageView === 'full_subject'
-                          ? `No full subject tests published yet`
-                          : pageView === 'full_syllabus'
-                          ? `No full syllabus tests published yet`
+                          : activeCategoryObj
+                          ? `No tests published in ${activeCategoryObj.name} yet`
                           : pageView === 'free_sample'
                           ? `No free sample tests published yet`
                           : `No purchased tests found`}
                       </h3>
                       <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-                        Tests uploaded by the admin will appear here automatically.
+                        Tests published to this category by the admin will appear here automatically.
                       </p>
                       <div className="pt-2 flex flex-wrap justify-center gap-2">
                         <button
@@ -1782,12 +2145,10 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
                               <span>Free Tests Section • Sample Tests</span>
                             </div>
                             <h3 className="text-base sm:text-xl font-black text-slate-900 font-['Outfit',sans-serif]">
-                              {pageView === 'chapter_wise' && `Free Sample Chapter Tests (${freeTests.length})`}
-                              {pageView === 'full_subject' && `Free Sample Full Subject Tests (${freeTests.length})`}
-                              {pageView === 'full_syllabus' && `Free Sample Grand Tests (${freeTests.length})`}
+                              Free Sample {activeCategoryObj?.name || 'Mock Tests'} ({freeTests.length})
                             </h3>
                             <p className="text-xs text-slate-600 leading-relaxed max-w-2xl">
-                              Attend these free tests uploaded by the admin instantly without any payment. These work as sample tests to experience the official CBT timer and question pattern before unlocking paid series.
+                              Attend these free tests immediately without payment to experience the official CBT timer and question pattern.
                             </p>
                           </div>
                           <span className="text-xs font-black text-emerald-900 bg-white border border-emerald-300 px-3 py-1 rounded-xl shadow-2xs self-start sm:self-auto shrink-0">
@@ -1797,8 +2158,8 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
 
                         {freeTests.length === 0 ? (
                           <div className="text-center py-6 bg-white/80 rounded-2xl border border-dashed border-emerald-300 p-4">
-                            <p className="text-xs font-bold text-slate-700">No free sample tests published for this subject/chapter yet.</p>
-                            <p className="text-[11px] text-slate-500 mt-0.5">Admin can upload or mark tests as Free Sample Tests in the Admin Test Manager.</p>
+                            <p className="text-xs font-bold text-slate-700">No free sample tests published in this category yet.</p>
+                            <p className="text-[11px] text-slate-500 mt-0.5">Admin can publish free sample tests into this category anytime.</p>
                           </div>
                         ) : (
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4 pt-1">
@@ -1816,12 +2177,10 @@ export const MockTestsListingView: React.FC<MockTestsListingViewProps> = ({
                               <span>Complete Test Series • Pay to Unlock</span>
                             </div>
                             <h3 className="text-base sm:text-xl font-black text-slate-900 font-['Outfit',sans-serif]">
-                              {pageView === 'chapter_wise' && `Complete Chapter Wise Series (${paidTests.length})`}
-                              {pageView === 'full_subject' && `Complete Full Subject Master Tests (${paidTests.length})`}
-                              {pageView === 'full_syllabus' && `Full Syllabus Grand Test Series (${paidTests.length})`}
+                              Complete {activeCategoryObj?.name || 'Master Series'} ({paidTests.length})
                             </h3>
                             <p className="text-xs text-slate-500 leading-relaxed max-w-2xl">
-                              For paid tests, pay first to unlock full access with official NTA CBT timer, answer keys, comprehensive step-by-step explanations, and live All India Rank analytics.
+                              Unlock full access with official NTA CBT timer, verified answer keys, detailed explanations, and All India Rank analytics.
                             </p>
                           </div>
                           <span className="text-xs font-black text-slate-700 bg-slate-100 border border-slate-200 px-3 py-1 rounded-xl self-start sm:self-auto shrink-0">

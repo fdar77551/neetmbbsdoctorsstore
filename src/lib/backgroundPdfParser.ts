@@ -24,7 +24,12 @@ import {
   saveStoredMockQuestions, 
   saveStoredMockTests, 
   getStoredMockTests,
-  parseQuestionsFromRawText 
+  parseQuestionsFromRawText,
+  hasGenuineDiagramRequirement,
+  cleanLeadingOptionMarker,
+  cleanEnglishOptionString,
+  cleanHindiOptionString,
+  formatScientificMathAndPowers
 } from './mockTestData';
 
 class BackgroundPdfParserManager {
@@ -58,6 +63,10 @@ class BackgroundPdfParserManager {
 
   public getActiveDocProxy(): any {
     return this.currentPdfDocProxy;
+  }
+
+  public setActiveDocProxy(doc: any) {
+    this.currentPdfDocProxy = doc;
   }
 
   public async resumeOrNotifyPendingJobs() {
@@ -179,7 +188,7 @@ class BackgroundPdfParserManager {
         let modelUsed = 'Gemini';
 
         try {
-          const parseResult = await sendPageToGeminiParser(pageDataUrl, p, pdfDoc.numPages);
+          const parseResult = await sendPageToGeminiParser(pageDataUrl, p, pdfDoc.numPages, undefined, 'full_auto');
           pageQuestions = parseResult.questions || [];
           modelUsed = parseResult.modelUsed || 'Gemini Vision';
         } catch (pageErr) {
@@ -252,27 +261,27 @@ class BackgroundPdfParserManager {
               }
             }
 
-            // B. Ink scanning fallback
+            // B. Ink scanning fallback:
+            // Crop strictly when question genuinely requires a visual figure (excluding "significant figures", etc.)
+            // Restrict horizontal scanning strictly to the left English column (35 to 490) so only ONE clean
+            // diagram is cropped without duplicate Hindi diagram, and terminate search before the options!
             if (!figureDataUrl) {
-              const textToCheck = `${rawQ.english?.questionText || ''} ${rawQ.hindi?.questionText || ''}`.toLowerCase();
-              const hasVisualRef = [
-                'figure', 'diagram', 'circuit', 'graph', 'scheme', 'reaction',
-                'benzene', 'structure', 'loop', 'curve', 'shown in', 'as shown', 'chitra', 'चित्र'
-              ].some(kw => textToCheck.includes(kw));
+              const textToCheck = `${rawQ.english?.questionText || ''} ${rawQ.hindi?.questionText || ''}`;
+              const genuinelyNeedsDiagram = hasGenuineDiagramRequirement({ questionText: textToCheck });
 
-              if (hasVisualRef) {
+              if (genuinelyNeedsDiagram) {
                 const qIndex = pageQuestions.indexOf(rawQ);
                 const safeTotal = Math.max(1, pageQuestions.length);
                 const slotHeight = 900 / safeTotal;
-                const searchYmin = Math.max(40, Math.round(50 + qIndex * slotHeight));
-                const searchYmax = Math.min(970, Math.round(50 + (qIndex + 1) * slotHeight));
+                const searchYmin = Math.max(40, Math.round(50 + qIndex * slotHeight + slotHeight * 0.10));
+                const searchYmax = Math.min(970, Math.round(50 + qIndex * slotHeight + slotHeight * 0.65));
 
                 const detectedInkBox = detectDiagramInkBoundingBoxOnCanvas(
                   processingCanvas,
                   searchYmin,
                   searchYmax,
-                  30,
-                  970
+                  35,
+                  490
                 );
 
                 if (detectedInkBox) {
@@ -310,26 +319,47 @@ class BackgroundPdfParserManager {
           const defaultSubject: MockSubject = p <= 10 ? 'Physics' : p <= 20 ? 'Chemistry' : 'Biology';
           const resolvedSubject: MockSubject = (rawQ.subject as MockSubject) || defaultSubject;
 
-          // Extract real option values
+          // Extract real option values for English
           const rawOpts = rawQ.english?.options || rawQ.options || rawQ.choices || [];
           const cleanedOptions = (['A', 'B', 'C', 'D'] as const).map((label, optIdx) => {
             let val = '';
             if (Array.isArray(rawOpts)) {
               const found = rawOpts.find((o: any) => (o?.label || '').toUpperCase() === label) || rawOpts[optIdx];
               if (typeof found === 'string') {
-                val = found.replace(/^\([A-Da-d1-4]\)\s*/, '').trim();
+                val = found;
               } else if (found && typeof found === 'object') {
                 val = (found.text || found.value || found.statement || '').trim();
               }
             } else if (rawOpts && typeof rawOpts === 'object') {
               val = (rawOpts[label] || rawOpts[label.toLowerCase()] || '').trim();
             }
+            const cleanVal = cleanEnglishOptionString(val, label);
             return {
               label,
               type: 'text' as const,
-              value: val || `Option (${label})`
+              value: cleanVal || `Option (${label})`
             };
           });
+
+          // Extract Hindi options if present in raw question
+          const rawHiOpts = rawQ.hindi?.options || [];
+          const cleanedHiOptions = Array.isArray(rawHiOpts) && rawHiOpts.length > 0
+            ? (['A', 'B', 'C', 'D'] as const).map((label, optIdx) => {
+                const found = rawHiOpts.find((o: any) => (o?.label || '').toUpperCase() === label) || rawHiOpts[optIdx];
+                let val = '';
+                if (typeof found === 'string') {
+                  val = found;
+                } else if (found && typeof found === 'object') {
+                  val = (found.text || found.value || found.statement || '').trim();
+                }
+                const cleanVal = cleanHindiOptionString(val, label);
+                return {
+                  label,
+                  type: 'text' as const,
+                  value: cleanVal || cleanedOptions[optIdx]?.value || `विकल्प (${label})`
+                };
+              })
+            : cleanedOptions;
 
           // Ensure option values are populated if raw options had plain strings
           const hasRealOption = cleanedOptions.some(o => o.value && !/^Option\s*\([A-D]\)$/i.test(o.value));
@@ -337,10 +367,13 @@ class BackgroundPdfParserManager {
             rawQ.options.forEach((ro: any, roIdx: number) => {
               if (cleanedOptions[roIdx]) {
                 const textVal = typeof ro === 'string' ? ro : (ro?.text || ro?.value || '');
-                if (textVal) cleanedOptions[roIdx].value = textVal.trim();
+                if (textVal) cleanedOptions[roIdx].value = cleanEnglishOptionString(textVal.trim(), cleanedOptions[roIdx].label);
               }
             });
           }
+
+          const effectiveFigUrl = figureDataUrl || rawQ.figureUrl || rawQ.questionImageUrl;
+          const cleanedStatement = formatScientificMathAndPowers(cleanQuestionTextForMatchTable(finalQText, rawQ.matchTable));
 
           const formattedQ: MockQuestion = {
             id: `q_${jobId}_${qNum}`,
@@ -348,11 +381,26 @@ class BackgroundPdfParserManager {
             questionNumber: qNum,
             subject: resolvedSubject,
             chapter: rawQ.chapter || `${resolvedSubject} Chapter`,
-            questionText: finalQText,
+            questionText: cleanedStatement,
             options: cleanedOptions,
-            figures: figureDataUrl ? [figureDataUrl] : [],
-            figureUrl: figureDataUrl,
-            questionImageUrl: figureDataUrl,
+            languages: {
+              en: {
+                questionText: formatScientificMathAndPowers(cleanQuestionTextForMatchTable(rawQ.english?.questionText || finalQText, rawQ.matchTable)),
+                options: cleanedOptions,
+                figureUrl: effectiveFigUrl,
+                matchTable: rawQ.matchTable
+              },
+              hi: rawQ.hindi?.questionText ? {
+                questionText: formatScientificMathAndPowers(cleanQuestionTextForMatchTable(rawQ.hindi.questionText, rawQ.matchTable)),
+                options: cleanedHiOptions,
+                figureUrl: effectiveFigUrl,
+                matchTable: rawQ.matchTable
+              } : undefined
+            },
+            matchTable: rawQ.matchTable,
+            figures: effectiveFigUrl ? [effectiveFigUrl] : [],
+            figureUrl: effectiveFigUrl,
+            questionImageUrl: effectiveFigUrl,
             pdfPageNumber: p,
             figureCropInfo: rawQ.figureBoundingBox ? {
               pageNumber: p,

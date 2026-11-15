@@ -58,7 +58,7 @@ import { CbtTestInterface } from './components/CbtTestInterface';
 import { MockTestResultView } from './components/MockTestResultView';
 import { MockTestLeaderboardModal } from './components/MockTestLeaderboardModal';
 import { MockTest, MockTestAttempt, NeetFullCourseConfig } from './types';
-import { saveStoredMockPurchase, getStoredMockTests, syncAllMockTestsFromSources } from './lib/mockTestData';
+import { saveStoredMockPurchase, getStoredMockTests, syncAllMockTestsFromSources, hasUserPurchasedMockTest } from './lib/mockTestData';
 import { HomeFullCourseCard } from './components/HomeFullCourseCard';
 import { FullCourseDetailView } from './components/FullCourseDetailView';
 import { 
@@ -237,6 +237,16 @@ export default function App() {
       }
     });
 
+    const handleNavigateMockTests = () => {
+      syncAllMockTestsFromSources().then(synced => {
+        if (synced && synced.length > 0) {
+          setMockTestsList(synced);
+        }
+      }).catch(() => {});
+      setCurrentScreen('mock-tests');
+    };
+    window.addEventListener('neetmbbs_navigate_mock_tests', handleNavigateMockTests);
+
     return () => {
       window.removeEventListener('neetmbbs_products_updated', handleProductsUpdate);
       window.removeEventListener('neetmbbs_orders_updated', handleOrdersUpdate);
@@ -246,6 +256,8 @@ export default function App() {
       window.removeEventListener('neetmbbs_current_user_updated', handleCurrentUserUpdate);
       window.removeEventListener('neetmbbs_store_config_updated', handleStoreConfigUpdate);
       window.removeEventListener('neetmbbs_course_config_updated', handleCourseConfigUpdate);
+      window.removeEventListener('neetmbbs_mock_tests_updated', handleMockTestsUpdate);
+      window.removeEventListener('neetmbbs_navigate_mock_tests', handleNavigateMockTests);
       unsubscribe();
     };
   }, []);
@@ -462,6 +474,16 @@ export default function App() {
 
   // Mock Test System Handlers
   const handleStartMockTest = (test: MockTest) => {
+    // Check if test is free or if user purchased it
+    const isFree = test.isFree || test.price === 0;
+    const isPurchased = hasUserPurchasedMockTest(userProfile?.uid, userProfile?.email, test.id);
+
+    // Admins can test any mock test anytime; non-admin users must pay for premium tests
+    if (!isAdmin && !isFree && !isPurchased) {
+      handleBuyMockTest(test);
+      return;
+    }
+
     setActiveMockTest(test);
     setCurrentScreen('mock-test-cbt');
     if (window.location.pathname !== '/mock-tests/cbt') {
@@ -684,6 +706,7 @@ export default function App() {
             <div className="p-3.5 sm:p-6 pb-16">
               <MockTestsListingView
                 userProfile={userProfile}
+                isAdmin={isAdmin}
                 onStartTest={handleStartMockTest}
                 onViewResult={(test, attempt) => {
                   setActiveMockTest(test);

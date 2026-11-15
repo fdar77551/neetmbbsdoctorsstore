@@ -285,7 +285,45 @@ export type MockTestType =
   | 'pyq_based' 
   | 'custom';
 
-export type MockTestCategory = 'chapter_wise' | 'full_subject' | 'full_syllabus';
+export type MockTestCategory =
+  | 'chapter_wise'
+  | 'full_subject'
+  | 'full_syllabus'
+  | 'cbt_mock'
+  | 'pyq'
+  | 'custom_practice'
+  | (string & {});
+
+export type TestCategoryThemePreset =
+  | 'blue'
+  | 'purple'
+  | 'amber'
+  | 'emerald'
+  | 'rose'
+  | 'indigo'
+  | 'violet'
+  | 'cyan'
+  | 'teal'
+  | 'slate';
+
+export type TestVisibility = 'public' | 'unlisted' | 'draft';
+
+export interface TestCategory {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  bannerImageUrl?: string;
+  themePreset?: TestCategoryThemePreset;
+  displayOrder: number;
+  isVisible: boolean;
+  isDefault: boolean;
+  badgeText?: string;
+  accentTags?: string[];
+  ctaText?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export type MockSubject = 'Physics' | 'Chemistry' | 'Biology';
 
@@ -317,6 +355,12 @@ export interface MockMatchTable {
   rows: MockMatchTableRow[];
 }
 
+export interface MockStructuredTable {
+  headers: string[];
+  rows: string[][];
+  caption?: string;
+}
+
 export interface MockQuestionLanguageContent {
   questionText: string;
   options: MockQuestionOption[];
@@ -324,11 +368,12 @@ export interface MockQuestionLanguageContent {
   explanationImageUrl?: string;
   figureUrl?: string;
   matchTable?: MockMatchTable;
+  structuredTable?: MockStructuredTable;
 }
 
 export interface MockQuestion {
   id: string;
-  testId: string;
+  testId?: string;
   questionNumber: number;
   subject: MockSubject;
   chapter?: string;
@@ -338,18 +383,25 @@ export interface MockQuestion {
     en: MockQuestionLanguageContent;
     hi?: MockQuestionLanguageContent;
   };
-  // Match-the-column table
+  // Match-the-column table & structured data table
   matchTable?: MockMatchTable;
+  structuredTable?: MockStructuredTable;
   // Figures
   figures?: string[];
   figureUrl?: string;
   questionImageUrl?: string; // Backwards-compatible alias for primary figure
-  // Legacy aliases for English text & options for backwards compatibility
+  hasFigure?: boolean;
+  sourcePageNumber?: number;
   questionText: string;
   options: MockQuestionOption[];
   explanation?: string;
   explanationImageUrl?: string;
   questionContent?: MockQuestionContentBlock[];
+  // Diagram hints & cropping flags for admin phone-gallery workflow
+  needsDiagramCrop?: boolean;
+  diagramHint?: string;
+  figureDescription?: string;
+  optionsWithFigures?: any;
   // Option figures (e.g. chemical structures for A, B, C, D)
   optionFigures?: {
     A?: string;
@@ -358,6 +410,7 @@ export interface MockQuestion {
     D?: string;
   };
   correctAnswer: 'A' | 'B' | 'C' | 'D';
+  answerStatus?: 'matched' | 'answer_missing' | 'manual' | 'inferred';
   marks?: number;
   negativeMarks?: number;
   pdfPageNumber?: number;
@@ -365,6 +418,9 @@ export interface MockQuestion {
     box?: number[];
     pageNumber?: number;
     cropUrl?: string;
+    isManualCrop?: boolean;
+    confidence?: number;
+    label?: string;
   };
   sourceMetadata?: {
     pdfId?: string;
@@ -378,6 +434,12 @@ export interface MockQuestion {
   };
   needsReview?: boolean;
   reviewReason?: string;
+  validationStatus?: 'verified' | 'needs_review' | 'failed';
+  validationIssues?: string[];
+  stem?: {
+    en?: string;
+    hi?: string;
+  };
 }
 
 export interface MockTest {
@@ -390,8 +452,14 @@ export interface MockTest {
   fullDescription?: string;
   folderId?: string;
   folderName?: string;
-  testTypeCategory?: MockTestCategory; // 'chapter_wise' | 'full_subject' | 'full_syllabus'
-  subject?: MockSubject; // 'Physics' | 'Chemistry' | 'Biology'
+  testTypeCategory?: MockTestCategory; // Legacy / primary category slug
+  categoryIds?: string[]; // Dynamic multi-category assignments
+  isStandalone?: boolean; // Published independently without category listing
+  visibility?: 'public' | 'unlisted' | 'draft';
+  sourceJobId?: string; // Back-link to Parser 2.0/3.0 job
+  thumbnailUrl?: string;
+  language?: 'en' | 'hi' | 'bilingual';
+  subject?: MockSubject | 'Combined'; // 'Physics' | 'Chemistry' | 'Biology' | 'Combined'
   chapter?: string; // Chapter name (e.g. "Laws of Motion", "Chemical Bonding")
   orderIndex?: number;
   type: MockTestType;
@@ -405,6 +473,7 @@ export interface MockTest {
   price: number; // e.g. 99 (0 for free)
   isFree?: boolean;
   isPaid?: boolean;
+  isPurchased?: boolean;
   originalPrice?: number; // e.g. 299
   discountedPrice?: number;
   razorpayPlanId?: string;
@@ -418,6 +487,7 @@ export interface MockTest {
   allowMultipleAttempts: boolean;
   showLeaderboard: boolean;
   createdAt: string;
+  updatedAt?: string;
   startDate?: string;
   endDate?: string;
   scheduledAt?: string;

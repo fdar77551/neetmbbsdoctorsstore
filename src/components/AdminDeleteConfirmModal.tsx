@@ -8,7 +8,8 @@ interface AdminDeleteConfirmModalProps {
   itemType?: string; // 'test' | 'question' | 'pdf' | 'product' | 'review' | 'coupon' | 'course' | string
   warningText?: string;
   onConfirm: () => void;
-  onCancel: () => void;
+  onCancel?: () => void;
+  onClose?: () => void;
   isDeleting?: boolean;
 }
 
@@ -20,9 +21,18 @@ export const AdminDeleteConfirmModal: React.FC<AdminDeleteConfirmModalProps> = (
   warningText,
   onConfirm,
   onCancel,
+  onClose,
   isDeleting = false
 }) => {
   const [inputWord, setInputWord] = useState('');
+
+  const handleDismiss = () => {
+    if (onCancel) {
+      onCancel();
+    } else if (onClose) {
+      onClose();
+    }
+  };
 
   // Reset input when opened
   useEffect(() => {
@@ -31,9 +41,21 @@ export const AdminDeleteConfirmModal: React.FC<AdminDeleteConfirmModalProps> = (
     }
   }, [isOpen]);
 
+  // Support closing with Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleDismiss();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onCancel, onClose]);
+
   if (!isOpen) return null;
 
-  const isDeleteMatched = inputWord.trim() === 'delete';
+  const isDeleteMatched = inputWord.trim().toLowerCase() === 'delete';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,7 +68,7 @@ export const AdminDeleteConfirmModal: React.FC<AdminDeleteConfirmModalProps> = (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-150">
       <div 
         className="fixed inset-0"
-        onClick={onCancel}
+        onClick={handleDismiss}
       />
       <div 
         className="relative bg-white rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl border border-rose-200 space-y-4 animate-in zoom-in-95 duration-200"
@@ -58,8 +80,9 @@ export const AdminDeleteConfirmModal: React.FC<AdminDeleteConfirmModalProps> = (
           </div>
           <button 
             type="button" 
-            onClick={onCancel}
+            onClick={handleDismiss}
             className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+            aria-label="Close delete dialog"
           >
             <X className="w-5 h-5" />
           </button>
@@ -108,7 +131,7 @@ export const AdminDeleteConfirmModal: React.FC<AdminDeleteConfirmModalProps> = (
           <div className="grid grid-cols-2 gap-2.5 pt-2">
             <button
               type="button"
-              onClick={onCancel}
+              onClick={handleDismiss}
               className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
             >
               Cancel

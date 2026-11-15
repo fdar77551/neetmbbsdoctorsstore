@@ -57,7 +57,7 @@ import {
   Crown,
   FolderOpen
 } from 'lucide-react';
-import { Product, Order, UserProfile, ProductType, OrderStatus, BannerSlide, SupportMessage, StoreConfig, NeetSubject, NeetMaterialType, UserNeetPass, NeetPassPlan, NeetPassSubjectKey, CloudflareR2Config } from '../types';
+import { Product, Order, UserProfile, ProductType, OrderStatus, BannerSlide, SupportMessage, StoreConfig, NeetSubject, NeetMaterialType, UserNeetPass, NeetPassPlan, NeetPassSubjectKey, CloudflareR2Config, MockTest, MockQuestion, MockTestType } from '../types';
 import { 
   addProduct, 
   updateProduct, 
@@ -105,7 +105,10 @@ import { AdminFullCourseManager } from './AdminFullCourseManager';
 import { AdminCouponManager } from './AdminCouponManager';
 import { AdminReviewManager } from './AdminReviewManager';
 import { AdminDeleteConfirmModal } from './AdminDeleteConfirmModal';
+import { AdminTestCategoriesManager } from './AdminTestCategoriesManager';
 import { FULL_FIRESTORE_RULES, FULL_REALTIME_DATABASE_RULES } from '../lib/firebaseRulesContent';
+import { getStoredMockTests, saveStoredMockTests, saveStoredMockQuestions } from '../lib/mockTestData';
+import { Parser2Dashboard } from './parser2/Parser2Dashboard';
 
 interface AdminPanelProps {
   products: Product[];
@@ -124,7 +127,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onOpenPdfReader,
   adminEmail
 }) => {
-  const [adminTab, setAdminTab] = useState<'products' | 'mock-tests' | 'banners' | 'orders' | 'order-search' | 'support' | 'users' | 'store-settings' | 'storage' | 'neet-passes' | 'full-course' | 'coupons' | 'reviews'>('products');
+  const [adminTab, setAdminTab] = useState<'products' | 'mock-tests' | 'test-categories' | 'parser-2' | 'banners' | 'orders' | 'order-search' | 'support' | 'users' | 'store-settings' | 'storage' | 'neet-passes' | 'full-course' | 'coupons' | 'reviews'>('products');
   const [orderSubTab, setOrderSubTab] = useState<OrderStatus>('new');
   
   // Store & Support Configuration State
@@ -172,6 +175,114 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [passMaterialFeedback, setPassMaterialFeedback] = useState<string | null>(null);
   const [passMaterialsFilter, setPassMaterialsFilter] = useState<'all' | 'biology' | 'chemistry' | 'physics' | 'pcb' | 'free'>('all');
   const [passMaterialsSearch, setPassMaterialsSearch] = useState('');
+
+  // Global Persistent Background AI Parse Job State (Across All Admin Sections)
+  const [activeServerParseJob, setActiveServerParseJob] = useState<any | null>(null);
+  const [completedJobReviewOpen, setCompletedJobReviewOpen] = useState<any | null>(null);
+  const [reviewSavePrice, setReviewSavePrice] = useState<number>(0);
+  const [reviewSaveIsFree, setReviewSaveIsFree] = useState<boolean>(true);
+  const [reviewSaveTestTitle, setReviewSaveTestTitle] = useState<string>('');
+  const [reviewSaveCategory, setReviewSaveCategory] = useState<MockTestType>('full_syllabus');
+  const [reviewLanguageMode, setReviewLanguageMode] = useState<'bilingual' | 'en' | 'hi'>('bilingual');
+  const [isSavingParsedQuestions, setIsSavingParsedQuestions] = useState<boolean>(false);
+  const [saveJobFeedback, setSaveJobFeedback] = useState<string | null>(null);
+
+  // Continuously track active background parse jobs so AI parsing continues across all sections
+  useEffect(() => {
+    let isMounted = true;
+    const pollJob = async () => {
+      try {
+        const savedJobId = localStorage.getItem('neet_active_parse_job_id');
+        if (savedJobId) {
+          const res = await fetch(`/api/ai/parse-job/status/${savedJobId}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.job && isMounted) {
+              const isDismissed = localStorage.getItem(`neet_job_dismissed_${savedJobId}`);
+              if (!isDismissed || data.job.status === 'processing') {
+                setActiveServerParseJob(data.job);
+              }
+            }
+          }
+        } else {
+          const res = await fetch('/api/ai/parse-job/active');
+          if (res.ok) {
+            const data = await res.json();
+            if (data.activeJobs && data.activeJobs.length > 0 && isMounted) {
+              const running = data.activeJobs.find((j: any) => j.status === 'processing' || j.status === 'queued');
+              if (running) {
+                setActiveServerParseJob(running);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('AdminPanel parse job poll note:', e);
+      }
+    };
+    pollJob();
+    const interval = setInterval(pollJob, 3000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handleOpenJobReview = (job: any) => {
+    setCompletedJobReviewOpen(job);
+    setReviewSaveTestTitle(job.testTitle || 'NEET Practice Mock Test');
+    setReviewSaveIsFree(job.isFree ?? (job.testPrice === 0));
+    setReviewSavePrice(job.testPrice || 0);
+    setReviewSaveCategory(job.testCategory || 'full_syllabus');
+  };
+
+  const handleSaveCompletedJob = async () => {
+    if (!completedJobReviewOpen) return;
+    setIsSavingParsedQuestions(true);
+    try {
+      const res = await fetch(`/api/ai/parse-job/save-to-test/${completedJobReviewOpen.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          testTitle: reviewSaveTestTitle || completedJobReviewOpen.testTitle,
+          isFree: reviewSaveIsFree,
+          price: reviewSaveIsFree ? 0 : reviewSavePrice,
+          testCategory: reviewSaveCategory
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (data.test) {
+          const currentTests = getStoredMockTests();
+          const existIdx = currentTests.findIndex(t => t.id === data.test.id);
+          let updatedTests: MockTest[];
+          if (existIdx > -1) {
+            updatedTests = [...currentTests];
+            updatedTests[existIdx] = data.test;
+          } else {
+            updatedTests = [data.test, ...currentTests];
+          }
+          saveStoredMockTests(updatedTests);
+          if (completedJobReviewOpen.questions && completedJobReviewOpen.questions.length > 0) {
+            saveStoredMockQuestions(data.test.id, completedJobReviewOpen.questions);
+          }
+        }
+        localStorage.setItem(`neet_job_dismissed_${completedJobReviewOpen.id}`, 'true');
+        localStorage.removeItem('neet_active_parse_job_id');
+        setActiveServerParseJob(null);
+        setCompletedJobReviewOpen(null);
+        setSaveJobFeedback(`✓ Successfully saved ${completedJobReviewOpen.questions?.length || 0} questions to "${reviewSaveTestTitle}"!`);
+        setTimeout(() => setSaveJobFeedback(null), 4000);
+        setAdminTab('mock-tests');
+      } else {
+        alert('Failed saving questions: ' + (data.error || 'Server error'));
+      }
+    } catch (err: any) {
+      alert('Error saving questions: ' + err.message);
+    } finally {
+      setIsSavingParsedQuestions(false);
+    }
+  };
 
   const handlePassPdfFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1440,7 +1551,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   return (
-    <div className={`p-2 sm:p-4 space-y-4 pb-48 mx-auto min-h-screen ${adminTab === 'mock-tests' ? 'max-w-7xl w-full' : 'max-w-md'}`}>
+    <div className={`p-2 sm:p-4 space-y-4 pb-48 mx-auto min-h-screen ${adminTab === 'mock-tests' || adminTab === 'parser-2' || adminTab === 'test-categories' ? 'max-w-7xl w-full' : 'max-w-md'}`}>
       {/* Admin Header */}
       <div className="bg-slate-900 text-white p-4 rounded-2xl shadow-lg border border-slate-800 space-y-3">
         <div className="flex justify-between items-start">
@@ -1499,19 +1610,431 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       </div>
 
-      {/* Tabs Navigation (10 Core Sections) */}
-      <div className="grid grid-cols-5 sm:grid-cols-10 gap-1 bg-slate-100 p-1 rounded-xl text-[9px] font-bold sticky top-14 z-30 shadow-xs">
+      {/* Global Background AI Parsing Feedback Banner */}
+      {saveJobFeedback && (
+        <div className="p-3 bg-emerald-600 text-white text-xs font-bold rounded-2xl shadow-md flex items-center justify-between gap-2 animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-200 shrink-0" />
+            <span>{saveJobFeedback}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSaveJobFeedback(null)}
+            className="p-1 hover:bg-emerald-700 rounded-lg text-emerald-100"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Persistent Background AI Parse Job Status Banner (Visible across ALL Admin sections) */}
+      {activeServerParseJob && (
+        <div className="animate-in fade-in duration-200">
+          {activeServerParseJob.status === 'processing' && (
+            <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white p-3.5 sm:p-4 rounded-2xl shadow-lg border border-blue-700/60 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-blue-500/20 border border-blue-400/40 flex items-center justify-center shrink-0">
+                  <Loader2 className="w-5 h-5 animate-spin text-blue-300" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                    <h4 className="text-xs sm:text-sm font-black text-white">
+                      AI PDF Parsing Running in Background: {activeServerParseJob.testTitle}
+                    </h4>
+                    <span className="text-[10px] font-bold bg-blue-500/30 text-blue-200 px-2 py-0.5 rounded-full border border-blue-400/30">
+                      Page {activeServerParseJob.currentPage || 1} of {activeServerParseJob.totalPages || 1}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-blue-200 mt-0.5">
+                    {activeServerParseJob.statusMessage || 'Analyzing questions, cropping authentic diagrams & structuring tables...'}
+                    {' • '}{activeServerParseJob.questionsCount || 0} Questions &amp; {activeServerParseJob.figuresCount || 0} Diagrams Found
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 justify-between md:justify-end">
+                <div className="w-24 sm:w-32 h-2 bg-blue-950/80 rounded-full overflow-hidden border border-blue-700/60">
+                  <div 
+                    className="h-full bg-gradient-to-r from-blue-400 to-emerald-400 transition-all duration-300"
+                    style={{ width: `${Math.min(100, Math.max(5, activeServerParseJob.progress || 10))}%` }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAdminTab('mock-tests')}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition cursor-pointer"
+                >
+                  View in Tests →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {activeServerParseJob.status === 'completed' && (
+            <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 text-white p-3.5 sm:p-4 rounded-2xl shadow-xl border border-emerald-500/50 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center shrink-0">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-300" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <h4 className="text-xs sm:text-sm font-black text-white">
+                      ✓ AI PDF Parsing Complete! {activeServerParseJob.questionsCount || activeServerParseJob.questions?.length || 0} Questions Ready
+                    </h4>
+                    <span className="text-[10px] font-bold bg-emerald-500/30 text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-400/30">
+                      {activeServerParseJob.figuresCount || 0} Diagrams Cropped
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-emerald-200 mt-0.5">
+                    Document "{activeServerParseJob.testTitle}" parsed with authentic diagrams, bilingual text &amp; match tables.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 justify-between md:justify-end">
+                <button
+                  type="button"
+                  onClick={() => handleOpenJobReview(activeServerParseJob)}
+                  className="px-4 py-2 bg-gradient-to-r from-emerald-400 to-teal-400 hover:from-emerald-300 hover:to-teal-300 text-slate-950 text-xs font-black rounded-xl shadow-md transition cursor-pointer flex items-center gap-1.5 active:scale-98"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Review &amp; Save Questions to Test →</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.setItem(`neet_job_dismissed_${activeServerParseJob.id}`, 'true');
+                    setActiveServerParseJob(null);
+                  }}
+                  className="p-1.5 text-emerald-300 hover:text-white rounded-lg hover:bg-emerald-800/40 transition cursor-pointer"
+                  title="Dismiss notification"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Review & Save Questions Modal (Full Preview of All Questions, Diagrams, Tables, and Free/Paid selector) */}
+      {completedJobReviewOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit',sans-serif]">
+                    Review &amp; Save Digitized Questions ({completedJobReviewOpen.questions?.length || 0} Questions)
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Verify extracted questions, diagrams, match tables, and select whether this test is Free or Paid.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCompletedJobReviewOpen(null)}
+                className="p-2 hover:bg-slate-200 rounded-xl text-slate-500 hover:text-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Test Configuration Strip (Title, Category, Free vs Paid) */}
+            <div className="p-4 bg-blue-50/60 border-b border-blue-200/60 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                <div className="sm:col-span-6">
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Test Title *</label>
+                  <input
+                    type="text"
+                    value={reviewSaveTestTitle}
+                    onChange={e => setReviewSaveTestTitle(e.target.value)}
+                    className="w-full text-xs font-bold text-slate-900 bg-white border border-slate-300 rounded-xl p-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="e.g. NEET Grand Mock Test 01"
+                  />
+                </div>
+
+                <div className="sm:col-span-3">
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Category *</label>
+                  <select
+                    value={reviewSaveCategory}
+                    onChange={e => setReviewSaveCategory(e.target.value as MockTestType)}
+                    className="w-full text-xs font-bold text-slate-900 bg-white border border-slate-300 rounded-xl p-2 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                  >
+                    <option value="chapter_wise">1️⃣ Chapter Wise</option>
+                    <option value="full_subject">2️⃣ Full Subject</option>
+                    <option value="full_syllabus">3️⃣ Full Syllabus (PCB)</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-3">
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Language Display</label>
+                  <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setReviewLanguageMode('bilingual')}
+                      className={`flex-1 py-1 text-[10px] font-bold rounded-lg transition ${
+                        reviewLanguageMode === 'bilingual' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      Bilingual
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReviewLanguageMode('en')}
+                      className={`flex-1 py-1 text-[10px] font-bold rounded-lg transition ${
+                        reviewLanguageMode === 'en' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      EN
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReviewLanguageMode('hi')}
+                      className={`flex-1 py-1 text-[10px] font-bold rounded-lg transition ${
+                        reviewLanguageMode === 'hi' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      HI
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Crucial: Free Practice vs Paid Section Selector */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-blue-200/40">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-800">Access Mode:</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReviewSaveIsFree(true);
+                        setReviewSavePrice(0);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase transition cursor-pointer border ${
+                        reviewSaveIsFree
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                          : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      🎁 Free Practice (Sample Section)
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReviewSaveIsFree(false);
+                        if (reviewSavePrice === 0) setReviewSavePrice(99);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase transition cursor-pointer border ${
+                        !reviewSaveIsFree
+                          ? 'bg-purple-600 text-white border-purple-600 shadow-2xs'
+                          : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      🔒 Paid Test (Purchase Section)
+                    </button>
+                  </div>
+                </div>
+
+                {!reviewSaveIsFree && (
+                  <div className="flex items-center gap-2 animate-in fade-in">
+                    <label className="text-xs font-bold text-slate-700">Price (₹):</label>
+                    <input
+                      type="number"
+                      value={reviewSavePrice}
+                      onChange={e => setReviewSavePrice(Math.max(1, Number(e.target.value)))}
+                      className="w-24 text-xs font-black text-slate-900 bg-white border border-purple-400 rounded-xl p-1.5 focus:outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Questions Scroll Area */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 bg-slate-50/50">
+              {(completedJobReviewOpen.questions || []).map((q: any, idx: number) => {
+                const enText = q.languages?.en?.questionText || q.questionText || '';
+                const hiText = q.languages?.hi?.questionText || '';
+                const hasFig = Boolean(q.figureUrl || q.questionImageUrl || (q.figures && q.figures[0]));
+                const figSrc = q.figureUrl || q.questionImageUrl || (q.figures && q.figures[0]);
+                const matchTbl = q.matchTable || q.languages?.en?.matchTable || q.languages?.hi?.matchTable;
+
+                return (
+                  <div key={idx} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-lg bg-blue-100 text-blue-800 text-xs font-black flex items-center justify-center">
+                          {q.questionNumber || idx + 1}
+                        </span>
+                        <span className="text-xs font-bold text-slate-700">
+                          {q.subject || 'Subject'} {q.chapter ? `• ${q.chapter}` : ''}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {hasFig && (
+                          <span className="text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full">
+                            📷 Authentic Diagram Attached
+                          </span>
+                        )}
+                        {matchTbl && (
+                          <span className="text-[10px] font-bold bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded-full">
+                            📊 Match Table
+                          </span>
+                        )}
+                        <span className="text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full">
+                          Ans: ({q.correctAnswer || 'A'})
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Question Statement */}
+                    <div className="space-y-2">
+                      {(reviewLanguageMode === 'bilingual' || reviewLanguageMode === 'en') && enText && (
+                        <div>
+                          {reviewLanguageMode === 'bilingual' && (
+                            <span className="text-[9px] font-black uppercase text-blue-600 block mb-0.5">English</span>
+                          )}
+                          <p className="text-xs sm:text-sm font-semibold text-slate-900 leading-relaxed whitespace-pre-line">
+                            {enText}
+                          </p>
+                        </div>
+                      )}
+
+                      {(reviewLanguageMode === 'bilingual' || reviewLanguageMode === 'hi') && hiText && (
+                        <div className="pt-1 border-t border-slate-100">
+                          {reviewLanguageMode === 'bilingual' && (
+                            <span className="text-[9px] font-black uppercase text-emerald-700 block mb-0.5">हिंदी (Devanagari)</span>
+                          )}
+                          <p className="text-xs sm:text-sm font-semibold text-slate-800 leading-relaxed whitespace-pre-line">
+                            {hiText}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* High-Resolution Diagram Preview */}
+                    {hasFig && figSrc && (
+                      <div className="my-2 p-2 bg-slate-50 border border-slate-200 rounded-xl inline-block">
+                        <span className="text-[9.5px] font-bold text-slate-500 block mb-1">Extracted Diagram:</span>
+                        <img
+                          src={figSrc}
+                          alt={`Diagram Q${q.questionNumber || idx + 1}`}
+                          className="max-h-48 rounded-lg object-contain bg-white border border-slate-200"
+                        />
+                      </div>
+                    )}
+
+                    {/* Structured Match-the-Column Table */}
+                    {matchTbl && matchTbl.rows && matchTbl.rows.length > 0 && (
+                      <div className="my-2 max-w-lg overflow-hidden rounded-xl border border-slate-300 bg-white shadow-2xs">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-slate-100 border-b border-slate-300 text-slate-800 font-bold">
+                              <th className="py-1.5 px-3 border-r border-slate-300 w-1/2">{matchTbl.column1Header || 'Column-I'}</th>
+                              <th className="py-1.5 px-3 w-1/2">{matchTbl.column2Header || 'Column-II'}</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200">
+                            {matchTbl.rows.map((r: any, rIdx: number) => (
+                              <tr key={rIdx} className={rIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70'}>
+                                <td className="py-1.5 px-3 border-r border-slate-200 font-medium">
+                                  <span className="font-bold text-blue-700 mr-2">{r.leftKey}</span>
+                                  <span className="text-slate-900">{r.leftText}</span>
+                                </td>
+                                <td className="py-1.5 px-3 font-medium">
+                                  <span className="font-bold text-indigo-700 mr-2">{r.rightKey}</span>
+                                  <span className="text-slate-900">{r.rightText}</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Options (A, B, C, D) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-xs">
+                      {(q.options || []).map((opt: any, oIdx: number) => (
+                        <div
+                          key={oIdx}
+                          className={`p-2 rounded-xl border flex items-center gap-2 ${
+                            (opt.label || String.fromCharCode(65 + oIdx)).toUpperCase() === (q.correctAnswer || 'A').toUpperCase()
+                              ? 'bg-emerald-50 border-emerald-400 text-emerald-950 font-bold'
+                              : 'bg-white border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          <span className="font-black text-slate-800 w-5 shrink-0">
+                            ({opt.label || String.fromCharCode(65 + oIdx)})
+                          </span>
+                          <span className="truncate">{opt.text || opt.value || `Option (${opt.label})`}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="text-xs text-slate-600 font-medium">
+                Total <span className="font-black text-slate-900">{completedJobReviewOpen.questions?.length || 0}</span> questions ready to save.
+                Marks: {((completedJobReviewOpen.questions?.length || 0) * 4)}M
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCompletedJobReviewOpen(null)}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSavingParsedQuestions}
+                  onClick={handleSaveCompletedJob}
+                  className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 text-white text-xs font-black rounded-xl shadow-md transition cursor-pointer flex items-center gap-2"
+                >
+                  {isSavingParsedQuestions ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Saving Questions...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Save All {completedJobReviewOpen.questions?.length || 0} Questions to Test</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tabs Navigation (Single-row compact scrollable strip on mobile so header never overlaps workspace) */}
+      <div className="flex items-center gap-1 overflow-x-auto bg-slate-100 p-1 rounded-xl text-[11px] font-bold sticky top-14 z-20 shadow-xs scrollbar-none">
         <button
           onClick={() => setAdminTab('products')}
-          className={`py-2 rounded-lg text-center transition cursor-pointer ${
-            adminTab === 'products' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
+            adminTab === 'products' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           Catalog
         </button>
         <button
           onClick={() => setAdminTab('mock-tests')}
-          className={`py-2 rounded-lg text-center transition cursor-pointer ${
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
             adminTab === 'mock-tests' ? 'bg-blue-600 text-white shadow-2xs font-black' : 'text-slate-600 hover:text-blue-600 hover:bg-blue-50/50'
           }`}
           title="NEET CBT Mock Tests, Question Bank & Diagram Crop"
@@ -1519,12 +2042,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           📝 Tests
         </button>
         <button
+          onClick={() => setAdminTab('test-categories')}
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
+            adminTab === 'test-categories' ? 'bg-indigo-600 text-white shadow-2xs font-black' : 'text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/50'
+          }`}
+          title="Manage Test Categories & Assign Tests"
+        >
+          🗂 Categories
+        </button>
+        <button
+          onClick={() => setAdminTab('parser-2')}
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
+            adminTab === 'parser-2' ? 'bg-gradient-to-r from-blue-700 via-indigo-700 to-slate-900 text-white shadow-2xs font-black' : 'text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/50'
+          }`}
+          title="NCERTify AI Parser 2.0 (Mistral OCR + Gemini Multimodal + PyMuPDF)"
+        >
+          ⚡ Parser 2.0
+        </button>
+        <button
           onClick={() => {
             setAdminTab('neet-passes');
             setAllUserPasses(getUserNeetPasses());
           }}
-          className={`py-2 rounded-lg text-center transition cursor-pointer ${
-            adminTab === 'neet-passes' ? 'bg-amber-400 text-slate-950 shadow-2xs font-black' : 'text-slate-500 hover:text-slate-800'
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
+            adminTab === 'neet-passes' ? 'bg-amber-400 text-slate-950 shadow-2xs font-black' : 'text-slate-600 hover:text-slate-900'
           }`}
           title="NEET Success Pass & Memberships"
         >
@@ -1532,7 +2073,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </button>
         <button
           onClick={() => setAdminTab('full-course')}
-          className={`py-2 rounded-lg text-center transition cursor-pointer ${
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
             adminTab === 'full-course' ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-2xs font-black' : 'text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/50'
           }`}
           title="NEET (11th & 12th) Full Course & Google Drive Settings"
@@ -1541,29 +2082,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </button>
         <button
           onClick={() => setAdminTab('banners')}
-          className={`py-2 rounded-lg text-center transition cursor-pointer ${
-            adminTab === 'banners' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
+            adminTab === 'banners' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           Banners
         </button>
         <button
           onClick={() => setAdminTab('orders')}
-          className={`py-2 rounded-lg text-center relative transition cursor-pointer ${
-            adminTab === 'orders' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 relative transition cursor-pointer flex items-center gap-1 ${
+            adminTab === 'orders' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          Orders
+          <span>Orders</span>
           {pendingOrdersCount > 0 && (
-            <span className="absolute -top-1 right-0.5 bg-blue-600 text-white text-[7px] font-black px-1 rounded-full">
+            <span className="bg-blue-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
               {pendingOrdersCount}
             </span>
           )}
         </button>
         <button
           onClick={() => setAdminTab('order-search')}
-          className={`py-2 rounded-lg text-center relative transition cursor-pointer ${
-            adminTab === 'order-search' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
+            adminTab === 'order-search' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
           }`}
           title="Customer Support Order Lookup"
         >
@@ -1571,29 +2112,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </button>
         <button
           onClick={() => setAdminTab('support')}
-          className={`py-2 rounded-lg text-center relative transition cursor-pointer ${
-            adminTab === 'support' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 relative transition cursor-pointer flex items-center gap-1 ${
+            adminTab === 'support' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          Support
+          <span>Support</span>
           {unreadSupportCount > 0 && (
-            <span className="absolute -top-1 right-0.5 bg-rose-600 text-white text-[7px] font-black px-1 rounded-full animate-pulse">
+            <span className="bg-rose-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full animate-pulse">
               {unreadSupportCount}
             </span>
           )}
         </button>
         <button
           onClick={() => setAdminTab('users')}
-          className={`py-2 rounded-lg text-center transition cursor-pointer ${
-            adminTab === 'users' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
+            adminTab === 'users' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           Users
         </button>
         <button
           onClick={() => setAdminTab('store-settings')}
-          className={`py-2 rounded-lg text-center transition cursor-pointer ${
-            adminTab === 'store-settings' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
+            adminTab === 'store-settings' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
           }`}
           title="Store and Support Settings"
         >
@@ -1601,16 +2142,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </button>
         <button
           onClick={() => setAdminTab('storage')}
-          className={`py-2 rounded-lg text-center transition cursor-pointer ${
-            adminTab === 'storage' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
+            adminTab === 'storage' ? 'bg-white text-blue-600 shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           Cloud
         </button>
         <button
           onClick={() => setAdminTab('coupons')}
-          className={`py-2 rounded-lg text-center transition cursor-pointer ${
-            adminTab === 'coupons' ? 'bg-amber-500 text-white shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
+            adminTab === 'coupons' ? 'bg-amber-500 text-white shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
           }`}
           title="Coupon and Discount Management"
         >
@@ -1618,8 +2159,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </button>
         <button
           onClick={() => setAdminTab('reviews')}
-          className={`py-2 rounded-lg text-center transition cursor-pointer ${
-            adminTab === 'reviews' ? 'bg-indigo-600 text-white shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+          className={`px-3 min-h-[40px] rounded-lg text-center whitespace-nowrap shrink-0 transition cursor-pointer ${
+            adminTab === 'reviews' ? 'bg-indigo-600 text-white shadow-2xs font-extrabold' : 'text-slate-600 hover:text-slate-900'
           }`}
           title="Student Reviews & Star Ratings"
         >
@@ -1650,6 +2191,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               else setAdminTab('products');
             }}
           />
+        </div>
+      )}
+
+      {/* ================= MANAGE TEST CATEGORIES ================= */}
+      {adminTab === 'test-categories' && (
+        <div className="space-y-3">
+          <AdminTestCategoriesManager />
+        </div>
+      )}
+
+      {/* ================= NCERTify AI PARSER 2.0 (INDEPENDENT ENGINE) ================= */}
+      {adminTab === 'parser-2' && (
+        <div className="space-y-3">
+          <Parser2Dashboard />
         </div>
       )}
 

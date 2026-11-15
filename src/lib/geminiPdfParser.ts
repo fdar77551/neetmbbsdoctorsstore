@@ -1,6 +1,11 @@
 import { MockQuestion, MockSubject, MockTest, MockTestType } from '../types';
-import { cropRegionFromCanvas } from './pdfFigureExtractor';
-import { saveStoredMockQuestions, saveStoredMockTests, getStoredMockTests } from './mockTestData';
+import { cropRegionFromCanvas, extractColumnAwareTextFromPdfPage, renderPdfPageToCanvas } from './pdfFigureExtractor';
+import { saveStoredMockQuestions, saveStoredMockTests, getStoredMockTests, formatScientificMathAndPowers, cleanLeadingOptionMarker } from './mockTestData';
+
+// Global quota tracker to immediately skip repeated 429 delays once daily quota is exhausted
+let globalDailyQuotaExhausted = false;
+export function setDailyQuotaExhausted(val: boolean) { globalDailyQuotaExhausted = val; }
+export function isDailyQuotaExhausted() { return globalDailyQuotaExhausted; }
 
 export interface ParsedGeminiOption {
   label: string;
@@ -124,7 +129,8 @@ export function sanitizeExamText(text: string): string {
     // Remove isolated unprintable control characters
     .replace(/[\uFFFD\u0000-\u0008\u000B-\u000C\u000E-\u001F]/g, '')
     // Strip redundant leading numbering e.g. "44. " or "Q.44 " or "(44) "
-    .replace(/^(?:Q(?:uestion)?\.?\s*\d{1,3}\s*[:.\-)]\s*|\d{1,3}\s*[\.\:\)]\s*)/i, '')
+    // CRITICAL: (?!\d)\s+ lookahead ensures we NEVER strip '2.' from '2.0 × 10 m wide'!
+    .replace(/^(?:Q(?:uestion)?\.?\s*\d{1,3}\s*[:.\-)]\s*|\d{1,3}\s*[\.:](?!\d)\s+|\d{1,3}\)\s*)/i, '')
     // Normalize spaces
     .replace(/[ \t]+/g, ' ')
     .trim();
@@ -169,14 +175,14 @@ export function cleanQuestionTextForMatchTable(questionText: string, matchTable?
     .replace(/\|\s*:\s*-+[\s\-:|]*/g, '')
     .replace(/^\s*\|\s*$/gm, '');
 
-  if (!matchTable || !matchTable.rows || matchTable.rows.length === 0) {
+  if (!matchTable || !matchTable.rows || matchTable.rows.length < 2) {
     return sanitized.replace(/\n{3,}/g, '\n\n').trim();
   }
 
   let cleaned = sanitized;
 
-  // Pattern A: Match "Match List-I with List-II:" or "सूची-I को सूची-II से सुमेलित कीजिए:"
-  const promptPreambleMatch = cleaned.match(/^([\s\S]*?(?:Match\s+(?:List|Column)[\s\S]*?[:\.]|सूची\s*[-–—I1]\s*को\s*सूची[\s\S]*?[:\.]|कॉलम\s*[-–—I1]\s*को\s*कॉलम[\s\S]*?[:\.]))/i);
+  // Pattern A: Match "Match List-I with List-II:" or "Match the corresponding entries of... with..." or "सूची-I को सूची-II से सुमेलित कीजिए:"
+  const promptPreambleMatch = cleaned.match(/^([\s\S]*?(?:Match\s+(?:the\s+corresponding\s+entries|the\s+statements|List|Column|entries|items)[\s\S]*?(?:[\.\:\?]|(?=\n\s*(?:\(?[A-Da-d1-4]\)?|[a-zA-Z]+\s*[-–])))|सूची\s*[-–—I1]\s*को\s*सूची[\s\S]*?[:\.]|कॉलम\s*[-–—I1]\s*को\s*कॉलम[\s\S]*?[:\.]))/i);
   const closingInstructionMatch = cleaned.match(/((?:Choose\s+the\s+correct\s+answer|Select\s+the\s+correct\s+option|नीचे\s+दिए\s+गए\s+विकल्पों\s+में\s+से)[\s\S]*)$/i);
 
   if (promptPreambleMatch && promptPreambleMatch[1] && promptPreambleMatch[1].trim().length > 6) {
@@ -187,15 +193,18 @@ export function cleanQuestionTextForMatchTable(questionText: string, matchTable?
 
   // Pattern B: Remove rows matching leftText or rightText from matchTable
   for (const row of matchTable.rows) {
-    if (row.leftText && row.leftText.trim().length > 2) {
+    if (row.leftText && row.leftText.trim().length > 1) {
       const esc = row.leftText.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       cleaned = cleaned.replace(new RegExp(`(?:\\([a-zA-Z0-9ivx]+\\)\\s*)?${esc}`, 'gi'), '');
     }
-    if (row.rightText && row.rightText.trim().length > 2) {
+    if (row.rightText && row.rightText.trim().length > 1) {
       const esc = row.rightText.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       cleaned = cleaned.replace(new RegExp(`(?:\\([a-zA-Z0-9ivx]+\\)\\s*)?${esc}`, 'gi'), '');
     }
   }
+
+  // Remove lines that look like table row keys: "(A) ...", "(B) ...", "(a) ...", "(b) ...", "(1) ...", "(i) ..."
+  cleaned = cleaned.replace(/^\s*(?:\(?[A-Da-d1-4I-Vi-v]\)?|[A-Da-d1-4I-Vi-v][\.:])\s+.*$/gm, '');
 
   // Remove leftover empty column header fragments and orphan row keys
   cleaned = cleaned
@@ -247,8 +256,8 @@ export function cropDiagramFromCanvas(
   const h = ((ymax - ymin) / 1000) * canvas.height;
   const w = ((xmax - xmin) / 1000) * canvas.width;
 
-  // Add 28px optical margin around diagram to capture labels, subscripts, wire extensions, and bonds
-  const pad = 28;
+  // Add 45px optical margin around diagram to capture labels, subscripts, wire extensions, and bonds
+  const pad = 45;
   const cropX = Math.max(0, Math.round(x - pad));
   const cropY = Math.max(0, Math.round(y - pad));
   const cropW = Math.min(canvas.width - cropX, Math.round(w + pad * 2));
@@ -273,32 +282,25 @@ export function separateBilingualAndCleanQuestion(
   rawHiText?: string
 ): { enText: string; hiText?: string } {
   if (!rawEnText && !rawHiText) return { enText: '' };
+
+  // Explicit bilingual delimiter check e.g. "(हिंदी):"
+  const bilingualMatch = (rawEnText || '').match(/^([\s\S]*?)(?:\r?\n\s*\(हिंदी\)\s*:\s*|\s*\(हिंदी\)\s*:\s*)([\s\S]+)$/i);
+  if (bilingualMatch) {
+    const enPart = sanitizeExamText(bilingualMatch[1].trim());
+    const hiPart = repairDevanagariText(sanitizeExamText(bilingualMatch[2].trim()));
+    return {
+      enText: enPart,
+      hiText: hiPart
+    };
+  }
+
   const devanagariRegex = /[\u0900-\u097F]/g;
   const enDevMatches = (rawEnText || '').match(devanagariRegex) || [];
   const enTotal = (rawEnText || '').replace(/\s+/g, '').length;
   const enDevRatio = enTotal > 0 ? enDevMatches.length / enTotal : 0;
 
-  // Case 1: If "english" text is predominantly Devanagari Hindi characters (>35%)
-  if (enDevRatio > 0.35) {
-    const hiDevMatches = (rawHiText || '').match(devanagariRegex) || [];
-    // If rawHiText has content and less Hindi than rawEnText, swap them!
-    if (rawHiText && rawHiText.trim().length > 0 && hiDevMatches.length < enDevMatches.length) {
-      return {
-        enText: sanitizeExamText(rawHiText),
-        hiText: repairDevanagariText(sanitizeExamText(rawEnText))
-      };
-    } else if (!rawHiText || rawHiText.trim().length === 0) {
-      // If rawHiText is not present, NEVER leave enText blank!
-      const repaired = repairDevanagariText(sanitizeExamText(rawEnText));
-      return {
-        enText: repaired,
-        hiText: repaired
-      };
-    }
-  }
-
-  // Case 2: If English text contains both English and Hindi lines merged horizontally
-  if (enDevRatio > 0.08 && enTotal > 30) {
+  // If rawEnText has a mix of English and Devanagari lines or blocks
+  if (enDevMatches.length > 0) {
     const lines = (rawEnText || '').split(/\r?\n/);
     const enLines: string[] = [];
     const hiLines: string[] = [];
@@ -306,7 +308,7 @@ export function separateBilingualAndCleanQuestion(
     for (const line of lines) {
       const lineDevCount = (line.match(devanagariRegex) || []).length;
       const lineLen = line.replace(/\s+/g, '').length;
-      if (lineLen > 0 && lineDevCount / lineLen > 0.30) {
+      if (lineLen > 0 && lineDevCount / lineLen > 0.20) {
         hiLines.push(line);
       } else {
         enLines.push(line);
@@ -319,6 +321,35 @@ export function separateBilingualAndCleanQuestion(
       return {
         enText: sanitizeExamText(extractedEn),
         hiText: repairDevanagariText(sanitizeExamText(rawHiText ? `${rawHiText} ${extractedHi}` : extractedHi))
+      };
+    }
+
+    // Sentence-boundary split for inline English + Hindi: e.g. "English statement. हिंदी वाक्य।"
+    const inlineMatch = (rawEnText || '').match(/^([A-Za-z0-9\s.,!?:;()\-+*/=%<>μπελωθλ°√⇌→]+?)(?:[\.\?\!]\s+|\s{2,})([\u0900-\u097F][\s\S]+)$/);
+    if (inlineMatch && inlineMatch[1].trim().length > 10) {
+      const extractedEn = inlineMatch[1].trim();
+      const extractedHi = inlineMatch[2].trim();
+      return {
+        enText: sanitizeExamText(extractedEn),
+        hiText: repairDevanagariText(sanitizeExamText(rawHiText ? `${rawHiText} ${extractedHi}` : extractedHi))
+      };
+    }
+  }
+
+  // If "english" text is predominantly Devanagari Hindi characters (>40%)
+  if (enDevRatio > 0.40) {
+    const hiDevMatches = (rawHiText || '').match(devanagariRegex) || [];
+    // If rawHiText has English text, swap them!
+    if (rawHiText && rawHiText.trim().length > 0 && hiDevMatches.length < enDevMatches.length) {
+      return {
+        enText: sanitizeExamText(rawHiText),
+        hiText: repairDevanagariText(sanitizeExamText(rawEnText))
+      };
+    } else {
+      const repaired = repairDevanagariText(sanitizeExamText(rawEnText));
+      return {
+        enText: rawHiText && (rawHiText.match(devanagariRegex) || []).length < rawHiText.length * 0.3 ? sanitizeExamText(rawHiText) : '',
+        hiText: repaired
       };
     }
   }
@@ -344,14 +375,27 @@ export function separateBilingualOptions(
     const optObj = rawEnOptions.find(o => (o.label || '').toUpperCase() === lbl) || rawEnOptions[idx];
     let val = sanitizeExamText(optObj?.text || optObj?.value || '');
 
+    // If option is a match-the-column arrow pair e.g. "A -> c and d; B -> b and d", preserve verbatim!
+    if (/^[A-Da-d]\s*(?:->|→|-)\s*/i.test(val.trim())) {
+      return {
+        label: lbl,
+        type: 'text' as const,
+        value: formatScientificMathAndPowers(val.trim())
+      };
+    }
+
+    // Strip leading option numbers/labels while strictly protecting combinations like "(A) and (E) only"
+    val = cleanLeadingOptionMarker(val, lbl);
+
     // Check if this option has Devanagari characters
     const devMatches = (val.match(devanagariRegex) || []).length;
     const totalChars = val.replace(/\s+/g, '').length;
     if (totalChars > 0 && devMatches / totalChars > 0.4) {
       // Look if the corresponding Hindi option has English text to swap with
       const hiOpt = rawHiOptions.find(o => (o.label || '').toUpperCase() === lbl) || rawHiOptions[idx];
-      const hiVal = sanitizeExamText(hiOpt?.text || hiOpt?.value || '');
-      const hiDevMatches = (hiVal.match(devanagariRegex) || []).length;
+      let hiVal = sanitizeExamText(hiOpt?.text || hiOpt?.value || '');
+      hiVal = cleanLeadingOptionMarker(hiVal, lbl);
+      const hiDevMatches = (hiDevMatchesCount => hiDevMatchesCount)( (hiVal.match(devanagariRegex) || []).length );
       if (hiDevMatches === 0 && hiVal.length > 0) {
         val = hiVal;
       }
@@ -360,7 +404,7 @@ export function separateBilingualOptions(
     return {
       label: lbl,
       type: 'text' as const,
-      value: val
+      value: formatScientificMathAndPowers(val)
     };
   });
 
@@ -368,10 +412,22 @@ export function separateBilingualOptions(
     const optObj = rawHiOptions.find(o => (o.label || '').toUpperCase() === lbl) || rawHiOptions[idx];
     let val = optObj ? repairDevanagariText(sanitizeExamText(optObj?.text || optObj?.value || '')) : '';
 
+    if (/^[A-Da-d]\s*(?:->|→|-)\s*/i.test(val.trim())) {
+      return {
+        label: lbl,
+        type: 'text' as const,
+        value: formatScientificMathAndPowers(val.trim())
+      };
+    }
+
+    // Strip leading option numbers/labels while strictly protecting combinations like "(A) and (E) only"
+    val = cleanLeadingOptionMarker(val, lbl);
+
     // If Hindi option is empty, but English option was actually in Hindi, use it
     if (!val) {
       const enRaw = rawEnOptions.find(o => (o.label || '').toUpperCase() === lbl) || rawEnOptions[idx];
-      const rawVal = enRaw?.text || enRaw?.value || '';
+      let rawVal = enRaw?.text || enRaw?.value || '';
+      rawVal = cleanLeadingOptionMarker(rawVal, lbl);
       if ((rawVal.match(devanagariRegex) || []).length > 2) {
         val = repairDevanagariText(sanitizeExamText(rawVal));
       }
@@ -380,7 +436,7 @@ export function separateBilingualOptions(
     return {
       label: lbl,
       type: 'text' as const,
-      value: val
+      value: formatScientificMathAndPowers(val)
     };
   });
 
@@ -449,11 +505,12 @@ export function detectDiagramInkBoundingBoxOnCanvas(
       const absMinY = startY + minY;
       const absMaxY = startY + maxY;
 
-      // Convert back to 0-1000 normalized coordinates
-      const normYmin = Math.max(0, Math.round((absMinY / canvas.height) * 1000) - 15);
-      const normXmin = Math.max(0, Math.round((absMinX / canvas.width) * 1000) - 15);
-      const normYmax = Math.min(1000, Math.round((absMaxY / canvas.height) * 1000) + 15);
-      const normXmax = Math.min(1000, Math.round((absMaxX / canvas.width) * 1000) + 15);
+      // Convert back to 0-1000 normalized coordinates with generous padding
+      // so top supports, labels, tension vectors, and substituents are never clipped
+      const normYmin = Math.max(0, Math.round((absMinY / canvas.height) * 1000) - 35);
+      const normXmin = Math.max(0, Math.round((absMinX / canvas.width) * 1000) - 35);
+      const normYmax = Math.min(1000, Math.round((absMaxY / canvas.height) * 1000) + 35);
+      const normXmax = Math.min(1000, Math.round((absMaxX / canvas.width) * 1000) + 35);
 
       if (normYmax - normYmin > 20 && normXmax - normXmin > 20) {
         return [normYmin, normXmin, normYmax, normXmax];
@@ -548,15 +605,39 @@ export async function detectQuestionPaperPageRange(pdfDoc: any): Promise<{
     }
   }
 
+  let questionStartPage = 1;
+  if (totalPages >= 2) {
+    try {
+      const page1 = await pdfDoc.getPage(1);
+      const text1 = await page1.getTextContent();
+      const page1Str = text1.items.map((item: any) => item.str || '').join(' ');
+      const upper1 = page1Str.toUpperCase();
+      const hasFrontCoverKeywords = /\b(?:IMPORTANT\s+INSTRUCTIONS|GENERAL\s+INSTRUCTIONS|CANDIDATES?\s+ARE\s+REQUIRED|DO\s+NOT\s+OPEN\s+THIS|READ\s+THE\s+FOLLOWING\s+INSTRUCTIONS|महत्वपूर्ण\s*निर्देश)\b/i.test(upper1);
+      const options1Count = (page1Str.match(/\([1-4A-D]\)/g) || []).length;
+      const hasQ1Explicit = /\b(?:Q(?:uestion)?\.?\s*1\b|1[\.\:\-\)]|\(1\)|\(A\)|1\s+[A-Za-z\u0900-\u097F]{3,})/i.test(page1Str);
+      const hasSubjectHeaders = /\b(?:Physics|Chemistry|Biology|Botany|Zoology|Section|भौतिक|रसायन|जीव)\b/i.test(page1Str);
+      // Only skip Page 1 if it is an exclusively front-cover instruction sheet (>500 chars) with ZERO questions, options, or subjects
+      if (hasFrontCoverKeywords && options1Count === 0 && !hasQ1Explicit && !hasSubjectHeaders && page1Str.length > 500) {
+        questionStartPage = 2;
+      } else {
+        questionStartPage = 1;
+      }
+    } catch {
+      // fallback to 1
+    }
+  }
+
   const endCutoff = solutionStartPage || answerKeyPage;
   // If no pure solutions cutoff is found, default to scanning ALL pages so zero questions are lost!
-  const questionEndPage = (endCutoff && endCutoff > 3) ? Math.max(1, endCutoff - 1) : totalPages;
+  const questionEndPage = (endCutoff && endCutoff > 3) ? Math.max(questionStartPage, endCutoff - 1) : totalPages;
   const detectedSectionNotice = (endCutoff && endCutoff > 3 && endCutoff <= totalPages)
-    ? `Exam Questions detected on Pages 1–${questionEndPage}. (Dedicated Solutions/Answer Key on Page ${endCutoff})`
-    : `Full Exam Paper: All ${totalPages} pages selected to digitize all 200 NEET questions (Q1–Q200).`;
+    ? `Exam Questions detected on Pages ${questionStartPage}–${questionEndPage}. (Dedicated Solutions/Answer Key on Page ${endCutoff})`
+    : (questionStartPage > 1)
+      ? `Front cover/instructions detected on Page 1. Exam questions start on Page ${questionStartPage} through Page ${questionEndPage}.`
+      : `Full Exam Paper: All ${totalPages} pages selected to digitize all 200 NEET questions (Q1–Q200).`;
 
   return {
-    questionStartPage: 1,
+    questionStartPage,
     questionEndPage,
     solutionStartPage,
     answerKeyPage,
@@ -572,26 +653,35 @@ export async function sendPageToGeminiParser(
   pageImageBase64: string,
   pageNumber: number,
   totalPages?: number,
-  onRetryNotice?: (message: string) => void
-): Promise<{ questions: ParsedGeminiQuestion[]; modelUsed?: string }> {
+  onRetryNotice?: (message: string) => void,
+  parseMode?: 'fast_text_gallery_crop' | 'full_auto'
+): Promise<{ questions: ParsedGeminiQuestion[]; modelUsed?: string; isRateLimited?: boolean; isDailyQuota?: boolean }> {
   let lastError: any = null;
   const maxAttempts = 2;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      // 55-second timeout controller so a page never hangs indefinitely
+      // 45-second timeout controller so a page never hangs indefinitely
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 55000);
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+      const userCustomKey = typeof localStorage !== 'undefined' ? localStorage.getItem('user_gemini_api_key') : null;
+      const effectiveMode = parseMode || 'full_auto';
+      const shouldAutoCrop = effectiveMode === 'full_auto';
 
       const response = await fetch('/api/ai/parse-neet-page', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...(userCustomKey ? { 'x-gemini-api-key': userCustomKey } : {})
         },
         body: JSON.stringify({
           imageBase64: pageImageBase64,
           pageNumber,
-          totalPages
+          totalPages,
+          parseMode: effectiveMode,
+          autoCrop: shouldAutoCrop,
+          customApiKey: userCustomKey || undefined
         }),
         signal: controller.signal
       });
@@ -599,18 +689,57 @@ export async function sendPageToGeminiParser(
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({ error: 'Server error' }));
+        const isDemandOrQuota = Boolean(
+          response.status === 429 ||
+          response.status === 503 ||
+          errData.isRateLimited ||
+          errData.isDailyQuota ||
+          errData.isHighDemand ||
+          errData.error?.includes('high demand') ||
+          errData.error?.includes('503') ||
+          errData.error?.includes('spikes in demand') ||
+          errData.error?.includes('quota') ||
+          errData.error?.includes('RESOURCE_EXHAUSTED')
+        );
+
+        if (isDemandOrQuota && attempt < maxAttempts) {
+          onRetryNotice?.(`Demand surge on Page ${pageNumber}. Retrying in 1.5s with fallback model...`);
+          await new Promise(r => setTimeout(r, 1500));
+          continue;
+        }
+
+        if (isDemandOrQuota) {
+          console.log(`[Gemini Parser] Quota limit or demand surge on page ${pageNumber}. Returning vector text fallback for this page.`);
+          return {
+            questions: [],
+            modelUsed: 'High-Precision 2-Column Vector Text Engine',
+            isRateLimited: true,
+            isDailyQuota: true
+          };
+        }
         const rawErrMsg = errData.error || `Failed to parse page ${pageNumber} (HTTP ${response.status})`;
         const err: any = new Error(rawErrMsg);
         err.status = response.status;
-        err.isRateLimited = response.status === 429 || Boolean(errData.isRateLimited);
-        err.retryAfterSeconds = errData.retryAfterSeconds || 18;
         throw err;
       }
 
       const data = await response.json();
+      if (!data.success && (data.isRateLimited || data.isDailyQuota || data.isHighDemand || data.error?.includes('high demand') || data.error?.includes('503'))) {
+        if (attempt < maxAttempts) {
+          await new Promise(r => setTimeout(r, 1500));
+          continue;
+        }
+        return {
+          questions: [],
+          modelUsed: 'High-Precision 2-Column Vector Text Engine',
+          isRateLimited: true,
+          isDailyQuota: true
+        };
+      }
+
       return {
         questions: data.questions || [],
-        modelUsed: data.modelUsed || 'gemini-3.1-flash-lite'
+        modelUsed: data.modelUsed || 'gemini-3.8-flash'
       };
     } catch (err: any) {
       lastError = err;
@@ -620,8 +749,30 @@ export async function sendPageToGeminiParser(
         err?.status === 429 ||
         errMsg.includes('429') ||
         errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes('Quota exceeded') ||
         errMsg.includes('quota') ||
         errMsg.includes('rate limit');
+      const isHighDemand =
+        Boolean(err?.isHighDemand) ||
+        err?.status === 503 ||
+        errMsg.includes('503') ||
+        errMsg.includes('high demand') ||
+        errMsg.includes('spikes in demand');
+
+      if ((isQuota || isHighDemand) && attempt < maxAttempts) {
+        await new Promise(r => setTimeout(r, 1500));
+        continue;
+      }
+
+      if (isQuota || isHighDemand || err?.isDailyQuota || errMsg.includes('per day') || errMsg.includes('GenerateRequestsPerDay')) {
+        console.warn(`[Gemini Parser] Notice on page ${pageNumber}. Using vector fallback for this page.`);
+        return {
+          questions: [],
+          modelUsed: 'High-Precision 2-Column Vector Text Engine',
+          isRateLimited: true,
+          isDailyQuota: true
+        };
+      }
 
       const isTransient =
         isQuota ||
@@ -665,7 +816,13 @@ export async function sendPageToGeminiParser(
     }
   }
 
-  throw lastError || new Error(`Failed to parse page ${pageNumber}`);
+  console.log(`[Gemini Parser] Page ${pageNumber} returning vector fallback after retry cycle.`);
+  return {
+    questions: [],
+    modelUsed: 'High-Precision 2-Column Vector Text Engine',
+    isRateLimited: true,
+    isDailyQuota: true
+  };
 }
 
 export interface SolutionParseResult {
@@ -712,37 +869,50 @@ export async function parseSolutionsAndKeyFromPdf(
   const numPages = pdfDoc.numPages;
   let fullDocText = '';
 
-  // 1. Extract text from all pages of the solutions PDF with preserved line structure
+  // 1. Extract text from all pages of the solutions PDF respecting column boundaries
   for (let p = 1; p <= numPages; p++) {
     if (onProgress) onProgress(`Reading text layer from Page ${p} of ${numPages}...`);
     try {
       const page = await pdfDoc.getPage(p);
-      const textContent = await page.getTextContent();
-      let pageText = '';
-      let lastY: number | null = null;
-      for (const it of (textContent.items || []) as any[]) {
-        const itemY = it.transform?.[5];
-        if (lastY !== null && itemY !== undefined && Math.abs(itemY - lastY) > 5) {
-          pageText += '\n';
-        } else if (it.hasEOL) {
-          pageText += '\n';
-        } else if (pageText.length > 0 && !pageText.endsWith(' ') && !pageText.endsWith('\n')) {
-          pageText += ' ';
-        }
-        pageText += it.str || '';
-        if (itemY !== undefined) lastY = itemY;
-      }
-      fullDocText += `\n--- PAGE ${p} ---\n` + pageText;
+      const pageColText = await extractColumnAwareTextFromPdfPage(page);
+      fullDocText += `\n--- PAGE ${p} ---\n` + pageColText;
     } catch (e) {
       console.warn(`Error reading page ${p} text:`, e);
     }
   }
 
-  // 2. High-Precision Regex Extraction:
-  // Match patterns like:
-  // "1. Answer (2)" or "Q.1 Answer: 2" or "1. (2)" or "1 - (B)" or "Sol. 1. (3)"
-  // Followed by "Sol." or "Hints:" or "Explanation:" or formula text
-  const solRegex = /(?:(?:(?:Sol(?:ution)?\.?\s*)?Q(?:uestion)?\.?\s*(\d{1,3})|(\d{1,3}))\s*[\.:\-\)]\s*(?:(?:Answer|Ans|Option)\s*[:\-\)]?\s*)?\(?([1-4A-Da-d])\)?)([\s\S]*?)(?=(?:(?:(?:Sol(?:ution)?\.?\s*)?Q(?:uestion)?\.?\s*\d{1,3}|\d{1,3})\s*[\.:\-\)]\s*(?:(?:Answer|Ans|Option)\s*[:\-\)]?\s*)?\(?[1-4A-Da-d]\)?)|$)/gi;
+  // 2. High-Precision NEET Chunk-Split Pass (100% match for format: "N. Answer: X Sol: ...")
+  const standardChunks = fullDocText.split(/(?=(?:^|\s)\b\d{1,3}\s*\.\s*(?:Answer|Ans|उत्तर)\s*:)/i);
+  for (const chunk of standardChunks) {
+    const hm = chunk.match(/^\s*(\d{1,3})\s*\.\s*(?:Answer|Ans|उत्तर)\s*:\s*\(?([1-4A-Da-d])\)?(?:\s*(?:Sol|Hints?|Explanation|हल|व्याख्या)\s*:)?([\s\S]*)$/i);
+    if (hm) {
+      const qNum = parseInt(hm[1], 10);
+      const rawVal = hm[2].trim().toUpperCase();
+      let opt: 'A' | 'B' | 'C' | 'D' = 'A';
+      if (rawVal === '1' || rawVal === 'A') opt = 'A';
+      else if (rawVal === '2' || rawVal === 'B') opt = 'B';
+      else if (rawVal === '3' || rawVal === 'C') opt = 'C';
+      else if (rawVal === '4' || rawVal === 'D') opt = 'D';
+
+      let expl = (hm[3] || '').trim().replace(/--- PAGE \d+ ---/g, '').trim();
+      if (qNum >= 1 && qNum <= 300) {
+        answers[qNum] = opt;
+        if (expl.length > 2) {
+          solutions[qNum] = sanitizeExamText(expl);
+        }
+        items.push({
+          questionNumber: qNum,
+          answer: opt,
+          explanation: solutions[qNum],
+          rawSnippet: chunk.slice(0, 100)
+        });
+      }
+    }
+  }
+
+  // 2b. Secondary Regex Pass for other coaching styles:
+  // Match patterns like: "1. (2)" or "1 - (B)" or "Sol. 1. (3)" or "1. Ans: [3]"
+  const solRegex = /(?:(?:(?:Sol(?:ution)?\.?\s*)?Q(?:uestion|ue)?\.?\s*(\d{1,3})|(\d{1,3}))\s*[\.:\-\)]\s*(?:(?:Answer|Ans|Option|उत्तर)\s*[:\-\)]?\s*)?(?:Option\s*)?[\(\[]?([1-4A-Da-d])[\)\]]?)([\s\S]*?)(?=(?:(?:(?:Sol(?:ution)?\.?\s*)?Q(?:uestion|ue)?\.?\s*\d{1,3}|\d{1,3})\s*[\.:\-\)]\s*(?:(?:Answer|Ans|Option|उत्तर)\s*[:\-\)]?\s*)?(?:Option\s*)?[\(\[]?[1-4A-Da-d][\)\]]?)|$)/gi;
   
   let match: RegExpExecArray | null;
   while ((match = solRegex.exec(fullDocText)) !== null) {
@@ -758,7 +928,7 @@ export async function parseSolutionsAndKeyFromPdf(
     let rawExplanation = (match[4] || '').trim();
     // Clean up explanation prefix
     rawExplanation = rawExplanation
-      .replace(/^(?:Sol(?:ution)?\.?|Hint(?:s)?\.?|Explanation\.?)\s*[:.\-]?\s*/i, '')
+      .replace(/^(?:Sol(?:ution)?\.?|Hint(?:s)?\.?|Explanation\.?|हल\.?|व्याख्या\.?)\s*[:.\-]?\s*/i, '')
       .replace(/--- PAGE \d+ ---/g, '')
       .trim();
 
@@ -786,37 +956,127 @@ export async function parseSolutionsAndKeyFromPdf(
     }
   }
 
+  // 2b. Secondary Line-by-Line Pass for Multi-line Coaching Formats:
+  // Handles:
+  // Q.46. Ans. (2)
+  // Sol. Given F = qE ...
+  const lines = fullDocText.split('\n');
+  let pendingQNum: number | null = null;
+  let pendingAnswer: 'A' | 'B' | 'C' | 'D' | null = null;
+  let pendingSolText = '';
+
+  const savePending = () => {
+    if (pendingQNum && pendingQNum >= 1 && pendingQNum <= 300) {
+      if (pendingAnswer && !answers[pendingQNum]) {
+        answers[pendingQNum] = pendingAnswer;
+      }
+      const cleanSol = pendingSolText
+        .replace(/^(?:Sol(?:ution)?\.?|Hint(?:s)?\.?|Explanation\.?|हल\.?|व्याख्या\.?)\s*[:.\-]?\s*/i, '')
+        .replace(/--- PAGE \d+ ---/g, '')
+        .trim();
+      if (cleanSol.length > 5 && !solutions[pendingQNum]) {
+        solutions[pendingQNum] = sanitizeExamText(cleanSol);
+      }
+      const existingItem = items.find(it => it.questionNumber === pendingQNum);
+      if (existingItem) {
+        if (!existingItem.answer && answers[pendingQNum]) existingItem.answer = answers[pendingQNum];
+        if (!existingItem.explanation && solutions[pendingQNum]) existingItem.explanation = solutions[pendingQNum];
+      } else if (answers[pendingQNum] || solutions[pendingQNum]) {
+        items.push({
+          questionNumber: pendingQNum,
+          answer: answers[pendingQNum],
+          explanation: solutions[pendingQNum]
+        });
+      }
+    }
+    pendingQNum = null;
+    pendingAnswer = null;
+    pendingSolText = '';
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('--- PAGE')) continue;
+
+    const qHeaderMatch = trimmed.match(/^(?:(?:Sol(?:ution)?\.?\s*)?Q(?:uestion|ue)?\.?\s*(\d{1,3})|(\d{1,3}))\s*[\.:\-\)]\s*(.*)$/i);
+    if (qHeaderMatch) {
+      savePending();
+      const num = parseInt(qHeaderMatch[1] || qHeaderMatch[2], 10);
+      pendingQNum = num;
+      const rest = qHeaderMatch[3]?.trim() || '';
+
+      const sameLineAnsMatch = rest.match(/^(?:(?:Answer|Ans|Option|उत्तर)\s*[:.\-\)]?\s*)?(?:Option\s*)?[\(\[]?([1-4A-Da-d])[\)\]]?\s*[:.\-]?\s*(.*)$/i);
+      if (sameLineAnsMatch && sameLineAnsMatch[1]) {
+        const raw = sameLineAnsMatch[1].toUpperCase();
+        pendingAnswer = (raw === '1' || raw === 'A') ? 'A' : (raw === '2' || raw === 'B') ? 'B' : (raw === '3' || raw === 'C') ? 'C' : 'D';
+        pendingSolText = (sameLineAnsMatch[2] || '').trim();
+      } else {
+        pendingSolText = rest;
+      }
+      continue;
+    }
+
+    const nextLineAnsMatch = trimmed.match(/^(?:(?:Answer|Ans|Option|उत्तर)\s*[:.\-\)]?\s*)?(?:Option\s*)?[\(\[]?([1-4A-Da-d])[\)\]]?$/i);
+    if (nextLineAnsMatch && pendingQNum && !pendingAnswer) {
+      const raw = nextLineAnsMatch[1].toUpperCase();
+      pendingAnswer = (raw === '1' || raw === 'A') ? 'A' : (raw === '2' || raw === 'B') ? 'B' : (raw === '3' || raw === 'C') ? 'C' : 'D';
+      continue;
+    }
+
+    if (pendingQNum) {
+      pendingSolText += (pendingSolText ? '\n' : '') + trimmed;
+    }
+  }
+  savePending();
+
   const ansCount = Object.keys(answers).length;
   const solCount = Object.keys(solutions).length;
 
-  // 3. If local extraction got fewer than 10 answers/solutions and text exists, call server Gemini
-  if (ansCount < 10 && fullDocText.trim().length > 100) {
-    if (onProgress) onProgress('Invoking Gemini Solutions Engine for deep OCR parsing...');
+  // 3. If local extraction got fewer than 10 answers/solutions, invoke Gemini Solutions Engine
+  if (ansCount < 10) {
+    if (onProgress) onProgress('Invoking Gemini Solutions Engine for multimodal OCR parsing...');
     try {
-      const res = await fetch('/api/ai/parse-solutions-and-key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rawText: fullDocText.slice(0, 25000) })
-      });
-      if (res.ok) {
-        const aiData = await res.json();
-        if (aiData.answers && Array.isArray(aiData.answers)) {
-          for (const a of aiData.answers) {
-            if (a.questionNumber && a.answer) {
-              const opt = a.answer.toUpperCase();
-              if (['A', 'B', 'C', 'D'].includes(opt)) {
-                answers[a.questionNumber] = opt as any;
+      const userCustomKey = typeof localStorage !== 'undefined' ? localStorage.getItem('user_gemini_api_key') : null;
+      let payload: any = {};
+      if (fullDocText.trim().length > 100) {
+        payload.rawText = fullDocText.slice(0, 25000);
+      } else if (pdfDoc && numPages > 0) {
+        // Scanned PDF fallback: render Page 1 to canvas
+        const page1 = await pdfDoc.getPage(1);
+        const offCanvas = document.createElement('canvas');
+        await renderPdfPageToCanvas(pdfDoc, 1, offCanvas, 1.5);
+        payload.imageBase64 = offCanvas.toDataURL('image/jpeg', 0.85);
+      }
+
+      if (payload.rawText || payload.imageBase64) {
+        const res = await fetch('/api/ai/parse-solutions-and-key', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(userCustomKey ? { 'x-gemini-api-key': userCustomKey } : {})
+          },
+          body: JSON.stringify({ ...payload, customApiKey: userCustomKey || undefined })
+        });
+        if (res.ok) {
+          const aiData = await res.json();
+          if (aiData.answers && Array.isArray(aiData.answers)) {
+            for (const a of aiData.answers) {
+              if (a.questionNumber && a.answer) {
+                const opt = a.answer.toUpperCase();
+                if (['A', 'B', 'C', 'D'].includes(opt)) {
+                  answers[a.questionNumber] = opt as any;
+                }
               }
             }
           }
-        }
-        if (aiData.solutions && Array.isArray(aiData.solutions)) {
-          for (const s of aiData.solutions) {
-            if (s.questionNumber && s.explanation) {
-              solutions[s.questionNumber] = sanitizeExamText(s.explanation);
-              if (s.answer) {
-                const opt = s.answer.toUpperCase();
-                if (['A', 'B', 'C', 'D'].includes(opt)) answers[s.questionNumber] = opt as any;
+          if (aiData.solutions && Array.isArray(aiData.solutions)) {
+            for (const s of aiData.solutions) {
+              if (s.questionNumber && s.explanation) {
+                solutions[s.questionNumber] = sanitizeExamText(s.explanation);
+                if (s.answer) {
+                  const opt = s.answer.toUpperCase();
+                  if (['A', 'B', 'C', 'D'].includes(opt)) answers[s.questionNumber] = opt as any;
+                }
               }
             }
           }
@@ -961,29 +1221,33 @@ export function createAndSaveCompleteNeetTest(
   // Sort by question number
   normalizedQuestions.sort((a, b) => a.questionNumber - b.questionNumber);
 
-  const newTest: MockTest = {
-    id: testId,
-    testNumber: testParams.testNumber || `Test 0${existingTests.length + 1}`,
-    title: testParams.title || `NEET Question Paper ${new Date().toLocaleDateString()}`,
-    description: testParams.description || `Digitized NTA NEET Mock Test with ${totalCount} bilingual questions and original PDF diagrams.`,
-    type: testParams.type || 'full_syllabus',
-    subjects: ['Physics', 'Chemistry', 'Biology'],
-    totalQuestions: totalCount,
-    durationMinutes: testParams.durationMinutes || (totalCount >= 180 ? 200 : 180),
-    maxMarks: totalCount * (testParams.correctMarks || 4),
-    correctMarks: testParams.correctMarks ?? 4,
-    negativeMarks: testParams.negativeMarks ?? 1,
-    price: testParams.price ?? 99,
-    originalPrice: testParams.originalPrice ?? 299,
-    status: 'published',
-    isBilingual: parsedQuestions.some(q => Boolean(q?.languages?.hi?.questionText)),
-    languages: ['en', 'hi'],
-    allowMultipleAttempts: true,
-    attemptLimit: 'unlimited',
-    showLeaderboard: true,
-    createdAt: new Date().toISOString(),
-    questionsCount: totalCount
-  };
+    const isFree = (testParams.price ?? 99) === 0;
+    const resolvedPrice = isFree ? 0 : (testParams.price ?? 99);
+    const newTest: MockTest = {
+      id: testId,
+      testNumber: testParams.testNumber || `Test 0${existingTests.length + 1}`,
+      title: testParams.title || `NEET Question Paper ${new Date().toLocaleDateString()}`,
+      description: testParams.description || `Digitized NTA NEET Mock Test with ${totalCount} bilingual questions and original PDF diagrams.`,
+      type: testParams.type || 'full_syllabus',
+      subjects: ['Physics', 'Chemistry', 'Biology'],
+      totalQuestions: totalCount,
+      durationMinutes: testParams.durationMinutes || (totalCount >= 180 ? 200 : 180),
+      maxMarks: totalCount * (testParams.correctMarks || 4),
+      correctMarks: testParams.correctMarks ?? 4,
+      negativeMarks: testParams.negativeMarks ?? 1,
+      price: resolvedPrice,
+      originalPrice: isFree ? 0 : (testParams.originalPrice ?? 299),
+      isFree,
+      isPaid: !isFree,
+      status: 'published',
+      isBilingual: parsedQuestions.some(q => Boolean(q?.languages?.hi?.questionText)),
+      languages: ['en', 'hi'],
+      allowMultipleAttempts: true,
+      attemptLimit: 'unlimited',
+      showLeaderboard: true,
+      createdAt: new Date().toISOString(),
+      questionsCount: totalCount
+    };
 
   // Save to IndexedDB & Multi-source persistent storage
   saveStoredMockQuestions(testId, normalizedQuestions);
@@ -1013,23 +1277,38 @@ export interface AccuracyAuditIssue {
 }
 
 export interface AccuracyAuditResult {
+  totalDetectedInPdf: number;
+  totalImported: number;
   flaggedCount: number;
+  criticalErrorsCount: number;
+  warningsCount: number;
+  canPublish: boolean;
   issues: AccuracyAuditIssue[];
   missingNumbers: number[];
   duplicateNumbers: number[];
   questionsWithoutFiguresWhenExpected: number[];
+  damagedMathQuestions: number[];
+  damagedTableQuestions: number[];
+  incompleteQuestions: number[];
+  contaminatedOptionQuestions: number[];
 }
 
 /**
- * Requirement 8: Automated Accuracy Check engine
+ * Requirement 7 & 8: Automated Accuracy Audit & Pre-Publish Verification Engine
  * Checks for missing numbers, duplicates, missing options, order, suspicious OCR,
- * missing diagrams, and broken match-the-column structures.
+ * missing diagrams, organic chemistry structures, broken match tables, truncated options like "0.",
+ * duplicate decimal points (3.2.04), collapsed fractions (T 7 4), bare digit statements (2 4 6),
+ * and cross-question option contamination.
  */
-export function auditNeetQuestionsAccuracy(questions: MockQuestion[]): AccuracyAuditResult {
+export function auditNeetQuestionsAccuracy(questions: MockQuestion[], totalExpectedCount?: number): AccuracyAuditResult {
   const issues: AccuracyAuditIssue[] = [];
   const questionNumberMap = new Map<number, number>();
   const duplicateNumbers: number[] = [];
   const questionsWithoutFiguresWhenExpected: number[] = [];
+  const damagedMathQuestions: number[] = [];
+  const damagedTableQuestions: number[] = [];
+  const incompleteQuestions: number[] = [];
+  const contaminatedOptionQuestions: number[] = [];
 
   // 1. Tally numbers for duplicates
   for (const q of questions) {
@@ -1048,15 +1327,19 @@ export function auditNeetQuestionsAccuracy(questions: MockQuestion[]): AccuracyA
   // 2. Check for missing numbers in continuous sequence
   const numbersPresent = Array.from(questionNumberMap.keys()).sort((a, b) => a - b);
   const missingNumbers: number[] = [];
+  const highestPresent = numbersPresent.length > 0 ? numbersPresent[numbersPresent.length - 1] : 0;
+  const targetEnd = totalExpectedCount 
+    ? totalExpectedCount 
+    : (highestPresent > 100 && highestPresent <= 180 ? 180 : highestPresent);
+
   if (numbersPresent.length > 0) {
-    const min = numbersPresent[0];
-    const max = numbersPresent[numbersPresent.length - 1];
-    for (let i = min; i <= max; i++) {
+    const min = Math.min(1, numbersPresent[0]);
+    for (let i = min; i <= targetEnd; i++) {
       if (!questionNumberMap.has(i)) {
         missingNumbers.push(i);
         issues.push({
           questionNumber: i,
-          reason: `Missing question Q${i} in sequence (gap between Q${min} and Q${max})`,
+          reason: `Missing question Q${i} in sequence (not imported or skipped)`,
           severity: 'error'
         });
       }
@@ -1067,37 +1350,147 @@ export function auditNeetQuestionsAccuracy(questions: MockQuestion[]): AccuracyA
   for (const q of questions) {
     const qNum = q.questionNumber;
     const qText = (q.languages?.en?.questionText || q.questionText || '').trim();
+    const qSpecificIssues: AccuracyAuditIssue[] = [];
 
-    // Check suspicious OCR / too short
-    if (qText.length < 8) {
-      issues.push({
+    const hasFig = Boolean(q.figureUrl || q.questionImageUrl || (q.figures && q.figures.length > 0) || q.optionFigures);
+
+    // Check bare numbers/digits without words (e.g. "2 4 6")
+    const hasRealWords = /[A-Za-z\u0900-\u097F]{2,}/.test(qText);
+    if (!hasRealWords && !hasFig) {
+      if (!incompleteQuestions.includes(qNum)) incompleteQuestions.push(qNum);
+      const issue: AccuracyAuditIssue = {
+        questionNumber: qNum,
+        reason: `Question statement contains bare numbers/characters ("${qText.slice(0, 30)}") without words`,
+        severity: 'error'
+      };
+      issues.push(issue);
+      qSpecificIssues.push(issue);
+    } else if (qText.length < 8 && !hasFig) {
+      if (!incompleteQuestions.includes(qNum)) incompleteQuestions.push(qNum);
+      const issue: AccuracyAuditIssue = {
         questionNumber: qNum,
         reason: `Suspiciously short question text ("${qText}")`,
         severity: 'warning'
-      });
+      };
+      issues.push(issue);
+      qSpecificIssues.push(issue);
     }
 
-    // Check options count
+    // Check options count and placeholder values
     const opts = q.options || [];
     if (opts.length < 4) {
-      issues.push({
+      if (!incompleteQuestions.includes(qNum)) incompleteQuestions.push(qNum);
+      const issue: AccuracyAuditIssue = {
         questionNumber: qNum,
         reason: `Missing options (only ${opts.length} options found instead of 4)`,
         severity: 'error'
-      });
+      };
+      issues.push(issue);
+      qSpecificIssues.push(issue);
     } else {
       const labels = opts.map(o => o.label);
       if (labels[0] !== 'A' || labels[1] !== 'B' || labels[2] !== 'C' || labels[3] !== 'D') {
-        issues.push({
+        const issue: AccuracyAuditIssue = {
           questionNumber: qNum,
           reason: `Incorrect option order: expected [A, B, C, D] but got [${labels.join(', ')}]`,
           severity: 'warning'
-        });
+        };
+        issues.push(issue);
+        qSpecificIssues.push(issue);
+      }
+
+      // Check for placeholder unextracted options
+      const allPlaceholders = opts.every(o => /^Option\s*[\(\[]?[A-D][\)\]]?$/i.test((o.value || '').trim()) || /^Option\s*[A-D]$/i.test((o.value || '').trim()));
+      if (allPlaceholders && !q.optionFigures && !hasFig) {
+        if (!damagedMathQuestions.includes(qNum)) damagedMathQuestions.push(qNum);
+        if (!incompleteQuestions.includes(qNum)) incompleteQuestions.push(qNum);
+        const issue: AccuracyAuditIssue = {
+          questionNumber: qNum,
+          reason: `All 4 options contain unextracted placeholder text ("Option (A)...") without values or diagrams`,
+          severity: 'error'
+        };
+        issues.push(issue);
+        qSpecificIssues.push(issue);
+      }
+
+      // Check for truncated options like "0."
+      const hasTruncatedZeroDot = opts.some(o => (o.value || '').trim() === '0.' || (o.value || '').trim() === '0 .');
+      if (hasTruncatedZeroDot) {
+        if (!damagedMathQuestions.includes(qNum)) damagedMathQuestions.push(qNum);
+        const issue: AccuracyAuditIssue = {
+          questionNumber: qNum,
+          reason: `Option truncated to "0." (decimal coefficient was stripped)`,
+          severity: 'error'
+        };
+        issues.push(issue);
+        qSpecificIssues.push(issue);
+      }
+
+      // Check for Cross-Question Option Contamination (e.g. Option D contains text from another question)
+      const foreignQuestionRegex = /(?:according\s+to\s+the\s+wave-particle|which\s+of\s+the\s+following\s+graph|wave-particle\s+duality|statement\s+[I1]\s*:|assertion\s*:|reason\s*:)/i;
+      const contaminatedOpt = opts.find(o => foreignQuestionRegex.test(o.value || '') && (o.value || '').length > 40);
+      if (contaminatedOpt) {
+        if (!contaminatedOptionQuestions.includes(qNum)) contaminatedOptionQuestions.push(qNum);
+        const issue: AccuracyAuditIssue = {
+          questionNumber: qNum,
+          reason: `Option (${contaminatedOpt.label}) contains text swallowed from an adjacent question: "${contaminatedOpt.value?.slice(0, 50)}..."`,
+          severity: 'error'
+        };
+        issues.push(issue);
+        qSpecificIssues.push(issue);
       }
     }
 
-    // Check missing diagram: text mentions diagram keywords but no figure is attached
-    const hasFig = Boolean(q.figureUrl || q.questionImageUrl || (q.figures && q.figures.length > 0));
+    // Check missing answer key
+    if (!q.correctAnswer) {
+      if (!incompleteQuestions.includes(qNum)) incompleteQuestions.push(qNum);
+      const issue: AccuracyAuditIssue = {
+        questionNumber: qNum,
+        reason: `Missing correct answer key`,
+        severity: 'warning'
+      };
+      issues.push(issue);
+      qSpecificIssues.push(issue);
+    }
+
+    // Check for double / duplicate decimal points (e.g. 3.2.04 or 5.2.04)
+    const allText = `${qText} ${opts.map(o => o.value || '').join(' ')}`;
+    if (/\b\d+\.\d+\.\d+\b/.test(allText)) {
+      if (!damagedMathQuestions.includes(qNum)) damagedMathQuestions.push(qNum);
+      const issue: AccuracyAuditIssue = {
+        questionNumber: qNum,
+        reason: `Malformed decimal number with duplicate decimal points detected (e.g. 3.2.04)`,
+        severity: 'error'
+      };
+      issues.push(issue);
+      qSpecificIssues.push(issue);
+    }
+
+    // Check for collapsed fractions missing forward slash (e.g. "T 7 4" or "T4 3" instead of "7/4 T" or "4/3 T")
+    if (/\bT\s*[47]\s*[34]\b|\bT\s*[2-7]\b|\bRT\s*[1-9]\s*[1-9]\b/.test(allText)) {
+      if (!damagedMathQuestions.includes(qNum)) damagedMathQuestions.push(qNum);
+      const issue: AccuracyAuditIssue = {
+        questionNumber: qNum,
+        reason: `Collapsed fraction detected missing forward slash (e.g. "T 7 4" or "T4 3" instead of "7/4 T" or "4/3 T")`,
+        severity: 'error'
+      };
+      issues.push(issue);
+      qSpecificIssues.push(issue);
+    }
+
+    // Check damaged math expressions (04 × 10, 0 × 10, empty tan (), pi leaks, ML-3-248)
+    if (/\b04\s*×\s*10\b/i.test(allText) || /\b0\s*×\s*10\b/i.test(allText) || /tan\s*\(\s*\)/i.test(allText) || /π\s*π\s*π/i.test(qText) || /ML[-−–]\d[-−–]\d/i.test(allText)) {
+      if (!damagedMathQuestions.includes(qNum)) damagedMathQuestions.push(qNum);
+      const issue: AccuracyAuditIssue = {
+        questionNumber: qNum,
+        reason: `Mangled scientific math or dimensional notation detected`,
+        severity: 'warning'
+      };
+      issues.push(issue);
+      qSpecificIssues.push(issue);
+    }
+
+    // Check missing diagram: text mentions diagram keywords or chemical structures but no figure is attached
     const diagramKeywords = [
       'given figure',
       'given diagram',
@@ -1109,37 +1502,74 @@ export function auditNeetQuestionsAccuracy(questions: MockQuestion[]): AccuracyA
       'shown in diagram',
       'following scheme',
       'structure of a',
-      'structure of b'
+      'structure of b',
+      'iupac name of',
+      'benzene ring',
+      'following reaction sequence',
+      'major product is',
+      'acidic strength of following',
+      'pulley',
+      'tension in the string',
+      'bond in solid hf',
+      'दिए गए चित्र',
+      'चित्र में दर्शाए'
     ];
     const lowerText = qText.toLowerCase();
-    const referencesVisual = diagramKeywords.some(kw => lowerText.includes(kw));
+    const referencesVisual = diagramKeywords.some(kw => lowerText.includes(kw)) || (/iupac\s+name\s+of/i.test(lowerText) && (q.subject === 'Chemistry' || !q.subject));
     if (referencesVisual && !hasFig) {
       questionsWithoutFiguresWhenExpected.push(qNum);
-      issues.push({
+      const issue: AccuracyAuditIssue = {
         questionNumber: qNum,
-        reason: `Question text references a diagram, figure, or graph, but no original image is attached`,
+        reason: `Question references a diagram or chemical structure, but no figure is attached`,
         severity: 'warning'
-      });
+      };
+      issues.push(issue);
+      qSpecificIssues.push(issue);
     }
 
     // Check match-the-column table structure
-    if (lowerText.includes('match the column') || lowerText.includes('column i') || lowerText.includes('list-i')) {
+    if (lowerText.includes('match the column') || lowerText.includes('column i') || lowerText.includes('list-i') || lowerText.includes('सूची-i') || lowerText.includes('column 1')) {
       const matchTable = q.matchTable || q.languages?.en?.matchTable;
       if (!matchTable || !matchTable.rows || matchTable.rows.length === 0) {
-        issues.push({
-          questionNumber: qNum,
-          reason: `Match-the-column question detected but structured table rows are missing`,
-          severity: 'warning'
-        });
+        if (!hasFig) {
+          damagedTableQuestions.push(qNum);
+          const issue: AccuracyAuditIssue = {
+            questionNumber: qNum,
+            reason: `Match-the-column question detected but structured table rows and table image are missing`,
+            severity: 'error'
+          };
+          issues.push(issue);
+          qSpecificIssues.push(issue);
+        }
       }
     }
+
+    // Set question-level validation status and issues
+    q.validationIssues = qSpecificIssues.map(i => i.reason);
+    const hasErr = qSpecificIssues.some(i => i.severity === 'error');
+    const hasWarn = qSpecificIssues.some(i => i.severity === 'warning');
+    q.validationStatus = hasErr ? 'failed' : hasWarn ? 'needs_review' : 'verified';
   }
 
+  const resolvedTotalDetected = totalExpectedCount || (targetEnd > 0 ? targetEnd : questions.length);
+  const criticalErrorsCount = issues.filter(i => i.severity === 'error').length;
+  const warningsCount = issues.filter(i => i.severity === 'warning').length;
+  const canPublish = criticalErrorsCount === 0 && questions.length > 0 && missingNumbers.length === 0;
+
   return {
+    totalDetectedInPdf: resolvedTotalDetected,
+    totalImported: questions.length,
     flaggedCount: issues.length,
+    criticalErrorsCount,
+    warningsCount,
+    canPublish,
     issues,
     missingNumbers,
     duplicateNumbers,
-    questionsWithoutFiguresWhenExpected
+    questionsWithoutFiguresWhenExpected,
+    damagedMathQuestions,
+    damagedTableQuestions,
+    incompleteQuestions,
+    contaminatedOptionQuestions
   };
 }

@@ -17,7 +17,7 @@ import {
   Trophy
 } from 'lucide-react';
 import { MockTest, UserProfile } from '../types';
-import { getStoredMockTests, hasUserPurchasedMockTest } from '../lib/mockTestData';
+import { getStoredMockTests, hasUserPurchasedMockTest, getStoredMockQuestions } from '../lib/mockTestData';
 
 interface HomeMockTestsSectionProps {
   onExploreMockTests: () => void;
@@ -162,7 +162,11 @@ export const HomeMockTestsSection: React.FC<HomeMockTestsSectionProps> = ({
                 <div className="grid grid-cols-3 gap-1.5 text-[11px] font-semibold text-slate-700 pt-1">
                   <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100">
                     <HelpCircle className="w-3 h-3 text-indigo-500 shrink-0" />
-                    <span className="truncate">{test.totalQuestions} Qs</span>
+                    <span className="truncate">{(() => {
+                      const count = getStoredMockQuestions(test.id).length;
+                      const total = count > 0 ? count : test.totalQuestions;
+                      return `${total} Questions`;
+                    })()}</span>
                   </div>
                   <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100">
                     <Clock className="w-3 h-3 text-amber-500 shrink-0" />

@@ -44,12 +44,12 @@ export const HomeCategoryCards: React.FC<HomeCategoryCardsProps> = ({
         <div
           id="home-service-physical-books"
           onClick={() => onSelectFormat('book')}
-          className="group relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-b from-[#fff1f2] via-[#fff5f5] to-white border border-rose-200/80 p-2.5 sm:p-4 md:p-5 shadow-2xs hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between"
+          className="group relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-b from-[#fff1f2] via-[#fff5f5] to-white border border-rose-200/80 p-2.5 sm:p-3.5 md:p-4 shadow-2xs hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between"
         >
           <div>
             {/* Top Badge: Physical Delivery */}
-            <div className="flex items-center justify-between gap-1 mb-1 sm:mb-2 md:mb-3">
-              <span className="inline-flex items-center gap-0.5 sm:gap-1.5 px-1.5 sm:px-2.5 md:px-3 py-0.5 sm:py-1 rounded-full bg-white/90 text-rose-600 text-[7.5px] sm:text-[9.5px] md:text-[10px] font-black uppercase tracking-tight border border-rose-200 shadow-2xs truncate">
+            <div className="flex items-center justify-between gap-1 mb-1 sm:mb-2">
+              <span className="inline-flex items-center gap-0.5 sm:gap-1.5 px-1.5 sm:px-2.5 py-0.5 rounded-full bg-white/90 text-rose-600 text-[7.5px] sm:text-[9.5px] md:text-[10px] font-black uppercase tracking-tight border border-rose-200 shadow-2xs truncate">
                 <span>🚚</span>
                 <span className="hidden sm:inline">Physical</span>
                 <span>Delivery</span>
@@ -57,7 +57,7 @@ export const HomeCategoryCards: React.FC<HomeCategoryCardsProps> = ({
             </div>
 
             {/* Illustration Graphic: Stacked NEET Books */}
-            <div className="w-full h-16 sm:h-22 md:h-28 flex items-center justify-center my-0.5 sm:my-1 select-none">
+            <div className="w-full h-14 sm:h-20 md:h-24 flex items-center justify-center my-0.5 sm:my-1 select-none">
               <div className="relative flex flex-col items-center">
                 {/* 3D-styled Stack of Books */}
                 <div className="w-18 sm:w-24 md:w-28 h-4 sm:h-5 md:h-6 bg-gradient-to-r from-blue-600 to-indigo-600 rounded sm:rounded-md shadow-xs border border-blue-700 flex items-center justify-between px-1 sm:px-2 text-white text-[6.5px] sm:text-[7.5px] md:text-[8px] font-black">
@@ -100,12 +100,12 @@ export const HomeCategoryCards: React.FC<HomeCategoryCardsProps> = ({
         <div
           id="home-service-digital-material"
           onClick={() => onSelectFormat('pdf')}
-          className="group relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-b from-[#eff6ff] via-[#f0f9ff] to-white border border-sky-200/80 p-2.5 sm:p-4 md:p-5 shadow-2xs hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between"
+          className="group relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-b from-[#eff6ff] via-[#f0f9ff] to-white border border-sky-200/80 p-2.5 sm:p-3.5 md:p-4 shadow-2xs hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between"
         >
           <div>
             {/* Top Badge: Instant Digital Access */}
-            <div className="flex items-center justify-between gap-1 mb-1 sm:mb-2 md:mb-3">
-              <span className="inline-flex items-center gap-0.5 sm:gap-1.5 px-1.5 sm:px-2.5 md:px-3 py-0.5 sm:py-1 rounded-full bg-white/90 text-blue-600 text-[7.5px] sm:text-[9.5px] md:text-[10px] font-black uppercase tracking-tight border border-blue-200 shadow-2xs truncate">
+            <div className="flex items-center justify-between gap-1 mb-1 sm:mb-2">
+              <span className="inline-flex items-center gap-0.5 sm:gap-1.5 px-1.5 sm:px-2.5 py-0.5 rounded-full bg-white/90 text-blue-600 text-[7.5px] sm:text-[9.5px] md:text-[10px] font-black uppercase tracking-tight border border-blue-200 shadow-2xs truncate">
                 <span>📥</span>
                 <span className="hidden sm:inline">Instant</span>
                 <span>Access</span>
@@ -113,7 +113,7 @@ export const HomeCategoryCards: React.FC<HomeCategoryCardsProps> = ({
             </div>
 
             {/* Illustration Graphic: Tablet with PDF */}
-            <div className="w-full h-16 sm:h-22 md:h-28 flex items-center justify-center my-0.5 sm:my-1 select-none">
+            <div className="w-full h-14 sm:h-20 md:h-24 flex items-center justify-center my-0.5 sm:my-1 select-none">
               <div className="relative w-14 h-14 sm:w-20 sm:h-20 md:w-24 md:h-24 bg-white rounded-xl sm:rounded-2xl border sm:border-2 border-blue-400 shadow-xs sm:shadow-md p-1 sm:p-2 flex flex-col items-center justify-center gap-0.5 sm:gap-1 transform -rotate-3 group-hover:rotate-0 transition-transform">
                 <div className="w-7 h-7 sm:w-9 sm:h-9 md:w-10 md:h-10 rounded-lg sm:rounded-xl bg-rose-50 border border-rose-200 flex flex-col items-center justify-center text-rose-600 font-black shadow-2xs">
                   <span className="text-[8px] sm:text-[10px] md:text-[11px] leading-none">PDF</span>
@@ -151,19 +151,19 @@ export const HomeCategoryCards: React.FC<HomeCategoryCardsProps> = ({
         <div
           id="home-service-mock-tests"
           onClick={onNavigateMockTests}
-          className="group relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-b from-[#f0fdf4] via-[#f7fee7] to-white border border-emerald-200/80 p-2.5 sm:p-4 md:p-5 shadow-2xs hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between"
+          className="group relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-b from-[#f0fdf4] via-[#f7fee7] to-white border border-emerald-200/80 p-2.5 sm:p-3.5 md:p-4 shadow-2xs hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between"
         >
           <div>
             {/* Top Badge: Online Tests */}
-            <div className="flex items-center justify-between gap-1 mb-1 sm:mb-2 md:mb-3">
-              <span className="inline-flex items-center gap-0.5 sm:gap-1.5 px-1.5 sm:px-2.5 md:px-3 py-0.5 sm:py-1 rounded-full bg-white/90 text-emerald-700 text-[7.5px] sm:text-[9.5px] md:text-[10px] font-black uppercase tracking-tight border border-emerald-200 shadow-2xs truncate">
+            <div className="flex items-center justify-between gap-1 mb-1 sm:mb-2">
+              <span className="inline-flex items-center gap-0.5 sm:gap-1.5 px-1.5 sm:px-2.5 py-0.5 rounded-full bg-white/90 text-emerald-700 text-[7.5px] sm:text-[9.5px] md:text-[10px] font-black uppercase tracking-tight border border-emerald-200 shadow-2xs truncate">
                 <span>📋</span>
                 <span>Online Tests</span>
               </span>
             </div>
 
             {/* Illustration Graphic: Test Paper & Timer Clock */}
-            <div className="w-full h-16 sm:h-22 md:h-28 flex items-center justify-center gap-1 sm:gap-2 my-0.5 sm:my-1 select-none">
+            <div className="w-full h-14 sm:h-20 md:h-24 flex items-center justify-center gap-1 sm:gap-2 my-0.5 sm:my-1 select-none">
               {/* Test Paper */}
               <div className="w-12 h-14 sm:w-16 sm:h-20 md:w-20 md:h-24 bg-white rounded-lg sm:rounded-xl border border-slate-200 shadow-xs sm:shadow-md p-1 sm:p-1.5 flex flex-col justify-between transform -rotate-6 group-hover:rotate-0 transition-transform">
                 <div className="text-[6px] sm:text-[7px] md:text-[7.5px] font-black text-emerald-700 border-b border-slate-100 pb-0.5 text-center">

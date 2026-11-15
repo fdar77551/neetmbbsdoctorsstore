@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Check, 
@@ -15,7 +15,7 @@ import {
 import { MockQuestion, MockSubject, MockMatchTable, MockMatchTableRow } from '../types';
 
 interface MockQuestionReviewModalProps {
-  question: MockQuestion;
+  question: MockQuestion | null;
   isOpen: boolean;
   onClose: () => void;
   onSave: (updatedQuestion: MockQuestion) => void;
@@ -31,8 +31,6 @@ export const MockQuestionReviewModal: React.FC<MockQuestionReviewModalProps> = (
   onTriggerReCropFromPdf,
   currentPdfPage
 }) => {
-  if (!isOpen || !question) return null;
-
   const [subject, setSubject] = useState<MockSubject>(question?.subject || 'Chemistry');
   const [chapter, setChapter] = useState<string>(question?.chapter || '');
   const [questionText, setQuestionText] = useState<string>(
@@ -169,9 +167,61 @@ export const MockQuestionReviewModal: React.FC<MockQuestionReviewModalProps> = (
     onClose();
   };
 
+  // Sync state whenever question changes
+  useEffect(() => {
+    if (!question) return;
+    setSubject(question.subject || 'Chemistry');
+    setChapter(question.chapter || '');
+    setQuestionText(question.languages?.en?.questionText || question.questionText || '');
+    setHindiQuestionText(question.languages?.hi?.questionText || '');
+    const rawOpts = question.options || [];
+    setOptions((['A', 'B', 'C', 'D'] as const).map(label => {
+      const found = rawOpts.find(o => o.label === label);
+      return {
+        label,
+        value: found?.value || '',
+        imageUrl: found?.imageUrl
+      };
+    }));
+    setCorrectAnswer(question.correctAnswer || 'A');
+    setFigureUrl(question.figureUrl || question.questionImageUrl || (question.figures && question.figures[0]));
+    const initialMatch = question.matchTable || question.languages?.en?.matchTable;
+    setHasMatchTable(Boolean(initialMatch && initialMatch.rows && initialMatch.rows.length > 0));
+    setColumn1Header(initialMatch?.column1Header || 'Column I');
+    setColumn2Header(initialMatch?.column2Header || 'Column II');
+    if (initialMatch?.rows && initialMatch.rows.length > 0) {
+      setMatchRows([...initialMatch.rows]);
+    } else {
+      setMatchRows([
+        { leftKey: '(A)', leftText: '', rightKey: '(p)', rightText: '' },
+        { leftKey: '(B)', leftText: '', rightKey: '(q)', rightText: '' },
+        { leftKey: '(C)', leftText: '', rightKey: '(r)', rightText: '' },
+        { leftKey: '(D)', leftText: '', rightKey: '(s)', rightText: '' },
+      ]);
+    }
+  }, [question]);
+
+  // Close with Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
+  if (!isOpen || !question) return null;
+
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-in fade-in duration-150">
-      <div className="bg-white rounded-3xl max-w-3xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+    <div 
+      className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-in fade-in duration-150"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-white rounded-3xl max-w-3xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]"
+        onClick={e => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-4 sm:p-5 flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2.5">
@@ -199,6 +249,37 @@ export const MockQuestionReviewModal: React.FC<MockQuestionReviewModalProps> = (
         {/* Scrollable Body */}
         <div className="p-5 sm:p-6 overflow-y-auto space-y-5 text-xs text-slate-800">
           
+          {/* Action Required: Diagram Crop Hint Banner */}
+          {(!figureUrl && (question.hasFigure || question.needsDiagramCrop || question.diagramHint || /(?:figure|diagram|graph|circuit|shown|चित्र|chitra)/i.test(question.questionText || ''))) && (
+            <div className="bg-amber-500/10 border-2 border-amber-400/50 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-950 shadow-xs">
+              <div className="flex items-start gap-3">
+                <span className="text-2xl shrink-0">📷</span>
+                <div>
+                  <div className="text-xs font-black text-amber-900 flex items-center gap-2">
+                    <span>Action Required: Crop Diagram from PDF Page {question.pdfPageNumber || currentPdfPage || 1}</span>
+                    <span className="text-[9px] bg-amber-200 text-amber-900 font-black px-1.5 py-0.5 rounded-full">Missing Image</span>
+                  </div>
+                  <p className="text-[11px] text-amber-800 mt-0.5">
+                    {question.figureDescription || question.diagramHint || 'This question references an authentic diagram, graph, circuit, or chemical structure on the original PDF page.'}
+                  </p>
+                </div>
+              </div>
+              {onTriggerReCropFromPdf && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onTriggerReCropFromPdf(question);
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-xs font-black shadow-md shrink-0 flex items-center justify-center gap-1.5 cursor-pointer transition active:scale-95"
+                >
+                  <Crop className="w-4 h-4" />
+                  <span>✂️ Crop Diagram (Gallery Cropper)</span>
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Metadata Row: Subject, Chapter */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>

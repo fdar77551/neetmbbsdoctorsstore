@@ -207,3 +207,145 @@ export async function extractAllPdfText(pdfDoc: pdfjsLib.PDFDocumentProxy): Prom
 
   return results;
 }
+
+/**
+ * Extracts text from a PDF page respecting standard 2-column NEET exam paper layouts.
+ * Prevents interleaving of left and right column questions.
+ */
+export async function extractColumnAwareTextFromPdfPage(page: any): Promise<string> {
+  try {
+    const textContent = await page.getTextContent();
+    const items = (textContent.items || []) as any[];
+    if (items.length === 0) return '';
+
+    const viewport = page.getViewport({ scale: 1.0 });
+    const pageWidth = viewport.width || 600;
+    const midX = pageWidth / 2;
+
+    // Detect if the page has items in both left and right halves
+    let leftCount = 0;
+    let rightCount = 0;
+    for (const it of items) {
+      const x = it.transform?.[4] ?? 0;
+      if (x < midX - 25) leftCount++;
+      else if (x > midX + 25) rightCount++;
+    }
+
+    const isTwoColumn = leftCount >= 10 && rightCount >= 10;
+
+    const processItems = (colItems: any[]): string => {
+      if (colItems.length === 0) return '';
+
+      // Filter out completely empty or blank items
+      const validItems = colItems
+        .map(it => ({
+          str: it.str || '',
+          x: it.transform?.[4] ?? 0,
+          y: it.transform?.[5] ?? 0,
+          width: it.width ?? 0,
+          height: it.height ?? (it.transform?.[0] ? Math.abs(it.transform[0]) : 9),
+          hasEOL: Boolean(it.hasEOL)
+        }))
+        .filter(it => it.str.length > 0 || it.hasEOL);
+
+      if (validItems.length === 0) return '';
+
+      // 1. Sort items primarily by Y descending (top to bottom)
+      validItems.sort((a, b) => b.y - a.y);
+
+      // 2. Cluster items into visual lines using a baseline tolerance
+      // In PDF typography, standard line spacing is 11-15pt. Superscripts are elevated by 2-5pt,
+      // subscripts are lowered by 2-4pt. A vertical tolerance of ~6.0pt groups superscripts/subscripts
+      // with their host line, preventing them from sorting above the line.
+      interface TextLine {
+        baseY: number;
+        items: typeof validItems;
+      }
+      const lines: TextLine[] = [];
+
+      for (const it of validItems) {
+        // Find existing line where item's baseline matches host line
+        // Superscripts have slightly higher Y (up to +5.5pt); subscripts have slightly lower Y (down to -4.0pt)
+        let matchedLine: TextLine | null = null;
+        for (const line of lines) {
+          const dy = it.y - line.baseY;
+          if (dy >= -4.5 && dy <= 5.8) {
+            matchedLine = line;
+            break;
+          }
+        }
+
+        if (matchedLine) {
+          matchedLine.items.push(it);
+        } else {
+          lines.push({
+            baseY: it.y,
+            items: [it]
+          });
+        }
+      }
+
+      // 3. Sort lines by baseline Y descending (top to bottom)
+      lines.sort((a, b) => b.baseY - a.baseY);
+
+      // 4. Within each line, sort items strictly by X ascending (left to right)
+      // This guarantees that exponents (at higher X) ALWAYS appear after base text!
+      let res = '';
+      for (let lIdx = 0; lIdx < lines.length; lIdx++) {
+        const line = lines[lIdx];
+        line.items.sort((a, b) => a.x - b.x);
+
+        let lineText = '';
+        let lastX = 0;
+        let lastWidth = 0;
+        let lastStr = '';
+
+        for (const it of line.items) {
+          const gap = it.x - (lastX + lastWidth);
+          const isSuperscript = (it.y > line.baseY + 1.2) && (it.height < 8.5 || /^[+\-]?\d+$/.test(it.str.trim()));
+
+          if (lineText.length > 0 && !lineText.endsWith(' ')) {
+            // Do NOT insert space if it's a superscript exponent right next to 10 or a variable
+            if (isSuperscript && (lastStr.endsWith('10') || lastStr.endsWith('t') || lastStr.endsWith('x') || lastStr.endsWith('y') || lastStr.endsWith('M') || lastStr.endsWith('L') || lastStr.endsWith('T') || lastStr.endsWith('A') || lastStr.endsWith('tan') || lastStr.endsWith('sin') || lastStr.endsWith('cos'))) {
+              // Direct superscript attachment with '^' or direct token
+              if (/^[+\-]?\d+$/.test(it.str.trim())) {
+                lineText += `^${it.str.trim()}`;
+                lastX = it.x;
+                lastWidth = it.width;
+                lastStr = it.str;
+                continue;
+              }
+            } else if (gap > 2.2 || it.str.startsWith(' ')) {
+              lineText += ' ';
+            }
+          }
+
+          lineText += it.str;
+          lastX = it.x;
+          lastWidth = it.width;
+          lastStr = it.str;
+        }
+
+        if (lineText.trim().length > 0) {
+          if (res.length > 0) {
+            res += '\n';
+          }
+          res += lineText.trim();
+        }
+      }
+
+      return res;
+    };
+
+    if (isTwoColumn) {
+      const leftItems = items.filter(it => (it.transform?.[4] ?? 0) < midX);
+      const rightItems = items.filter(it => (it.transform?.[4] ?? 0) >= midX);
+      return `${processItems(leftItems)}\n\n${processItems(rightItems)}`;
+    } else {
+      return processItems([...items]);
+    }
+  } catch (err) {
+    console.warn('Column-aware text extraction error:', err);
+    return '';
+  }
+}
