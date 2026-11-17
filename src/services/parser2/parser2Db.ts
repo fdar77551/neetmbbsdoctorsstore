@@ -14,8 +14,10 @@ import {
   Parser2AnswerKeyEntry,
   Parser2ValidationReport,
   Parser2ProcessingLog,
-  Parser2Settings
+  Parser2Settings,
+  isPlaceholderOption
 } from './types';
+import { formatSourcePageRange } from './layoutEngine';
 import { getR2Client, getR2Json, putR2Json, listR2Keys } from './parser2R2Storage';
 
 const LEGACY_STORE_PATH = path.resolve(process.cwd(), 'store_database.json');
@@ -287,7 +289,9 @@ export async function ensureParser2D1Tables(): Promise<void> {
     `CREATE TABLE IF NOT EXISTS parser2_jobs (id TEXT PRIMARY KEY, test_name TEXT NOT NULL, subject TEXT NOT NULL, chapter TEXT, question_range TEXT, ocr_engine TEXT NOT NULL DEFAULT 'mistral', gemini_model TEXT NOT NULL DEFAULT 'gemini-4-hydrogen', enable_gemini_verification INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'queued', current_stage TEXT, total_pages INTEGER NOT NULL DEFAULT 0, completed_pages INTEGER NOT NULL DEFAULT 0, failed_pages INTEGER NOT NULL DEFAULT 0, total_questions INTEGER NOT NULL DEFAULT 0, questions_detected INTEGER NOT NULL DEFAULT 0, questions_saved INTEGER NOT NULL DEFAULT 0, saved_verified INTEGER NOT NULL DEFAULT 0, verified_questions INTEGER NOT NULL DEFAULT 0, review_required_count INTEGER NOT NULL DEFAULT 0, figure_count INTEGER NOT NULL DEFAULT 0, estimated_cost_usd REAL NOT NULL DEFAULT 0.0, retry_count INTEGER NOT NULL DEFAULT 0, manually_edited_count INTEGER NOT NULL DEFAULT 0, has_answer_key INTEGER NOT NULL DEFAULT 0, quality_score INTEGER NOT NULL DEFAULT 0, reconciliation_json TEXT, quality_breakdown_json TEXT, published_test_id TEXT, error_message TEXT, original_pdf_file_name TEXT, source_question_pdf_name TEXT, source_solution_pdf_name TEXT, last_activity_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
     `CREATE TABLE IF NOT EXISTS parser2_source_files (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, file_type TEXT NOT NULL, file_name TEXT NOT NULL, file_size INTEGER NOT NULL, storage_key TEXT NOT NULL, mime_type TEXT NOT NULL, page_count INTEGER NOT NULL DEFAULT 0, uploaded_at TEXT NOT NULL);`,
     `CREATE TABLE IF NOT EXISTS parser2_pages (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, page_number INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', ocr_raw_text TEXT, ocr_markdown TEXT, page_image_key TEXT, page_width INTEGER, page_height INTEGER, processing_time_ms INTEGER, error_message TEXT, updated_at TEXT NOT NULL, UNIQUE(job_id, page_number));`,
-    `CREATE TABLE IF NOT EXISTS parser2_questions (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, test_id TEXT, question_number INTEGER NOT NULL, subject TEXT NOT NULL, chapter TEXT, question_type TEXT NOT NULL DEFAULT 'single_mcq', question_text TEXT NOT NULL, option_a TEXT NOT NULL, option_b TEXT NOT NULL, option_c TEXT NOT NULL, option_d TEXT NOT NULL, options_json TEXT, correct_answer TEXT, answer_status TEXT, explanation TEXT, source_page_number INTEGER NOT NULL, page_layout TEXT, chemistry_content_type TEXT, figure_url TEXT, figures_json TEXT, option_figures_json TEXT, match_table_json TEXT, structured_table_json TEXT, component_validation_json TEXT, original_snapshot_json TEXT, verification_status TEXT NOT NULL DEFAULT 'verified', confidence_score INTEGER NOT NULL DEFAULT 100, review_required INTEGER NOT NULL DEFAULT 0, review_notes TEXT, admin_override INTEGER NOT NULL DEFAULT 0, is_manually_edited INTEGER NOT NULL DEFAULT 0, manually_edited_at TEXT, edited_fields_json TEXT, is_deleted INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
+    `CREATE TABLE IF NOT EXISTS parser2_questions (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, test_id TEXT, question_number INTEGER NOT NULL, subject TEXT NOT NULL, chapter TEXT, question_type TEXT NOT NULL DEFAULT 'single_mcq', question_text TEXT NOT NULL, option_a TEXT NOT NULL, option_b TEXT NOT NULL, option_c TEXT NOT NULL, option_d TEXT NOT NULL, options_json TEXT, correct_answer TEXT, answer_status TEXT, explanation TEXT, source_page_number INTEGER NOT NULL, source_page_end INTEGER, source_pages_json TEXT, source_page_range TEXT, detected_answer TEXT, imported_answer TEXT, answer_set_code TEXT, answer_source_page INTEGER, answer_confidence REAL, answer_key_status TEXT, page_layout TEXT, chemistry_content_type TEXT, figure_url TEXT, figures_json TEXT, option_figures_json TEXT, match_table_json TEXT, structured_table_json TEXT, component_validation_json TEXT, original_snapshot_json TEXT, verification_status TEXT NOT NULL DEFAULT 'verified', confidence_score INTEGER NOT NULL DEFAULT 100, review_required INTEGER NOT NULL DEFAULT 0, review_notes TEXT, admin_override INTEGER NOT NULL DEFAULT 0, is_manually_edited INTEGER NOT NULL DEFAULT 0, manually_edited_at TEXT, edited_fields_json TEXT, is_deleted INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
+    `CREATE TABLE IF NOT EXISTS parser2_figures (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, question_id TEXT, question_number INTEGER, page_number INTEGER NOT NULL, source_pdf_id TEXT, figure_key TEXT NOT NULL, figure_url TEXT NOT NULL, crop_type TEXT, figure_type TEXT NOT NULL DEFAULT 'diagram', bounding_box_json TEXT, pixel_box_json TEXT, natural_width INTEGER, natural_height INTEGER, is_manual_crop INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);`,
+    `CREATE TABLE IF NOT EXISTS parser2_answer_keys (job_id TEXT NOT NULL, question_number INTEGER NOT NULL, raw_answer TEXT NOT NULL, verified_answer TEXT NOT NULL, set_code TEXT, source_page INTEGER, confidence REAL, source_type TEXT NOT NULL, explanation TEXT, matched_at TEXT NOT NULL, PRIMARY KEY (job_id, question_number));`,
     `CREATE TABLE IF NOT EXISTS parser2_validation_reports (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, quality_score INTEGER NOT NULL DEFAULT 100, total_checks INTEGER NOT NULL DEFAULT 0, passed_checks INTEGER NOT NULL DEFAULT 0, critical_errors_count INTEGER NOT NULL DEFAULT 0, warnings_count INTEGER NOT NULL DEFAULT 0, can_publish INTEGER NOT NULL DEFAULT 0, report_json TEXT NOT NULL, summary TEXT, created_at TEXT NOT NULL);`,
     `CREATE TABLE IF NOT EXISTS parser2_processing_logs (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, level TEXT NOT NULL, stage TEXT NOT NULL, message TEXT NOT NULL, details TEXT, timestamp TEXT NOT NULL);`
   ];
@@ -337,7 +341,16 @@ export async function ensureParser2D1Tables(): Promise<void> {
     ['structured_table_json', `ALTER TABLE parser2_questions ADD COLUMN structured_table_json TEXT;`],
     ['component_validation_json', `ALTER TABLE parser2_questions ADD COLUMN component_validation_json TEXT;`],
     ['original_snapshot_json', `ALTER TABLE parser2_questions ADD COLUMN original_snapshot_json TEXT;`],
-    ['admin_override', `ALTER TABLE parser2_questions ADD COLUMN admin_override INTEGER NOT NULL DEFAULT 0;`]
+    ['admin_override', `ALTER TABLE parser2_questions ADD COLUMN admin_override INTEGER NOT NULL DEFAULT 0;`],
+    ['source_page_end', `ALTER TABLE parser2_questions ADD COLUMN source_page_end INTEGER;`],
+    ['source_pages_json', `ALTER TABLE parser2_questions ADD COLUMN source_pages_json TEXT;`],
+    ['source_page_range', `ALTER TABLE parser2_questions ADD COLUMN source_page_range TEXT;`],
+    ['detected_answer', `ALTER TABLE parser2_questions ADD COLUMN detected_answer TEXT;`],
+    ['imported_answer', `ALTER TABLE parser2_questions ADD COLUMN imported_answer TEXT;`],
+    ['answer_set_code', `ALTER TABLE parser2_questions ADD COLUMN answer_set_code TEXT;`],
+    ['answer_source_page', `ALTER TABLE parser2_questions ADD COLUMN answer_source_page INTEGER;`],
+    ['answer_confidence', `ALTER TABLE parser2_questions ADD COLUMN answer_confidence REAL;`],
+    ['answer_key_status', `ALTER TABLE parser2_questions ADD COLUMN answer_key_status TEXT;`]
   ];
 
   for (const [col, sql] of questionMigrations) {
@@ -348,6 +361,15 @@ export async function ensureParser2D1Tables(): Promise<void> {
 }
 
 function mapD1RowToJob(r: any): Parser2Job {
+  const totalQ = Number(r.total_questions || 0);
+  const rawSaved = r.questions_saved !== undefined && r.questions_saved !== null ? Number(r.questions_saved) : undefined;
+  const isFinishedStatus = ['completed', 'review_required', 'published', 'approved'].includes(String(r.status || ''));
+  const resolvedSaved =
+    rawSaved !== undefined && rawSaved > 0
+      ? rawSaved
+      : isFinishedStatus && totalQ > 0
+      ? totalQ
+      : rawSaved;
   return {
     id: r.id,
     testName: r.test_name,
@@ -362,10 +384,12 @@ function mapD1RowToJob(r: any): Parser2Job {
     totalPages: Number(r.total_pages || 0),
     completedPages: Number(r.completed_pages || 0),
     failedPages: Number(r.failed_pages || 0),
-    totalQuestions: Number(r.total_questions || 0),
-    questionsDetected: r.questions_detected !== undefined ? Number(r.questions_detected) : undefined,
-    questionsSaved: r.questions_saved !== undefined ? Number(r.questions_saved) : undefined,
-    savedVerified: r.saved_verified !== undefined ? Boolean(r.saved_verified) : undefined,
+    totalQuestions: totalQ,
+    questionsDetected: r.questions_detected !== undefined && Number(r.questions_detected) > 0
+      ? Number(r.questions_detected)
+      : totalQ || undefined,
+    questionsSaved: resolvedSaved,
+    savedVerified: r.saved_verified !== undefined ? (Boolean(r.saved_verified) || (Boolean(resolvedSaved) && resolvedSaved! > 0)) : undefined,
     verifiedQuestions: Number(r.verified_questions || 0),
     reviewRequiredCount: Number(r.review_required_count || 0),
     figureCount: Number(r.figure_count || 0),
@@ -409,6 +433,15 @@ function mapD1RowToQuestion(r: any): Parser2Question {
     answerStatus: r.answer_status || undefined,
     explanation: r.explanation || undefined,
     sourcePageNumber: Number(r.source_page_number || 1),
+    sourcePageEnd: r.source_page_end ? Number(r.source_page_end) : undefined,
+    sourcePages: r.source_pages_json ? JSON.parse(r.source_pages_json) : undefined,
+    sourcePageRange: r.source_page_range || undefined,
+    detectedAnswer: r.detected_answer || undefined,
+    importedAnswer: r.imported_answer || undefined,
+    answerSetCode: r.answer_set_code || undefined,
+    answerSourcePage: r.answer_source_page ? Number(r.answer_source_page) : undefined,
+    answerConfidence: r.answer_confidence !== undefined && r.answer_confidence !== null ? Number(r.answer_confidence) : undefined,
+    answerKeyStatus: r.answer_key_status || undefined,
     pageLayout: r.page_layout || undefined,
     chemistryContentType: r.chemistry_content_type || undefined,
     figureUrl: r.figure_url || undefined,
@@ -529,7 +562,25 @@ export async function hydrateParser2FromRemoteStores(force: boolean = false): Pr
         }
       } catch {}
 
-      const mergedJobs = Array.from(mergedMap.values()).sort((a, b) => {
+      // Normalize & reconcile questionsSaved for any job whose local/published question count is known
+      const normalizedJobs = Array.from(mergedMap.values()).map((j) => {
+        const localQs: Parser2Question[] = Array.isArray(store.parser2_questions?.[j.id])
+          ? store.parser2_questions[j.id].filter((q: Parser2Question) => !q.isDeleted)
+          : [];
+        const actualCount = localQs.length;
+        if (actualCount > 0 && (!j.questionsSaved || j.questionsSaved !== actualCount)) {
+          return {
+            ...j,
+            totalQuestions: Math.max(j.totalQuestions || 0, actualCount),
+            questionsDetected: Math.max(j.questionsDetected || 0, actualCount),
+            questionsSaved: actualCount,
+            savedVerified: true
+          };
+        }
+        return j;
+      });
+
+      const mergedJobs = normalizedJobs.sort((a, b) => {
         const tA = new Date(a.createdAt || 0).getTime();
         const tB = new Date(b.createdAt || 0).getTime();
         if (tB !== tA) return tB - tA;
@@ -633,6 +684,46 @@ async function hydrateJobDetailsIfNeeded(jobId: string, force: boolean = false):
 }
 
 /**
+ * Reconciles job counters against actual persisted questions & published mock_questions.
+ * Fixes legacy "Saved 0 Qs" records without losing edits.
+ */
+export async function reconcileParser2JobCounts(jobId: string): Promise<Parser2Job | null> {
+  await hydrateJobDetailsIfNeeded(jobId);
+  const job = await getParser2JobById(jobId);
+  if (!job) return null;
+
+  const qs = await getParser2Questions(jobId);
+  let actualSaved = qs.length;
+
+  // Fallback check against published store_database mock_questions if job questions weren't hydrated
+  if (actualSaved === 0 && job.publishedTestId && fs.existsSync(LEGACY_STORE_PATH)) {
+    try {
+      const legacy = JSON.parse(fs.readFileSync(LEGACY_STORE_PATH, 'utf-8'));
+      const pubQs = legacy?.mock_questions?.[job.publishedTestId];
+      if (Array.isArray(pubQs) && pubQs.length > 0) {
+        actualSaved = pubQs.length;
+      }
+    } catch {}
+  }
+
+  if (actualSaved > 0 && (job.questionsSaved !== actualSaved || !job.savedVerified || job.totalQuestions !== actualSaved)) {
+    const updated: Parser2Job = {
+      ...job,
+      totalQuestions: Math.max(job.totalQuestions || 0, actualSaved),
+      questionsDetected: Math.max(job.questionsDetected || 0, actualSaved),
+      questionsSaved: actualSaved,
+      savedVerified: true,
+      verifiedQuestions: qs.length > 0 ? qs.filter(q => q.verificationStatus === 'verified' && !q.reviewRequired).length : job.verifiedQuestions,
+      reviewRequiredCount: qs.length > 0 ? qs.filter(q => q.reviewRequired).length : job.reviewRequiredCount
+    };
+    await saveParser2Job(updated);
+    return updated;
+  }
+
+  return job;
+}
+
+/**
  * Verification helper for automated tests (resets local state without deleting R2)
  */
 export function resetLocalParser2CacheOnly(): void {
@@ -650,7 +741,21 @@ export function resetLocalParser2CacheOnly(): void {
 export async function getParser2Jobs(options?: { forceRemoteSync?: boolean }): Promise<Parser2Job[]> {
   await hydrateParser2FromRemoteStores(Boolean(options?.forceRemoteSync));
   const store = loadStore();
-  const jobs: Parser2Job[] = Array.isArray(store.parser2_jobs) ? [...store.parser2_jobs] : [];
+  const jobs: Parser2Job[] = (Array.isArray(store.parser2_jobs) ? [...store.parser2_jobs] : []).map((j) => {
+    const localQs: Parser2Question[] = Array.isArray(store.parser2_questions?.[j.id])
+      ? store.parser2_questions[j.id].filter((q: Parser2Question) => !q.isDeleted)
+      : [];
+    if (localQs.length > 0 && (!j.questionsSaved || j.questionsSaved === 0)) {
+      return {
+        ...j,
+        totalQuestions: Math.max(j.totalQuestions || 0, localQs.length),
+        questionsDetected: Math.max(j.questionsDetected || 0, localQs.length),
+        questionsSaved: localQs.length,
+        savedVerified: true
+      };
+    }
+    return j;
+  });
 
   return jobs.sort((a, b) => {
     const tA = new Date(a.createdAt || 0).getTime();
@@ -879,42 +984,55 @@ export async function getParser2Questions(jobId: string, includeDeleted = false)
     .sort((a, b) => a.questionNumber - b.questionNumber);
 }
 
-async function syncQuestionsToRemote(jobId: string, questions: Parser2Question[]): Promise<void> {
+async function syncQuestionsToRemote(jobId: string, allQuestions: Parser2Question[], deltaQuestions?: Parser2Question[]): Promise<void> {
+  const d1Targets = deltaQuestions && deltaQuestions.length > 0 ? deltaQuestions : allQuestions;
   await Promise.allSettled([
-    putR2Json(r2JobKey(jobId, 'questions'), questions),
+    putR2Json(r2JobKey(jobId, 'questions'), allQuestions),
     isD1Configured()
       ? ensureParser2D1Tables().then(async () => {
-          for (const q of questions) {
-            const optA = q.options.find(o => o.label === 'A')?.value || '';
-            const optB = q.options.find(o => o.label === 'B')?.value || '';
-            const optC = q.options.find(o => o.label === 'C')?.value || '';
-            const optD = q.options.find(o => o.label === 'D')?.value || '';
+          const CHUNK = 6;
+          for (let idx = 0; idx < d1Targets.length; idx += CHUNK) {
+            const slice = d1Targets.slice(idx, idx + CHUNK);
+            await Promise.allSettled(
+              slice.map((q) => {
+                const optA = q.options.find(o => o.label === 'A')?.value || '';
+                const optB = q.options.find(o => o.label === 'B')?.value || '';
+                const optC = q.options.find(o => o.label === 'C')?.value || '';
+                const optD = q.options.find(o => o.label === 'D')?.value || '';
 
-            await executeD1Query(
-              `INSERT INTO parser2_questions (id, job_id, question_number, subject, chapter, question_type, question_text, option_a, option_b, option_c, option_d, options_json, correct_answer, answer_status, explanation, source_page_number, page_layout, chemistry_content_type, figure_url, figures_json, option_figures_json, match_table_json, structured_table_json, component_validation_json, original_snapshot_json, verification_status, confidence_score, review_required, review_notes, admin_override, is_manually_edited, manually_edited_at, edited_fields_json, is_deleted, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET question_text=excluded.question_text, option_a=excluded.option_a, option_b=excluded.option_b, option_c=excluded.option_c, option_d=excluded.option_d, options_json=excluded.options_json, correct_answer=excluded.correct_answer, answer_status=excluded.answer_status, explanation=excluded.explanation, page_layout=excluded.page_layout, chemistry_content_type=excluded.chemistry_content_type, figure_url=excluded.figure_url, figures_json=excluded.figures_json, option_figures_json=excluded.option_figures_json, match_table_json=excluded.match_table_json, structured_table_json=excluded.structured_table_json, component_validation_json=excluded.component_validation_json, original_snapshot_json=excluded.original_snapshot_json, verification_status=excluded.verification_status, confidence_score=excluded.confidence_score, review_required=excluded.review_required, review_notes=excluded.review_notes, admin_override=excluded.admin_override, is_manually_edited=excluded.is_manually_edited, manually_edited_at=excluded.manually_edited_at, edited_fields_json=excluded.edited_fields_json, is_deleted=excluded.is_deleted, updated_at=excluded.updated_at;`,
-              [
-                q.id, q.jobId, q.questionNumber, q.subject, q.chapter || '',
-                q.questionType, q.questionText, optA, optB, optC, optD,
-                JSON.stringify(q.options || []),
-                q.correctAnswer || '', q.answerStatus || '', q.explanation || '', q.sourcePageNumber,
-                q.pageLayout || '', q.chemistryContentType || '',
-                q.figureUrl || '',
-                q.figures ? JSON.stringify(q.figures) : '[]',
-                q.optionFigures ? JSON.stringify(q.optionFigures) : '{}',
-                q.matchTable ? JSON.stringify(q.matchTable) : '',
-                q.structuredTable ? JSON.stringify(q.structuredTable) : '',
-                q.componentValidation ? JSON.stringify(q.componentValidation) : '',
-                q.originalExtractedSnapshot ? JSON.stringify(q.originalExtractedSnapshot) : '',
-                q.verificationStatus, q.confidenceScore,
-                q.reviewRequired ? 1 : 0, q.reviewNotes || '',
-                q.adminOverride ? 1 : 0,
-                q.isManuallyEdited ? 1 : 0, q.manuallyEditedAt || '',
-                q.editedFields ? JSON.stringify(q.editedFields) : '[]',
-                q.isDeleted ? 1 : 0, q.createdAt, q.updatedAt
-              ]
-            ).catch(() => {});
+                return executeD1Query(
+                  `INSERT INTO parser2_questions (id, job_id, question_number, subject, chapter, question_type, question_text, option_a, option_b, option_c, option_d, options_json, correct_answer, answer_status, explanation, source_page_number, source_page_end, source_pages_json, source_page_range, detected_answer, imported_answer, answer_set_code, answer_source_page, answer_confidence, answer_key_status, page_layout, chemistry_content_type, figure_url, figures_json, option_figures_json, match_table_json, structured_table_json, component_validation_json, original_snapshot_json, verification_status, confidence_score, review_required, review_notes, admin_override, is_manually_edited, manually_edited_at, edited_fields_json, is_deleted, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET question_text=excluded.question_text, option_a=excluded.option_a, option_b=excluded.option_b, option_c=excluded.option_c, option_d=excluded.option_d, options_json=excluded.options_json, correct_answer=excluded.correct_answer, answer_status=excluded.answer_status, explanation=excluded.explanation, source_page_number=excluded.source_page_number, source_page_end=excluded.source_page_end, source_pages_json=excluded.source_pages_json, source_page_range=excluded.source_page_range, detected_answer=excluded.detected_answer, imported_answer=excluded.imported_answer, answer_set_code=excluded.answer_set_code, answer_source_page=excluded.answer_source_page, answer_confidence=excluded.answer_confidence, answer_key_status=excluded.answer_key_status, page_layout=excluded.page_layout, chemistry_content_type=excluded.chemistry_content_type, figure_url=excluded.figure_url, figures_json=excluded.figures_json, option_figures_json=excluded.option_figures_json, match_table_json=excluded.match_table_json, structured_table_json=excluded.structured_table_json, component_validation_json=excluded.component_validation_json, original_snapshot_json=excluded.original_snapshot_json, verification_status=excluded.verification_status, confidence_score=excluded.confidence_score, review_required=excluded.review_required, review_notes=excluded.review_notes, admin_override=excluded.admin_override, is_manually_edited=excluded.is_manually_edited, manually_edited_at=excluded.manually_edited_at, edited_fields_json=excluded.edited_fields_json, is_deleted=excluded.is_deleted, updated_at=excluded.updated_at;`,
+                  [
+                    q.id, q.jobId, q.questionNumber, q.subject, q.chapter || '',
+                    q.questionType, q.questionText, optA, optB, optC, optD,
+                    JSON.stringify(q.options || []),
+                    q.correctAnswer || '', q.answerStatus || '', q.explanation || '',
+                    q.sourcePageNumber,
+                    q.sourcePageEnd ?? q.sourcePageNumber,
+                    JSON.stringify(q.sourcePages && q.sourcePages.length ? q.sourcePages : [q.sourcePageNumber]),
+                    q.sourcePageRange || `Page ${q.sourcePageNumber}`,
+                    q.detectedAnswer || '', q.importedAnswer || '', q.answerSetCode || '',
+                    q.answerSourcePage ?? null, q.answerConfidence ?? null, q.answerKeyStatus || '',
+                    q.pageLayout || '', q.chemistryContentType || '',
+                    q.figureUrl || '',
+                    q.figures ? JSON.stringify(q.figures) : '[]',
+                    q.optionFigures ? JSON.stringify(q.optionFigures) : '{}',
+                    q.matchTable ? JSON.stringify(q.matchTable) : '',
+                    q.structuredTable ? JSON.stringify(q.structuredTable) : '',
+                    q.componentValidation ? JSON.stringify(q.componentValidation) : '',
+                    q.originalExtractedSnapshot ? JSON.stringify(q.originalExtractedSnapshot) : '',
+                    q.verificationStatus, q.confidenceScore,
+                    q.reviewRequired ? 1 : 0, q.reviewNotes || '',
+                    q.adminOverride ? 1 : 0,
+                    q.isManuallyEdited ? 1 : 0, q.manuallyEditedAt || '',
+                    q.editedFields ? JSON.stringify(q.editedFields) : '[]',
+                    q.isDeleted ? 1 : 0, q.createdAt, q.updatedAt
+                  ]
+                ).catch(() => {});
+              })
+            );
           }
         })
       : Promise.resolve()
@@ -964,9 +1082,67 @@ export async function upsertParser2Questions(
           preserved.push(inc.questionNumber);
           continue;
         }
+        const mergedOptions = (['A', 'B', 'C', 'D'] as const).map(lbl => {
+          const exOpt = (existing.options || []).find(o => o.label === lbl);
+          const inOpt = (inc.options || []).find(o => o.label === lbl);
+          const exVal = isPlaceholderOption(exOpt?.value) ? '' : (exOpt?.value || '').trim();
+          const inVal = isPlaceholderOption(inOpt?.value) ? '' : (inOpt?.value || '').trim();
+          if (inOpt?.imageUrl && !exOpt?.imageUrl) return inOpt;
+          if (exOpt?.imageUrl && !inOpt?.imageUrl) return exOpt;
+          if (!exVal) {
+            return inVal ? { ...(inOpt || { label: lbl, text: inVal, value: inVal }), text: inVal, value: inVal } : { label: lbl, text: '', value: '' };
+          }
+          if (inVal && inVal.length > exVal.length) {
+            return { ...(inOpt || { label: lbl, text: inVal, value: inVal }), text: inVal, value: inVal };
+          }
+          return { ...(exOpt || { label: lbl, text: exVal, value: exVal }), text: exVal, value: exVal };
+        });
+
+        const exTextTrim = (existing.questionText || '').trim();
+        const inTextTrim = (inc.questionText || '').trim();
+        let mergedText = exTextTrim.length >= inTextTrim.length ? existing.questionText : inc.questionText;
+        if (
+          exTextTrim.length >= 15 &&
+          inTextTrim.length >= 15 &&
+          !exTextTrim.toLowerCase().includes(inTextTrim.slice(0, 20).toLowerCase()) &&
+          !inTextTrim.toLowerCase().includes(exTextTrim.slice(0, 20).toLowerCase()) &&
+          (inc.sourcePageNumber || 0) > (existing.sourcePageNumber || 0)
+        ) {
+          mergedText = `${exTextTrim}\n${inTextTrim}`;
+        }
+
+        const mergedMatch =
+          (inc.matchTable?.rows?.length || 0) >= (existing.matchTable?.rows?.length || 0)
+            ? inc.matchTable || existing.matchTable
+            : existing.matchTable;
+        const mergedTable =
+          mergedMatch && mergedMatch.rows && mergedMatch.rows.length > 0
+            ? undefined
+            : (inc.structuredTable?.rows?.length || 0) >= (existing.structuredTable?.rows?.length || 0)
+              ? inc.structuredTable || existing.structuredTable
+              : existing.structuredTable;
+
+        const pageList = [
+          ...(existing.sourcePages || [existing.sourcePageNumber]),
+          ...(inc.sourcePages || [inc.sourcePageNumber])
+        ];
+        const pageMeta = formatSourcePageRange(pageList, existing.sourcePageNumber || inc.sourcePageNumber || 1);
+
         byNum.set(inc.questionNumber, {
+          ...existing,
           ...inc,
           id: existing.id || inc.id,
+          sourcePageNumber: pageMeta.startPage,
+          sourcePageEnd: pageMeta.endPage,
+          sourcePages: pageMeta.sourcePages,
+          sourcePageRange: pageMeta.label,
+          questionText: mergedText,
+          options: mergedOptions,
+          matchTable: mergedMatch,
+          structuredTable: mergedTable,
+          figureUrl: existing.figureUrl || inc.figureUrl,
+          originalFigureUrl: existing.originalFigureUrl || inc.originalFigureUrl || inc.figureUrl,
+          figures: (existing.figures?.length || 0) >= (inc.figures?.length || 0) ? existing.figures : inc.figures,
           correctAnswer: existing.correctAnswer || inc.correctAnswer,
           answerStatus: existing.answerStatus || inc.answerStatus,
           explanation: existing.explanation || inc.explanation,
@@ -982,7 +1158,7 @@ export async function upsertParser2Questions(
     return { savedList: nextList, preservedManualNums: preserved };
   });
 
-  await syncQuestionsToRemote(jobId, savedList);
+  await syncQuestionsToRemote(jobId, savedList, incoming);
   return { savedList, preservedManualNums };
 }
 
@@ -1056,10 +1232,16 @@ export async function updateParser2Question(
             const optC = updated.options.find(o => o.label === 'C')?.value || '';
             const optD = updated.options.find(o => o.label === 'D')?.value || '';
             return executeD1Query(
-              `UPDATE parser2_questions SET question_text=?, option_a=?, option_b=?, option_c=?, option_d=?, options_json=?, correct_answer=?, answer_status=?, explanation=?, figure_url=?, figures_json=?, option_figures_json=?, match_table_json=?, structured_table_json=?, component_validation_json=?, verification_status=?, confidence_score=?, review_required=?, review_notes=?, admin_override=?, is_manually_edited=?, manually_edited_at=?, edited_fields_json=?, is_deleted=?, updated_at=? WHERE id=?;`,
+              `UPDATE parser2_questions SET question_text=?, option_a=?, option_b=?, option_c=?, option_d=?, options_json=?, correct_answer=?, answer_status=?, explanation=?, source_page_number=?, source_page_end=?, source_pages_json=?, source_page_range=?, detected_answer=?, imported_answer=?, answer_set_code=?, answer_source_page=?, answer_confidence=?, answer_key_status=?, figure_url=?, figures_json=?, option_figures_json=?, match_table_json=?, structured_table_json=?, component_validation_json=?, verification_status=?, confidence_score=?, review_required=?, review_notes=?, admin_override=?, is_manually_edited=?, manually_edited_at=?, edited_fields_json=?, is_deleted=?, updated_at=? WHERE id=?;`,
               [
                 updated.questionText, optA, optB, optC, optD, JSON.stringify(updated.options || []),
                 updated.correctAnswer || '', updated.answerStatus || '', updated.explanation || '',
+                updated.sourcePageNumber || 1,
+                updated.sourcePageEnd ?? updated.sourcePageNumber ?? 1,
+                JSON.stringify(updated.sourcePages && updated.sourcePages.length ? updated.sourcePages : [updated.sourcePageNumber || 1]),
+                updated.sourcePageRange || `Page ${updated.sourcePageNumber || 1}`,
+                updated.detectedAnswer || '', updated.importedAnswer || '', updated.answerSetCode || '',
+                updated.answerSourcePage ?? null, updated.answerConfidence ?? null, updated.answerKeyStatus || '',
                 updated.figureUrl || '',
                 updated.figures ? JSON.stringify(updated.figures) : '[]',
                 updated.optionFigures ? JSON.stringify(updated.optionFigures) : '{}',
@@ -1129,7 +1311,26 @@ export async function saveParser2Figures(jobId: string, figures: Parser2Figure[]
     return list;
   });
 
-  await putR2Json(r2JobKey(jobId, 'figures'), deduped);
+  await Promise.allSettled([
+    putR2Json(r2JobKey(jobId, 'figures'), deduped),
+    isD1Configured()
+      ? ensureParser2D1Tables().then(async () => {
+          await executeD1Query(`DELETE FROM parser2_figures WHERE job_id = ?;`, [jobId]);
+          for (const f of deduped.slice(0, 300)) {
+            await executeD1Query(
+              `INSERT OR REPLACE INTO parser2_figures (id, job_id, question_id, question_number, page_number, source_pdf_id, figure_key, figure_url, crop_type, figure_type, bounding_box_json, pixel_box_json, natural_width, natural_height, is_manual_crop, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+              [
+                f.id, jobId, f.questionId || '', f.questionNumber ?? null, f.pageNumber || 1,
+                f.sourcePdfId || '', f.figureKey, f.figureUrl, f.cropType || f.figureType || 'diagram',
+                f.figureType || 'diagram', f.boundingBox ? JSON.stringify(f.boundingBox) : '',
+                f.pixelBox ? JSON.stringify(f.pixelBox) : '', f.naturalWidth ?? f.width ?? null,
+                f.naturalHeight ?? f.height ?? null, f.isManualCrop ? 1 : 0, f.createdAt || new Date().toISOString()
+              ]
+            ).catch(() => {});
+          }
+        })
+      : Promise.resolve()
+  ]);
 }
 
 export async function upsertParser2Figures(jobId: string, incoming: Parser2Figure[]): Promise<Parser2Figure[]> {
@@ -1148,7 +1349,25 @@ export async function upsertParser2Figures(jobId: string, incoming: Parser2Figur
     return next;
   });
 
-  await putR2Json(r2JobKey(jobId, 'figures'), merged);
+  await Promise.allSettled([
+    putR2Json(r2JobKey(jobId, 'figures'), merged),
+    isD1Configured()
+      ? ensureParser2D1Tables().then(async () => {
+          for (const f of incoming) {
+            await executeD1Query(
+              `INSERT OR REPLACE INTO parser2_figures (id, job_id, question_id, question_number, page_number, source_pdf_id, figure_key, figure_url, crop_type, figure_type, bounding_box_json, pixel_box_json, natural_width, natural_height, is_manual_crop, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+              [
+                f.id, jobId, f.questionId || '', f.questionNumber ?? null, f.pageNumber || 1,
+                f.sourcePdfId || '', f.figureKey, f.figureUrl, f.cropType || f.figureType || 'diagram',
+                f.figureType || 'diagram', f.boundingBox ? JSON.stringify(f.boundingBox) : '',
+                f.pixelBox ? JSON.stringify(f.pixelBox) : '', f.naturalWidth ?? f.width ?? null,
+                f.naturalHeight ?? f.height ?? null, f.isManualCrop ? 1 : 0, f.createdAt || new Date().toISOString()
+              ]
+            ).catch(() => {});
+          }
+        })
+      : Promise.resolve()
+  ]);
   return merged;
 }
 
@@ -1167,7 +1386,30 @@ export async function saveParser2AnswerKeys(jobId: string, keys: Record<number, 
     store.parser2_answer_keys[jobId] = keys;
   });
 
-  await putR2Json(r2JobKey(jobId, 'answerKeys'), keys);
+  await Promise.allSettled([
+    putR2Json(r2JobKey(jobId, 'answerKeys'), keys),
+    isD1Configured()
+      ? ensureParser2D1Tables().then(async () => {
+          await executeD1Query(`DELETE FROM parser2_answer_keys WHERE job_id = ?;`, [jobId]);
+          const entries = Object.values(keys || {});
+          const CHUNK = 15;
+          for (let i = 0; i < entries.length; i += CHUNK) {
+            await Promise.allSettled(
+              entries.slice(i, i + CHUNK).map((k) =>
+                executeD1Query(
+                  `INSERT OR REPLACE INTO parser2_answer_keys (job_id, question_number, raw_answer, verified_answer, set_code, source_page, confidence, source_type, explanation, matched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+                  [
+                    jobId, k.questionNumber, k.rawAnswer || k.verifiedAnswer, k.verifiedAnswer,
+                    k.setCode || '', k.sourcePage ?? null, k.confidence ?? null,
+                    k.sourceType || 'manual', k.explanation || '', k.matchedAt || new Date().toISOString()
+                  ]
+                )
+              )
+            );
+          }
+        })
+      : Promise.resolve()
+  ]);
 }
 
 // -------------------------------------------------------------

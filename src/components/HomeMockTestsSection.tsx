@@ -83,10 +83,9 @@ export const HomeMockTestsSection: React.FC<HomeMockTestsSectionProps> = ({
       {/* Section Header */}
       <div className="flex items-end justify-between px-0.5">
         <div>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-purple-100 via-indigo-50 to-pink-50 border border-purple-200/80 text-purple-900 text-[10px] font-black uppercase tracking-wider mb-1.5 shadow-2xs">
-            <Sparkles className="w-3.5 h-3.5 text-purple-600 fill-purple-500/20 animate-pulse" />
-            <span>NTA NEET CBT Simulator &amp; AIR Rank</span>
-          </div>
+          <p className="text-[11px] font-bold text-indigo-700 uppercase tracking-wider mb-1">
+            NTA NEET CBT Simulator · All India Rank
+          </p>
           <h2 className="text-lg sm:text-xl md:text-2xl font-black text-slate-900 tracking-tight font-['Outfit',sans-serif] leading-tight">
             Featured NEET Mock Tests
           </h2>
@@ -116,7 +115,7 @@ export const HomeMockTestsSection: React.FC<HomeMockTestsSectionProps> = ({
             <div
               key={test.id}
               onClick={() => onSelectTest(test)}
-              className="group relative bg-white hover:bg-gradient-to-b hover:from-white hover:to-slate-50 rounded-2xl border border-slate-200 hover:border-indigo-400 p-4 shadow-sm hover:shadow-lg transition-all duration-200 cursor-pointer flex flex-col justify-between overflow-hidden"
+              className="group relative bg-white hover:bg-slate-50/70 rounded-2xl border border-slate-200 hover:border-indigo-400 p-3.5 shadow-2xs hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between overflow-hidden"
             >
               {/* Top ambient color glow */}
               <div className={`absolute -top-12 -right-12 w-32 h-32 bg-gradient-to-br ${theme.glow} rounded-full blur-2xl pointer-events-none group-hover:scale-125 transition-transform duration-500`} />
@@ -191,7 +190,7 @@ export const HomeMockTestsSection: React.FC<HomeMockTestsSectionProps> = ({
                     e.stopPropagation();
                     onSelectTest(test);
                   }}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition shadow-xs cursor-pointer ${
+                  className={`min-h-[42px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-black transition shadow-xs cursor-pointer whitespace-nowrap ${
                     isPurchased || isFree
                       ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 hover:from-blue-700 hover:to-violet-700 text-white shadow-indigo-500/25'
                       : 'bg-slate-900 hover:bg-indigo-600 text-white'

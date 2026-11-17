@@ -102,7 +102,7 @@ export const HomeFullCourseCard: React.FC<HomeFullCourseCardProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-2.5">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-black bg-gradient-to-r from-amber-400 via-orange-500 to-rose-500 text-slate-950 shadow-xs uppercase tracking-wider">
-                <Sparkles className="w-3 h-3 text-slate-950 fill-current animate-pulse" />
+                <Sparkles className="w-3 h-3 text-slate-950 fill-current" />
                 NEET 2026 TOPPERS CHOICE
               </span>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-400/30">
@@ -114,7 +114,7 @@ export const HomeFullCourseCard: React.FC<HomeFullCourseCardProps> = ({
             {/* Enrolled Status or Discount Badge */}
             <div className="flex items-center gap-2">
               {isPurchased ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-500/20 text-emerald-400 border border-emerald-400/40 animate-pulse">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-500/20 text-emerald-400 border border-emerald-400/40">
                   <Unlock className="w-3.5 h-3.5" />
                   Enrolled &amp; Verified
                 </span>
@@ -147,7 +147,6 @@ export const HomeFullCourseCard: React.FC<HomeFullCourseCardProps> = ({
                   }`}
                 >
                   <span>{c.targetClass || c.title}</span>
-                  {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />}
                 </button>
               );
             })}
@@ -228,7 +227,7 @@ export const HomeFullCourseCard: React.FC<HomeFullCourseCardProps> = ({
                 <button
                   type="button"
                   onClick={handleSampleClick}
-                  className="flex-1 min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700/80 transition cursor-pointer active:scale-95"
+                  className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700/80 transition cursor-pointer active:scale-95"
                   title="View free course sample files on Google Drive"
                 >
                   <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
@@ -240,7 +239,7 @@ export const HomeFullCourseCard: React.FC<HomeFullCourseCardProps> = ({
                     type="button"
                     onClick={handleAccessClick}
                     disabled={isAccessing}
-                    className="flex-1 min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 text-slate-950 text-xs font-black shadow-md transition cursor-pointer active:scale-95 animate-pulse"
+                    className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 text-slate-950 text-xs font-black shadow-md transition cursor-pointer active:scale-95"
                   >
                     <Unlock className="w-3.5 h-3.5" />
                     <span>{isAccessing ? 'Opening...' : 'Access Course'}</span>
@@ -253,7 +252,7 @@ export const HomeFullCourseCard: React.FC<HomeFullCourseCardProps> = ({
                       e.stopPropagation();
                       onViewCourse();
                     }}
-                    className="flex-1 min-h-[40px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-black shadow-md shadow-indigo-600/30 transition cursor-pointer active:scale-95 group-hover:translate-x-0.5"
+                    className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-black shadow-md shadow-indigo-600/30 transition cursor-pointer active:scale-95 group-hover:translate-x-0.5"
                   >
                     <span>View Course</span>
                     <ArrowRight className="w-3.5 h-3.5" />

@@ -45,6 +45,7 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
   const [showExplanation, setShowExplanation] = useState(false);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [isAutoLocating, setIsAutoLocating] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const validOptionsCount = (question.options || []).filter(o => {
     const optImg = o.imageUrl || question.optionFigures?.[o.label];
@@ -55,7 +56,9 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
 
   const hasIncompleteOptions = !question.options || question.options.length < 4 || validOptionsCount < 4;
   const isTruncatedStem = !question.adminOverride && isQuestionTextTruncated(question.questionText);
-  const isMissingTable = question.verificationStatus === 'table_incomplete';
+  const hasMatchRows = Boolean(question.matchTable?.rows?.length);
+  const hasStructuredRows = !hasMatchRows && Boolean(question.structuredTable?.rows?.length);
+  const isMissingTable = question.verificationStatus === 'table_incomplete' && !hasMatchRows && !hasStructuredRows;
   const hasMathArtifacts =
     !question.adminOverride &&
     (hasSuspiciousMathNotation(question.questionText || '').suspect ||
@@ -145,8 +148,6 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
     }
   };
 
-  const hasMatchRows = Boolean(question.matchTable?.rows?.length);
-  const hasStructuredRows = Boolean(question.structuredTable?.rows?.length);
   const needsTableCheck = isMissingTable || hasMatchRows || hasStructuredRows;
 
   return (
@@ -158,15 +159,21 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
       
       {/* Top Meta Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-100">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
             {question.questionNumber}
           </span>
           <span className="text-xs font-bold text-slate-900">
             {question.subject} {question.chapter ? `• ${question.chapter}` : ''}
           </span>
-          <span className="text-[10.5px] font-semibold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">
-            Page {question.sourcePageNumber || 1}
+          <span
+            className={`text-[10.5px] font-semibold px-2 py-0.5 rounded-md ${
+              (question.sourcePages?.length || 0) > 1
+                ? 'text-indigo-700 bg-indigo-50 border border-indigo-200'
+                : 'text-slate-500 bg-slate-100'
+            }`}
+          >
+            {question.sourcePageRange || `Page ${question.sourcePageNumber || 1}`}
           </span>
           {typeof question.confidenceScore === 'number' && (
             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
@@ -307,13 +314,17 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
               {(question.figures || [])
                 .filter(f => f.figureUrl && f.figureUrl !== question.figureUrl)
                 .map((extraFig, idx) => (
-                  <img
-                    key={extraFig.id || idx}
-                    src={extraFig.figureUrl}
-                    alt={`Additional figure ${idx + 2} for Q${question.questionNumber}`}
-                    className="max-h-24 object-contain rounded border border-slate-200 bg-white p-1 cursor-pointer hover:border-blue-400"
-                    onClick={() => setZoomedImage(extraFig.figureUrl)}
-                  />
+                  <div key={extraFig.id || idx} className="flex flex-col items-center gap-1">
+                    <img
+                      src={extraFig.figureUrl}
+                      alt={`Additional figure ${idx + 2} for Q${question.questionNumber}`}
+                      className="max-h-24 object-contain rounded border border-slate-200 bg-white p-1 cursor-pointer hover:border-blue-400"
+                      onClick={() => setZoomedImage(extraFig.figureUrl)}
+                    />
+                    <span className="text-[9.5px] font-bold text-slate-500">
+                      Pg {extraFig.pageNumber} · {(extraFig.cropType || extraFig.figureType || 'figure').replace(/_/g, ' ')}
+                    </span>
+                  </div>
                 ))}
             </div>
           )}
@@ -351,8 +362,8 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
         </div>
       )}
 
-      {/* Structured Data Table */}
-      {question.structuredTable && question.structuredTable.rows && question.structuredTable.rows.length > 0 && (
+      {/* Structured Data Table (only render when no canonical matchTable exists) */}
+      {!hasMatchRows && question.structuredTable && question.structuredTable.rows && question.structuredTable.rows.length > 0 && (
         <div className="my-3 overflow-x-auto rounded-xl border border-slate-200 bg-white text-xs">
           <div className="bg-slate-50 px-3 py-1.5 font-bold text-slate-700 flex items-center gap-1.5 border-b border-slate-200">
             <TableIcon className="w-3.5 h-3.5 text-indigo-600" /> Data Table
@@ -538,14 +549,36 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
             <Edit3 className="w-3.5 h-3.5" /> Edit
           </button>
 
-          <button
-            type="button"
-            onClick={() => onDelete(question.id)}
-            className="text-[11px] font-bold text-rose-600 hover:text-white bg-rose-50 hover:bg-rose-600 border border-rose-200 p-1 rounded-lg transition cursor-pointer"
-            title="Delete question"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+          {confirmDelete ? (
+            <div className="flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-lg px-1.5 py-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmDelete(false);
+                  onDelete(question.id);
+                }}
+                className="text-[10.5px] font-black text-rose-700 hover:underline px-1 cursor-pointer"
+              >
+                Confirm Delete
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="text-[10.5px] font-bold text-slate-500 hover:text-slate-700 px-1 cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              className="text-[11px] font-bold text-rose-600 hover:text-white bg-rose-50 hover:bg-rose-600 border border-rose-200 p-1 rounded-lg transition cursor-pointer"
+              title="Delete question"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

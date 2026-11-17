@@ -26,6 +26,7 @@ import {
   resolveTestCategoryIds
 } from '../lib/testCategoriesData';
 import { getStoredMockTests, saveStoredMockTests, syncAllMockTestsFromSources } from '../lib/mockTestData';
+import { getAdminRequestHeaders } from '../lib/firebase';
 
 const THEME_PRESET_OPTIONS: { value: TestCategoryThemePreset; label: string; previewClass: string }[] = [
   { value: 'amber', label: 'Amber Gold', previewClass: 'from-amber-500 to-orange-600' },
@@ -179,7 +180,7 @@ export const AdminTestCategoriesManager: React.FC = () => {
 
       const resp = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload)
       });
       const data = await resp.json();
@@ -203,7 +204,7 @@ export const AdminTestCategoriesManager: React.FC = () => {
     try {
       const resp = await fetch(`/api/test-categories/${encodeURIComponent(cat.id)}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(patch)
       });
       const data = await resp.json();
@@ -233,7 +234,7 @@ export const AdminTestCategoriesManager: React.FC = () => {
     try {
       const resp = await fetch(`/api/test-categories/${encodeURIComponent(deleteTarget.id)}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(
           reassignMode === 'standalone'
             ? { makeStandalone: true }
@@ -270,7 +271,7 @@ export const AdminTestCategoriesManager: React.FC = () => {
     try {
       const resp = await fetch(`/api/db/mock-tests/${encodeURIComponent(test.id)}/categories`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           categoryIds: nextIds,
           isStandalone: standaloneNow
@@ -296,7 +297,7 @@ export const AdminTestCategoriesManager: React.FC = () => {
     try {
       const resp = await fetch(`/api/db/mock-tests/${encodeURIComponent(test.id)}/categories`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           categoryIds: nextStandalone ? [] : resolveTestCategoryIds(test),
           isStandalone: nextStandalone

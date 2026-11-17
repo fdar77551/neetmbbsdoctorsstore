@@ -234,7 +234,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               </span>
             ) : (
               <>
-                <div className="flex items-baseline gap-1.5">
+                <div className="flex items-baseline gap-1.5 tabular-nums">
                   <span className="text-xs sm:text-sm font-black text-blue-600">
                     ₹{product.price}
                   </span>
@@ -245,7 +245,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                   )}
                 </div>
                 {product.type === 'book' && (
-                  <span className="text-[9px] font-bold text-emerald-600">
+                  <span className="text-[9px] font-bold text-emerald-600 tabular-nums">
                     {product.shippingCost && product.shippingCost > 0 ? `+₹${product.shippingCost} delivery` : 'Free Delivery'}
                   </span>
                 )}
@@ -263,7 +263,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 id={`download-pdf-btn-${product.id}`}
                 onClick={handleDownloadPdf}
                 disabled={isDownloading}
-                className="flex-1 min-h-[40px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-75"
+                className="flex-1 min-h-[44px] sm:min-h-[40px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-75 whitespace-nowrap"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>{isDownloading ? 'Saving...' : 'Download PDF'}</span>
@@ -273,7 +273,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 id={`read-pdf-btn-${product.id}`}
                 onClick={handleReadPdf}
                 title="Read Online"
-                className="min-h-[40px] py-2 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] rounded-xl transition active:scale-95 border border-blue-200 cursor-pointer flex items-center gap-1"
+                className="min-h-[44px] sm:min-h-[40px] py-2 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] rounded-xl transition active:scale-95 border border-blue-200 cursor-pointer flex items-center gap-1 whitespace-nowrap"
               >
                 <BookOpen className="w-3.5 h-3.5" />
                 <span>Read</span>
@@ -285,7 +285,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               <button
                 id={`buy-btn-${product.id}`}
                 onClick={() => onQuickBuy(product)}
-                className="flex-1 min-h-[40px] bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer"
+                className="flex-1 min-h-[44px] sm:min-h-[40px] bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer whitespace-nowrap"
               >
                 {product.type === 'pdf' ? (
                   <>
@@ -304,7 +304,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 id={`add-cart-${product.id}`}
                 onClick={() => onAddToCart(product)}
                 title="Add to Cart"
-                className="min-h-[40px] min-w-[40px] p-2 bg-slate-50 hover:bg-slate-100 text-slate-700 hover:text-blue-600 rounded-xl transition active:scale-95 border border-slate-200 cursor-pointer flex items-center justify-center"
+                className="min-h-[44px] sm:min-h-[40px] min-w-[44px] sm:min-w-[40px] p-2 bg-slate-50 hover:bg-slate-100 text-slate-700 hover:text-blue-600 rounded-xl transition active:scale-95 border border-slate-200 cursor-pointer flex items-center justify-center shrink-0"
               >
                 <ShoppingCart className="w-4 h-4" />
               </button>

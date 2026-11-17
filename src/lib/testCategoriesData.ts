@@ -139,15 +139,36 @@ export function saveStoredTestCategories(categories: TestCategory[]): TestCatego
   return normalized;
 }
 
-export async function fetchTestCategoriesFromServer(): Promise<TestCategory[]> {
+let lastCategoriesSyncError: string | null = null;
+export function getLastCategoriesSyncError(): string | null {
+  return lastCategoriesSyncError;
+}
+
+export async function fetchTestCategoriesFromServer(options?: { throwOnError?: boolean }): Promise<TestCategory[]> {
   try {
     const res = await fetch(resolveApiUrl('/api/test-categories'));
+    const ct = res.headers.get('content-type') || '';
+    if (!res.ok || !ct.includes('application/json')) {
+      const msg = !ct.includes('application/json')
+        ? `Test categories endpoint returned non-JSON response (${res.status}). Check Worker/API routing.`
+        : `Test categories sync failed (HTTP ${res.status}).`;
+      lastCategoriesSyncError = msg;
+      if (options?.throwOnError) throw new Error(msg);
+      console.warn('[TestCategories]', msg);
+      return getStoredTestCategories();
+    }
     const data = await res.json();
     if (data && data.success && Array.isArray(data.categories)) {
+      lastCategoriesSyncError = null;
       return saveStoredTestCategories(data.categories);
     }
-  } catch (e) {
-    console.warn('[TestCategories] Fetch fallback note:', e);
+    const apiErr = data?.error || 'Invalid test categories payload from server.';
+    lastCategoriesSyncError = apiErr;
+    if (options?.throwOnError) throw new Error(apiErr);
+  } catch (e: any) {
+    lastCategoriesSyncError = e?.message || 'Unable to reach /api/test-categories.';
+    console.warn('[TestCategories] Fetch error:', lastCategoriesSyncError);
+    if (options?.throwOnError) throw e;
   }
   return getStoredTestCategories();
 }

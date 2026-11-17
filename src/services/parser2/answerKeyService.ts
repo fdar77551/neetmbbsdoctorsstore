@@ -9,7 +9,23 @@ export interface AnswerKeyMatchResult {
   explanationMatchedCount: number;
   missingQuestions: number[];
   skippedManualCount: number;
+  conflictCount: number;
   keysMap: Record<number, Parser2AnswerKeyEntry>;
+}
+
+export interface AnswerKeyComparisonRow {
+  questionNumber: number;
+  questionId?: string;
+  sourcePageNumber: number;
+  sourcePageRange?: string;
+  currentAnswer?: 'A' | 'B' | 'C' | 'D';
+  detectedAnswer?: 'A' | 'B' | 'C' | 'D';
+  importedAnswer?: 'A' | 'B' | 'C' | 'D';
+  setCode?: string;
+  sourcePage?: number;
+  confidence?: number;
+  sourceType?: Parser2AnswerKeyEntry['sourceType'];
+  status: 'matched' | 'missing' | 'conflict' | 'needs_review' | 'verified';
 }
 
 export class AnswerKeyService {
@@ -113,6 +129,129 @@ Return JSON array of { questionNumber, rawAnswer, answer }.`;
   }
 
   /**
+   * Parse an uploaded Answer Key PDF (both selectable text and scanned/grid answer key sheets).
+   */
+  public async parseAnswerKeyPdf(
+    pdfBuffer: Buffer,
+    options?: { dpi?: number; setCode?: string }
+  ): Promise<{ keys: Record<number, Parser2AnswerKeyEntry>; pagesScanned: number; keyPages: number[] }> {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const { figureExtractionService } = await import('./figureExtractionService');
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
+    const totalPages = Math.min(doc.numPages, 30);
+    const merged: Record<number, Parser2AnswerKeyEntry> = {};
+    const keyPages: number[] = [];
+    const now = new Date().toISOString();
+    const dpi = Math.max(160, options?.dpi || 180);
+
+    for (let p = 1; p <= totalPages; p++) {
+      let pageText = '';
+      try {
+        const page = await doc.getPage(p);
+        const content = await page.getTextContent();
+        pageText = content.items.map((it: any) => it.str).join(' ');
+      } catch {}
+
+      const textKeys = this.parseAnswerKeyText(pageText, 'answer_key_pdf');
+      const textCount = Object.keys(textKeys).length;
+      if (textCount >= 8) {
+        keyPages.push(p);
+        for (const [kStr, entry] of Object.entries(textKeys)) {
+          const qNum = Number(kStr);
+          merged[qNum] = {
+            ...entry,
+            sourceType: 'answer_key_pdf',
+            sourcePage: p,
+            setCode: options?.setCode || entry.setCode,
+            confidence: entry.confidence ?? 96,
+            matchedAt: now
+          };
+        }
+        continue;
+      }
+
+      // Render page PNG and use Gemini vision for tabular/image answer key PDFs
+      try {
+        const pagePng = await figureExtractionService.renderPdfPageToPng(pdfBuffer, p, dpi);
+        const imgKeys = await this.parseAnswerKeyImage(pagePng.toString('base64'), 'image/png');
+        const imgCount = Object.keys(imgKeys).length;
+        if (imgCount > 0) {
+          keyPages.push(p);
+          for (const [kStr, entry] of Object.entries(imgKeys)) {
+            const qNum = Number(kStr);
+            merged[qNum] = {
+              ...entry,
+              sourceType: 'answer_key_pdf',
+              sourcePage: p,
+              setCode: options?.setCode || entry.setCode,
+              confidence: entry.confidence ?? 92,
+              matchedAt: now
+            };
+          }
+        }
+      } catch {}
+    }
+
+    return { keys: merged, pagesScanned: totalPages, keyPages };
+  }
+
+  /**
+   * Build detailed per-question answer key comparison table for the Admin UI
+   */
+  public buildAnswerKeyComparison(
+    questions: Parser2Question[],
+    keys: Record<number, Parser2AnswerKeyEntry>
+  ): AnswerKeyComparisonRow[] {
+    const qByNum = new Map<number, Parser2Question>();
+    for (const q of questions) {
+      qByNum.set(q.questionNumber, q);
+    }
+
+    const allQNums = new Set<number>([
+      ...questions.map(q => q.questionNumber),
+      ...Object.keys(keys || {}).map(Number).filter(n => n > 0)
+    ]);
+
+    return Array.from(allQNums)
+      .sort((a, b) => a - b)
+      .map(qNum => {
+        const q = qByNum.get(qNum);
+        const k = keys[qNum];
+        const importedAns = k?.verifiedAnswer || q?.importedAnswer;
+        const detectedAns = q?.detectedAnswer || (q?.answerStatus === 'inferred' ? q.correctAnswer : undefined);
+        const currentAns = q?.correctAnswer;
+
+        let status: AnswerKeyComparisonRow['status'] = 'missing';
+        if (q?.isManuallyEdited && q.editedFields?.includes('correctAnswer') && currentAns) {
+          status = importedAns && importedAns !== currentAns ? 'conflict' : 'verified';
+        } else if (detectedAns && importedAns && detectedAns !== importedAns) {
+          status = 'conflict';
+        } else if (importedAns && currentAns === importedAns) {
+          status = k?.confidence !== undefined && k.confidence < 75 ? 'needs_review' : 'matched';
+        } else if (importedAns && !currentAns) {
+          status = 'matched';
+        } else if (currentAns) {
+          status = 'verified';
+        }
+
+        return {
+          questionNumber: qNum,
+          questionId: q?.id,
+          sourcePageNumber: q?.sourcePageNumber || k?.sourcePage || 1,
+          sourcePageRange: q?.sourcePageRange || (q ? `Page ${q.sourcePageNumber}` : undefined),
+          currentAnswer: currentAns,
+          detectedAnswer: detectedAns,
+          importedAnswer: importedAns,
+          setCode: k?.setCode || q?.answerSetCode,
+          sourcePage: k?.sourcePage ?? q?.answerSourcePage,
+          confidence: k?.confidence ?? q?.answerConfidence,
+          sourceType: k?.sourceType,
+          status
+        };
+      });
+  }
+
+  /**
    * Match extracted answer keys & explanations onto questions strictly by questionNumber.
    * Rules:
    * - Never overwrite manually edited questions unless overwriteManual=true.
@@ -131,6 +270,7 @@ Return JSON array of { questionNumber, rawAnswer, answer }.`;
     let matchedCount = 0;
     let explanationMatchedCount = 0;
     let skippedManualCount = 0;
+    let conflictCount = 0;
     const missingQuestions: number[] = [];
 
     for (const q of questions) {
@@ -138,8 +278,14 @@ Return JSON array of { questionNumber, rawAnswer, answer }.`;
       const solEntry = solutions[q.questionNumber];
       const targetAnswer = keyEntry?.verifiedAnswer || solEntry?.answer;
 
+      if (keyEntry) {
+        q.importedAnswer = keyEntry.verifiedAnswer;
+        if (keyEntry.setCode) q.answerSetCode = keyEntry.setCode;
+        if (keyEntry.sourcePage) q.answerSourcePage = keyEntry.sourcePage;
+        if (keyEntry.confidence !== undefined) q.answerConfidence = keyEntry.confidence;
+      }
+
       if (q.isManuallyEdited && !overwriteManual) {
-        // Still attach missing explanation if user hasn't manually edited explanation
         const editedSet = new Set(q.editedFields || []);
         if (solEntry?.explanation && !editedSet.has('explanation') && !q.explanation) {
           q.explanation = solEntry.explanation;
@@ -147,26 +293,44 @@ Return JSON array of { questionNumber, rawAnswer, answer }.`;
         }
         if (!editedSet.has('correctAnswer')) {
           if (targetAnswer) {
+            if (q.detectedAnswer && q.detectedAnswer !== targetAnswer) {
+              conflictCount++;
+              q.answerKeyStatus = 'conflict';
+            } else {
+              q.answerKeyStatus = 'matched';
+            }
             q.correctAnswer = targetAnswer;
             q.answerStatus = 'matched';
             matchedCount++;
           }
         } else {
+          if (targetAnswer && q.correctAnswer && q.correctAnswer !== targetAnswer) {
+            conflictCount++;
+            q.answerKeyStatus = 'conflict';
+          } else if (q.correctAnswer) {
+            q.answerKeyStatus = 'verified';
+          }
           skippedManualCount++;
         }
         continue;
       }
 
       if (targetAnswer) {
+        if (q.detectedAnswer && q.detectedAnswer !== targetAnswer) {
+          conflictCount++;
+          q.answerKeyStatus = 'conflict';
+        } else {
+          q.answerKeyStatus = keyEntry?.confidence !== undefined && keyEntry.confidence < 75 ? 'needs_review' : 'matched';
+        }
         q.correctAnswer = targetAnswer;
         q.answerStatus = 'matched';
         matchedCount++;
       } else if (markMissing && !q.correctAnswer) {
         q.answerStatus = 'answer_missing';
+        q.answerKeyStatus = 'missing';
         missingQuestions.push(q.questionNumber);
       }
 
-      // Preserve existing explanation if already valid and incoming is empty
       const incomingExplanation = solEntry?.explanation || keyEntry?.explanation;
       if (incomingExplanation && incomingExplanation.trim().length > 3) {
         q.explanation = incomingExplanation.trim();
@@ -179,6 +343,7 @@ Return JSON array of { questionNumber, rawAnswer, answer }.`;
       explanationMatchedCount,
       missingQuestions,
       skippedManualCount,
+      conflictCount,
       keysMap: keys
     };
   }

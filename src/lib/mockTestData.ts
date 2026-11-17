@@ -16,7 +16,8 @@ import {
   ref,
   set as rtdbSet,
   get as rtdbGet,
-  remove as rtdbRemove
+  remove as rtdbRemove,
+  getAdminRequestHeaders
 } from './firebase';
 import { 
   idbSaveQuestions, 
@@ -432,15 +433,16 @@ export function saveStoredMockTests(tests: MockTest[]) {
 
     // 4. Sync to Cloudflare D1 Database (/api/d1/tests) & backend
     if (typeof fetch !== 'undefined') {
+      const adminHeaders = getAdminRequestHeaders({ 'Content-Type': 'application/json' });
       fetch(resolveApiUrl('/api/d1/tests'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminHeaders,
         body: JSON.stringify({ tests: cleanTests })
       }).catch(d1Err => console.warn('Cloudflare D1 tests sync note:', d1Err));
 
       fetch(resolveApiUrl('/api/db/mock-tests'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminHeaders,
         body: JSON.stringify(cleanTests)
       }).catch(err => console.warn('Backend tests sync note:', err));
     }
@@ -498,12 +500,17 @@ function preferMoreRecentOrCompleteTest(existing: MockTest | undefined, incoming
     : { ...incoming, ...existing };
 }
 
+let lastMockTestsSyncError: string | null = null;
+export function getLastMockTestsSyncError(): string | null {
+  return lastMockTestsSyncError;
+}
+
 /**
  * Universal Multi-Source Synchronizer for Mock Tests:
- * Syncs from IndexedDB, Express Backend DB, Cloudflare D1, and Firebase RTDB,
- * merging by timestamp/completeness without ever skipping Express Backend DB.
+ * Syncs from Express/Worker Backend DB, Cloudflare D1, Firebase RTDB, and IndexedDB,
+ * surfacing API errors cleanly instead of silently pretending sync succeeded.
  */
-export async function syncAllMockTestsFromSources(): Promise<MockTest[]> {
+export async function syncAllMockTestsFromSources(options?: { throwOnError?: boolean }): Promise<MockTest[]> {
   const mergedMap = new Map<string, MockTest>();
   const mergeList = (list: any[]) => {
     if (!Array.isArray(list)) return;
@@ -514,7 +521,7 @@ export async function syncAllMockTestsFromSources(): Promise<MockTest[]> {
     }
   };
 
-  // 1. Try IndexedDB first
+  // 1. Try IndexedDB first as instant warm cache
   try {
     const fromIdb = await idbGetTests();
     if (fromIdb && fromIdb.length > 0) {
@@ -522,26 +529,58 @@ export async function syncAllMockTestsFromSources(): Promise<MockTest[]> {
     }
   } catch {}
 
-  // 2. Always fetch from Express Server DB, Cloudflare D1, and Firebase RTDB in parallel
-  const [bkRes, d1Res, fbRes] = await Promise.allSettled([
-    fetch(resolveApiUrl('/api/db/mock-tests')).then(r => (r.ok ? r.json() : null)),
-    fetch(resolveApiUrl('/api/d1/tests')).then(r => (r.ok ? r.json() : null)),
-    fetch(`${FIREBASE_RTDB_BASE}/mock_tests.json`).then(r => (r.ok ? r.json() : null))
+  const safeFetchJson = async (url: string, label: string): Promise<{ data: any; error?: string }> => {
+    try {
+      const resp = await fetch(url);
+      const ct = resp.headers.get('content-type') || '';
+      if (!resp.ok) {
+        return { data: null, error: `${label}: HTTP ${resp.status}` };
+      }
+      if (!ct.includes('application/json')) {
+        return { data: null, error: `${label}: non-JSON response` };
+      }
+      return { data: await resp.json() };
+    } catch (err: any) {
+      return { data: null, error: `${label}: ${err?.message || 'network error'}` };
+    }
+  };
+
+  // 2. Always fetch from Express/Worker Server DB, Cloudflare D1, and Firebase RTDB in parallel
+  const [bkRes, d1Res, fbRes] = await Promise.all([
+    safeFetchJson(resolveApiUrl('/api/db/mock-tests'), '/api/db/mock-tests'),
+    safeFetchJson(resolveApiUrl('/api/d1/tests'), '/api/d1/tests'),
+    safeFetchJson(`${FIREBASE_RTDB_BASE}/mock_tests.json`, 'Firebase RTDB')
   ]);
 
-  if (fbRes.status === 'fulfilled' && fbRes.value) {
-    const fbTests: MockTest[] = Array.isArray(fbRes.value)
-      ? fbRes.value.filter(Boolean)
-      : Object.values(fbRes.value);
+  const errors: string[] = [];
+  if (bkRes.error) errors.push(bkRes.error);
+  if (d1Res.error) errors.push(d1Res.error);
+  if (fbRes.error) errors.push(fbRes.error);
+
+  if (fbRes.data) {
+    const fbTests: MockTest[] = Array.isArray(fbRes.data)
+      ? fbRes.data.filter(Boolean)
+      : Object.values(fbRes.data);
     mergeList(fbTests);
   }
 
-  if (d1Res.status === 'fulfilled' && d1Res.value && Array.isArray(d1Res.value.tests)) {
-    mergeList(d1Res.value.tests);
+  if (d1Res.data && Array.isArray(d1Res.data.tests)) {
+    mergeList(d1Res.data.tests);
   }
 
-  if (bkRes.status === 'fulfilled' && bkRes.value && Array.isArray(bkRes.value.tests)) {
-    mergeList(bkRes.value.tests);
+  if (bkRes.data && Array.isArray(bkRes.data.tests)) {
+    mergeList(bkRes.data.tests);
+  }
+
+  const allAuthoritativeFailed = Boolean(bkRes.error && d1Res.error && fbRes.error);
+  lastMockTestsSyncError = allAuthoritativeFailed
+    ? `Unable to synchronize tests (${errors.join('; ')})`
+    : bkRes.error && d1Res.error
+    ? `Backend & D1 sync warning (${bkRes.error}; ${d1Res.error})`
+    : null;
+
+  if (allAuthoritativeFailed && options?.throwOnError) {
+    throw new Error(lastMockTestsSyncError!);
   }
 
   // Filter out demo/sample legacy tests and sanitize
@@ -555,7 +594,7 @@ export async function syncAllMockTestsFromSources(): Promise<MockTest[]> {
     })
     .map(sanitizeTestMetadata);
 
-  // Ensure verified Gold-Standard Test 8 is present if backend already includes it or store is otherwise empty
+  // Ensure verified Gold-Standard Test 8 is present if store is otherwise empty
   if (cleanTests.length === 0) {
     cleanTests.push({ ...GOLD_STANDARD_TEST_8_INFO, id: 'cbt-gold-test-08', isPurchased: true, status: 'published' });
   }
@@ -568,7 +607,9 @@ export async function syncAllMockTestsFromSources(): Promise<MockTest[]> {
     }
     idbSaveTests(cleanTests).catch(() => {});
     if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-      window.dispatchEvent(new CustomEvent('neetmbbs_mock_tests_updated', { detail: { fromServer: true } }));
+      window.dispatchEvent(new CustomEvent('neetmbbs_mock_tests_updated', {
+        detail: { fromServer: !allAuthoritativeFailed, syncError: lastMockTestsSyncError }
+      }));
     }
   }
 
@@ -1356,19 +1397,21 @@ export function cleanQuestionTextForMatchTable(questionText: string, matchTable?
   }
 
   for (const row of matchTable.rows) {
-    if (row.leftText && row.leftText.trim().length > 1) {
-      const esc = row.leftText.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const leftVal = (row.leftText || row.colAText || '').trim();
+    const rightVal = (row.rightText || row.colBText || '').trim();
+    if (leftVal.length > 1) {
+      const esc = leftVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       cleaned = cleaned.replace(new RegExp(`(?:\\([a-zA-Z0-9ivx]+\\)\\s*)?${esc}`, 'gi'), '');
     }
-    if (row.rightText && row.rightText.trim().length > 1) {
-      const esc = row.rightText.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (rightVal.length > 1) {
+      const esc = rightVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       cleaned = cleaned.replace(new RegExp(`(?:\\([a-zA-Z0-9ivx]+\\)\\s*)?${esc}`, 'gi'), '');
     }
   }
 
   cleaned = cleaned.replace(/^\s*(?:\(?[A-Da-d1-4I-Vi-v]\)?|[A-Da-d1-4I-Vi-v][\.:])\s+.*$/gm, '');
   cleaned = cleaned
-    .replace(/(?:Column|List|कॉलम|सूची)\s*[-–—I12]+/gi, '')
+    .replace(/^\s*(?:Column|List|कॉलम|सूची)\s*[-–—]?\s*[I12]+\s*$/gim, '')
     .replace(/^\s*\([a-zA-Z0-9ivx]+\)\s*$/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

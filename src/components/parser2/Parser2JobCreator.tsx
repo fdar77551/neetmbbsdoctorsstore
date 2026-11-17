@@ -9,6 +9,7 @@ import {
   Key
 } from 'lucide-react';
 import { Parser2Subject, Parser2OcrEngine, Parser2Job } from '../../services/parser2/types';
+import { getAdminRequestHeaders } from '../../lib/firebase';
 
 interface Parser2JobCreatorProps {
   onClose: () => void;
@@ -76,6 +77,7 @@ export const Parser2JobCreator: React.FC<Parser2JobCreatorProps> = ({
 
       const res = await fetch('/api/parser2/jobs', {
         method: 'POST',
+        headers: getAdminRequestHeaders(),
         body: formData
       });
 

@@ -23,6 +23,7 @@ import { Parser2Job, Parser2Question, Parser2ValidationReport } from '../../serv
 import { TestCategory, TestCategoryThemePreset, TestVisibility } from '../../types';
 import { DEFAULT_TEST_CATEGORIES, fetchTestCategoriesFromServer } from '../../lib/testCategoriesData';
 import { syncAllMockTestsFromSources } from '../../lib/mockTestData';
+import { getAdminRequestHeaders } from '../../lib/firebase';
 
 interface Parser2PublishModalProps {
   job: Parser2Job;
@@ -202,7 +203,7 @@ export const Parser2PublishModal: React.FC<Parser2PublishModalProps> = ({
 
       const res = await fetch(`/api/parser2/jobs/${job.id}/publish`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           title: title.trim(),
           subtitle: subtitle.trim(),

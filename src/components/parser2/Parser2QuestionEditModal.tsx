@@ -40,6 +40,7 @@ import {
   Parser2Figure,
   isPlaceholderOption 
 } from '../../services/parser2/types';
+import { getAdminRequestHeaders } from '../../lib/firebase';
 
 export type CopyTargetField =
   | 'questionText'
@@ -610,9 +611,10 @@ export const Parser2QuestionEditModal: React.FC<Parser2QuestionEditModalProps> =
     });
 
     try {
+      const hasCanonicalMatchTable = Boolean(matchTable && matchTable.rows?.length);
       const res = await fetch(`/api/parser2/jobs/${jobId}/questions/${question.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           questionText: questionText.trim(),
           subject,
@@ -624,8 +626,8 @@ export const Parser2QuestionEditModal: React.FC<Parser2QuestionEditModalProps> =
           optionFigures: Object.keys(optionFigures).length > 0 ? optionFigures : undefined,
           figureUrl: figureUrl ?? null,
           ...(figureUrl ? (figuresList.length > 0 ? { figures: figuresList, figureAssetIds: figuresList.map(f => f.id) } : {}) : { figures: [], figureAssetIds: [] }),
-          matchTable: matchTable && matchTable.rows?.length ? matchTable : undefined,
-          structuredTable: structuredTable && structuredTable.rows?.length ? structuredTable : undefined,
+          matchTable: hasCanonicalMatchTable ? matchTable : undefined,
+          structuredTable: !hasCanonicalMatchTable && structuredTable && structuredTable.rows?.length ? structuredTable : undefined,
           verificationStatus: verifyAfterSave ? 'verified' : 'needs_review',
           reviewRequired: !verifyAfterSave,
           reviewNotes: verifyAfterSave
@@ -673,7 +675,7 @@ export const Parser2QuestionEditModal: React.FC<Parser2QuestionEditModalProps> =
                 Edit &amp; Recover Q{question.questionNumber}
               </h3>
               <p className="text-[11px] text-slate-500">
-                Source: Page {question.sourcePageNumber || 1} · {question.verificationStatus.replace(/_/g, ' ')}
+                Source: {question.sourcePageRange || `Page ${question.sourcePageNumber || 1}`} · {question.verificationStatus.replace(/_/g, ' ')}
               </p>
             </div>
           </div>
@@ -1364,8 +1366,8 @@ export const Parser2QuestionEditModal: React.FC<Parser2QuestionEditModalProps> =
               </div>
             )}
 
-            {/* Structured Table Editor (table_based questions) */}
-            {(questionType === 'table_based' || (structuredTable && structuredTable.rows?.length > 0)) && (
+            {/* Structured Table Editor (only when no canonical matchTable is present) */}
+            {!(matchTable && matchTable.rows?.length > 0) && (questionType === 'table_based' || (structuredTable && structuredTable.rows?.length > 0)) && (
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-xs font-black text-slate-700 flex items-center gap-1.5">

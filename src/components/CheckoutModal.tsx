@@ -721,31 +721,55 @@ Best wishes for your NEET UG Preparation! 🩺✨`
         localStorage.removeItem('neetmbbs_pending_checkout');
       } catch (e) {}
 
-      // Optional Server Verification (if server available)
-      try {
-        const verifyRes = await fetch('/api/payment/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            razorpay_order_id: razorpayResponse.razorpay_order_id || orderId,
-            razorpay_payment_id: razorpayResponse.razorpay_payment_id,
-            razorpay_signature: razorpayResponse.razorpay_signature,
-            order_data: {
-              amount: totalAmount,
-              userEmail: emailInput || userEmail,
-              items: items.map(i => ({ title: i.product.title, quantity: i.quantity, price: i.product.price }))
-            }
-          })
-        });
+      // Server Verification + Authoritative Mock Test Unlock persistence
+      const resolvedBuyerEmail = (emailInput || userEmail || 'aspirant@gmail.com').toLowerCase().trim();
+      const mockTestItem = items.find(
+        i =>
+          (i.product as any)?.category === 'Mock Test' ||
+          i.product?.id?.startsWith('package:') ||
+          i.product?.id?.startsWith('cbt-')
+      );
 
-        if (verifyRes.ok && verifyRes.headers.get('content-type')?.includes('application/json')) {
-          const verifyData = await verifyRes.json();
-          if (!verifyData.success) {
-            console.warn('Server verification note:', verifyData.message);
-          }
+      const verifyRes = await fetch('/api/payment/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          razorpay_order_id: razorpayResponse.razorpay_order_id || orderId,
+          razorpay_payment_id: razorpayResponse.razorpay_payment_id,
+          razorpay_signature: razorpayResponse.razorpay_signature,
+          order_data: {
+            amount: totalAmount,
+            userEmail: resolvedBuyerEmail,
+            items: items.map(i => ({
+              productId: i.product.id,
+              title: i.product.title,
+              quantity: i.quantity,
+              price: i.product.price
+            }))
+          },
+          mockTestUnlock: mockTestItem
+            ? {
+                testId: mockTestItem.product.id,
+                userId: resolvedBuyerEmail,
+                userEmail: resolvedBuyerEmail,
+                userName: shippingAddress.fullName || userName || 'NEET Aspirant',
+                amount: Number(mockTestItem.product.price) || totalAmount,
+                packageType: mockTestItem.product.id.startsWith('package:')
+                  ? mockTestItem.product.id.replace('package:', '')
+                  : undefined
+              }
+            : undefined
+        })
+      });
+
+      const verifyCt = verifyRes.headers.get('content-type') || '';
+      if (verifyCt.includes('application/json')) {
+        const verifyData = await verifyRes.json();
+        if (!verifyRes.ok || !verifyData.success) {
+          throw new Error(verifyData.message || verifyData.error || `Payment verification rejected (HTTP ${verifyRes.status})`);
         }
-      } catch (e) {
-        // Safe on Netlify
+      } else if (!verifyRes.ok) {
+        throw new Error(`Payment verification failed (HTTP ${verifyRes.status}).`);
       }
 
       // Verified! Create local persistent Order record

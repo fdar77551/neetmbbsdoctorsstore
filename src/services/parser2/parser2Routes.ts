@@ -24,8 +24,10 @@ import {
   saveParser2ValidationReport,
   getParser2Logs,
   getParser2Settings,
-  saveParser2Settings
+  saveParser2Settings,
+  reconcileParser2JobCounts
 } from './parser2Db';
+import { ADMIN_EMAILS } from '../../lib/firebase';
 import { uploadParser2Asset, getParser2AssetBuffer, deleteParser2JobAssets } from './parser2R2Storage';
 import { jobQueueService, evaluateStrictQuestionStatus, ACTIVE_PARSER_JOB_STATUSES } from './jobQueueService';
 import { validationEngine } from './validationEngine';
@@ -33,7 +35,8 @@ import { figureExtractionService } from './figureExtractionService';
 import {
   isQuestionTextTruncated,
   parseMatchTableFromText,
-  parseStructuredTableFromText
+  parseStructuredTableFromText,
+  formatSourcePageRange
 } from './layoutEngine';
 import { mistralOcrService } from './mistralOcrService';
 import { geminiVerificationService } from './geminiVerificationService';
@@ -48,6 +51,7 @@ import {
 import { formatScientificMathAndPowers, cleanForFirebase, FIREBASE_RTDB_BASE } from '../../lib/mockTestData';
 import {
   Parser2AnswerKeyEntry,
+  Parser2CropType,
   Parser2Figure,
   Parser2Job,
   Parser2SourceFile,
@@ -55,6 +59,17 @@ import {
 } from './types';
 import { normalizeTestCategories } from '../../lib/testCategoriesData';
 import { TestCategory } from '../../types';
+
+const ADMIN_EMAIL_SET = new Set(ADMIN_EMAILS.map(e => e.toLowerCase().trim()));
+
+function requireAdminIfIdentified(req: express.Request, res: express.Response): boolean {
+  const email = String(req.headers['x-user-email'] || req.body?.adminEmail || '').toLowerCase().trim();
+  if (email && !ADMIN_EMAIL_SET.has(email)) {
+    res.status(403).json({ success: false, error: 'Unauthorized: Admin access required for this operation.' });
+    return false;
+  }
+  return true;
+}
 
 async function refreshJobStatsAndReport(jobId: string): Promise<{
   job: Parser2Job | null;
@@ -69,6 +84,9 @@ async function refreshJobStatsAndReport(jobId: string): Promise<{
   const report = validationEngine.auditQuestions(jobId, allQs, targetCount);
 
   job.totalQuestions = allQs.length;
+  job.questionsDetected = Math.max(job.questionsDetected || 0, allQs.length);
+  job.questionsSaved = allQs.length;
+  job.savedVerified = allQs.length > 0;
   job.figureCount = allFigs.length;
   job.verifiedQuestions = allQs.filter(q => q.verificationStatus === 'verified' && !q.reviewRequired).length;
   job.reviewRequiredCount = allQs.filter(q => q.reviewRequired).length;
@@ -226,6 +244,7 @@ parser2Router.post(
     { name: 'answerKeyFile', maxCount: 1 }
   ]),
   async (req: express.Request, res: express.Response) => {
+    if (!requireAdminIfIdentified(req, res)) return;
     try {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
       const questionFile = files?.questionPdf?.[0];
@@ -402,8 +421,12 @@ parser2Router.post(
 // -------------------------------------------------------------
 parser2Router.get('/jobs/:jobId', async (req, res) => {
   try {
-    const job = await getParser2JobById(req.params.jobId);
+    let job = await getParser2JobById(req.params.jobId);
     if (!job) return res.status(404).json({ success: false, error: 'Job not found' });
+
+    if (!job.questionsSaved || job.questionsSaved === 0) {
+      job = (await reconcileParser2JobCounts(job.id)) || job;
+    }
 
     const pages = await getParser2Pages(job.id);
     const logs = await getParser2Logs(job.id);
@@ -424,6 +447,7 @@ parser2Router.get('/jobs/:jobId', async (req, res) => {
 });
 
 parser2Router.post('/jobs/:jobId/start', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     await jobQueueService.startJob(req.params.jobId);
     return res.json({ success: true, message: 'Processing started.' });
@@ -433,6 +457,7 @@ parser2Router.post('/jobs/:jobId/start', async (req, res) => {
 });
 
 parser2Router.post('/jobs/:jobId/resume', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     await jobQueueService.startJob(req.params.jobId);
     return res.json({ success: true, message: 'Processing resumed from last page checkpoint.' });
@@ -442,6 +467,7 @@ parser2Router.post('/jobs/:jobId/resume', async (req, res) => {
 });
 
 parser2Router.post('/jobs/:jobId/pause', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     await jobQueueService.pauseJob(req.params.jobId);
     return res.json({ success: true, message: 'Processing paused.' });
@@ -451,6 +477,7 @@ parser2Router.post('/jobs/:jobId/pause', async (req, res) => {
 });
 
 parser2Router.post('/jobs/:jobId/retry-failed', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     await jobQueueService.retryFailedPages(req.params.jobId);
     return res.json({ success: true, message: 'Retrying failed pages.' });
@@ -460,6 +487,7 @@ parser2Router.post('/jobs/:jobId/retry-failed', async (req, res) => {
 });
 
 parser2Router.delete('/jobs/:jobId', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     const { jobId } = req.params;
     await jobQueueService.pauseJob(jobId);
@@ -471,11 +499,67 @@ parser2Router.delete('/jobs/:jobId', async (req, res) => {
   }
 });
 
-// Upload or paste Answer Key (Image, Text, or Raw JSON body) after or during parsing
+// Get stored Answer Keys & per-question comparison table
+parser2Router.get('/jobs/:jobId/answer-key', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const job = await getParser2JobById(jobId);
+    if (!job) return res.status(404).json({ success: false, error: 'Job not found.' });
+    const answerKeys = await getParser2AnswerKeys(jobId);
+    const questions = await getParser2Questions(jobId);
+    const comparison = answerKeyService.buildAnswerKeyComparison(questions, answerKeys);
+    return res.json({
+      success: true,
+      answerKeys,
+      comparison,
+      count: Object.keys(answerKeys).length
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Auto-detect Answer Key pages/entries from the job's current uploaded PDF (preview or apply)
+parser2Router.post('/jobs/:jobId/answer-key/detect', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
+  try {
+    const { jobId } = req.params;
+    const apply = req.body?.apply === true || req.body?.apply === 'true';
+    const overwriteManual = req.body?.overwriteManual === true || req.body?.overwriteManual === 'true';
+    const setCode = typeof req.body?.setCode === 'string' ? req.body.setCode.trim() : undefined;
+
+    const detection = await jobQueueService.detectAnswerKeyFromCurrentPdf(jobId, {
+      apply,
+      overwriteManual,
+      setCode
+    });
+
+    const refreshed = apply ? await refreshJobStatsAndReport(jobId) : null;
+    const questions = apply ? await getParser2Questions(jobId) : undefined;
+    const answerKeys = await getParser2AnswerKeys(jobId);
+
+    return res.json({
+      success: true,
+      ...detection,
+      answerKeys,
+      job: refreshed?.job,
+      validationReport: refreshed?.report,
+      questions,
+      message: detection.detectedCount > 0
+        ? `Detected ${detection.detectedCount} answer key entries on page(s) ${detection.keyPages.join(', ')}${detection.applied ? ' and applied to questions.' : '.'}`
+        : 'No answer key sheet detected in current PDF.'
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Upload or paste Answer Key (PDF, Image, Text, or Structured Entries)
 parser2Router.post(
   '/jobs/:jobId/answer-key',
   upload.single('answerKeyFile'),
   async (req: express.Request, res: express.Response) => {
+    if (!requireAdminIfIdentified(req, res)) return;
     try {
       const { jobId } = req.params;
       const job = await getParser2JobById(jobId);
@@ -484,11 +568,23 @@ parser2Router.post(
       let rawText = typeof req.body?.rawText === 'string' ? req.body.rawText : '';
       let imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64 : undefined;
       let mimeType = typeof req.body?.mimeType === 'string' ? req.body.mimeType : undefined;
+      let pdfBuffer: Buffer | undefined = undefined;
+      let entries = Array.isArray(req.body?.entries) ? req.body.entries : undefined;
+      const setCode = typeof req.body?.setCode === 'string' ? req.body.setCode.trim() : undefined;
       const overwriteManual = req.body?.overwriteManual === true || req.body?.overwriteManual === 'true';
+      const replaceAll = req.body?.replaceAll === true || req.body?.replaceAll === 'true';
+
+      if (typeof req.body?.entries === 'string') {
+        try { entries = JSON.parse(req.body.entries); } catch {}
+      }
 
       if (req.file) {
-        const fMime = req.file.mimetype || 'image/png';
-        if (fMime.startsWith('image/')) {
+        const fMime = (req.file.mimetype || '').toLowerCase();
+        const fName = (req.file.originalname || '').toLowerCase();
+        if (fMime === 'application/pdf' || fName.endsWith('.pdf')) {
+          pdfBuffer = req.file.buffer;
+          await uploadParser2Asset(jobId, 'source', `answer-key-${Date.now()}.pdf`, req.file.buffer, 'application/pdf');
+        } else if (fMime.startsWith('image/')) {
           imageBase64 = req.file.buffer.toString('base64');
           mimeType = fMime;
           await uploadParser2Asset(jobId, 'source', `answer-key-${Date.now()}.png`, req.file.buffer, fMime);
@@ -497,10 +593,10 @@ parser2Router.post(
         }
       }
 
-      if (!rawText && !imageBase64) {
+      if (!rawText && !imageBase64 && !pdfBuffer && (!entries || entries.length === 0)) {
         return res.status(400).json({
           success: false,
-          error: 'Provide answer key text or an answer key image.'
+          error: 'Provide an Answer Key PDF, image, pasted text, or entries.'
         });
       }
 
@@ -508,26 +604,97 @@ parser2Router.post(
         rawText,
         imageBase64,
         mimeType,
-        overwriteManual
+        pdfBuffer,
+        entries,
+        setCode,
+        overwriteManual,
+        replaceAll
       });
 
       const refreshed = await refreshJobStatsAndReport(jobId);
       const questions = await getParser2Questions(jobId);
+      const answerKeys = await getParser2AnswerKeys(jobId);
+      const comparison = answerKeyService.buildAnswerKeyComparison(questions, answerKeys);
       const parsedKeysCount = Object.keys(applyResult.keysMap || {}).length;
 
       return res.json({
         success: true,
         result: applyResult,
+        answerKeys,
+        comparison,
         job: refreshed.job,
         validationReport: refreshed.report,
         questions,
-        message: `Parsed ${parsedKeysCount} answer keys; updated ${applyResult.matchedCount} questions (${applyResult.skippedManualCount} manual edits preserved).`
+        message: `Saved ${parsedKeysCount} answer keys; updated ${applyResult.matchedCount} questions (${applyResult.skippedManualCount} manual edits preserved).`
       });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
   }
 );
+
+// Update / Edit Answer Key entries from spreadsheet UI
+parser2Router.put('/jobs/:jobId/answer-key', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
+  try {
+    const { jobId } = req.params;
+    const { entries, rawText, setCode, overwriteManual = true, replaceAll = false } = req.body || {};
+    if (!Array.isArray(entries) && !rawText) {
+      return res.status(400).json({ success: false, error: 'Provide entries array or rawText to update answer keys.' });
+    }
+
+    const applyResult = await jobQueueService.applyAnswerKeyToJob(jobId, {
+      entries,
+      rawText,
+      setCode,
+      overwriteManual: Boolean(overwriteManual),
+      replaceAll: Boolean(replaceAll)
+    });
+
+    const refreshed = await refreshJobStatsAndReport(jobId);
+    const questions = await getParser2Questions(jobId);
+    const answerKeys = await getParser2AnswerKeys(jobId);
+    const comparison = answerKeyService.buildAnswerKeyComparison(questions, answerKeys);
+
+    return res.json({
+      success: true,
+      result: applyResult,
+      answerKeys,
+      comparison,
+      job: refreshed.job,
+      validationReport: refreshed.report,
+      questions,
+      message: `Updated answer keys (${Object.keys(answerKeys).length} total entries, ${applyResult.matchedCount} matched).`
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Delete / Reset Answer Key entries for a job
+parser2Router.delete('/jobs/:jobId/answer-key', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
+  try {
+    const { jobId } = req.params;
+    const { clearedCount } = await jobQueueService.clearAnswerKeysForJob(jobId);
+    const refreshed = await refreshJobStatsAndReport(jobId);
+    const questions = await getParser2Questions(jobId);
+    const comparison = answerKeyService.buildAnswerKeyComparison(questions, {});
+
+    return res.json({
+      success: true,
+      clearedCount,
+      answerKeys: {},
+      comparison,
+      job: refreshed.job,
+      validationReport: refreshed.report,
+      questions,
+      message: `Removed ${clearedCount} answer key entry(ies).`
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 parser2Router.get('/jobs/:jobId/pages/:pageNumber/image', async (req, res) => {
   try {
@@ -640,6 +807,7 @@ parser2Router.get('/jobs/:jobId/questions', async (req, res) => {
 });
 
 parser2Router.put('/jobs/:jobId/questions/:questionId', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     const { jobId, questionId } = req.params;
     const rawPatch = { ...(req.body || {}) };
@@ -721,6 +889,7 @@ parser2Router.put('/jobs/:jobId/questions/:questionId', async (req, res) => {
 
 // Bulk verify eligible questions
 parser2Router.post('/jobs/:jobId/questions/bulk-verify', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     const { jobId } = req.params;
     const { questionIds } = req.body || {};
@@ -876,9 +1045,18 @@ parser2Router.post('/jobs/:jobId/ocr-region', async (req, res) => {
 // 4. Visual Diagram Recropping, AI Auto-Locate, Upload & Restore
 // -------------------------------------------------------------
 parser2Router.post('/jobs/:jobId/questions/:questionId/recrop', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     const { jobId, questionId } = req.params;
-    const { boundingBox, pageNumber, figureType = 'diagram', targetOption, cropMode = 'replace' } = req.body;
+    const {
+      boundingBox,
+      pageNumber,
+      figureType = 'diagram',
+      cropType,
+      targetOption,
+      cropMode = 'replace',
+      replaceFigureId
+    } = req.body;
 
     if (!boundingBox || !Array.isArray(boundingBox) || boundingBox.length !== 4) {
       return res.status(400).json({ success: false, error: 'Valid boundingBox [ymin, xmin, ymax, xmax] required.' });
@@ -888,36 +1066,57 @@ parser2Router.post('/jobs/:jobId/questions/:questionId/recrop', async (req, res)
     const q = questions.find(item => item.id === questionId);
     if (!q) return res.status(404).json({ success: false, error: 'Question not found.' });
 
-    const targetPage = pageNumber || q.sourcePageNumber || 1;
+    const resolvedCropType: Parser2CropType = (cropType || figureType || 'diagram') as Parser2CropType;
+    const inferredOptionFromCropType = /^option_([A-D])$/.exec(resolvedCropType)?.[1] as
+      | 'A'
+      | 'B'
+      | 'C'
+      | 'D'
+      | undefined;
+    const effectiveTargetOption = targetOption || inferredOptionFromCropType;
+
+    const targetPage = Math.max(1, Number(pageNumber || q.sourcePageNumber || 1));
     const pdfBuffer = await getParser2AssetBuffer(jobId, 'source', 'questions.pdf');
     if (!pdfBuffer) return res.status(404).json({ success: false, error: 'Source PDF not found.' });
 
     const pageImageBuffer = await figureExtractionService.renderPdfPageToPng(pdfBuffer, targetPage, 200);
 
-    const optSuffix = targetOption && ['A', 'B', 'C', 'D'].includes(targetOption)
-      ? `opt${targetOption}`
+    const optSuffix = effectiveTargetOption && ['A', 'B', 'C', 'D'].includes(effectiveTargetOption)
+      ? `opt${effectiveTargetOption}`
       : cropMode === 'add'
-      ? `extra_${Date.now()}`
-      : 'manual';
+      ? `${resolvedCropType}_${Date.now()}`
+      : `${resolvedCropType}_manual`;
     const figureRecord = await figureExtractionService.extractAndSaveFigure(
       jobId,
       targetPage,
       q.questionNumber,
       pageImageBuffer,
       boundingBox as [number, number, number, number],
-      targetOption ? 'chemical_structure' : figureType,
+      effectiveTargetOption ? 'chemical_structure' : resolvedCropType,
       true,
-      { layoutMode: 'manual', suffix: optSuffix }
+      {
+        layoutMode: 'manual',
+        suffix: optSuffix,
+        questionId: q.id,
+        sourcePdfId: q.sourcePdfId || 'questions.pdf',
+        cropType: resolvedCropType,
+        skipTrim: true
+      }
     );
 
     await upsertParser2Figures(jobId, [figureRecord]);
 
-    if (targetOption && ['A', 'B', 'C', 'D'].includes(targetOption)) {
+    const pageMeta = formatSourcePageRange(
+      [...(q.sourcePages || [q.sourcePageNumber]), targetPage],
+      q.sourcePageNumber
+    );
+
+    if (effectiveTargetOption && ['A', 'B', 'C', 'D'].includes(effectiveTargetOption)) {
       const origOptFigs = q.originalOptionFigures || (q.optionFigures ? { ...q.optionFigures } : undefined);
-      const optFigures = { ...(q.optionFigures || {}), [targetOption]: figureRecord.figureUrl };
+      const optFigures = { ...(q.optionFigures || {}), [effectiveTargetOption]: figureRecord.figureUrl };
       const updatedOpts = (q.options || []).map(opt => {
-        if (opt.label === targetOption) {
-          const curText = opt.value && !isPlaceholderOption(opt.value) ? opt.value : `[Figure ${targetOption}]`;
+        if (opt.label === effectiveTargetOption) {
+          const curText = opt.value && !isPlaceholderOption(opt.value) ? opt.value : `[Figure ${effectiveTargetOption}]`;
           return { ...opt, value: curText, text: curText, imageUrl: figureRecord.figureUrl, isVisualOption: true };
         }
         return opt;
@@ -931,11 +1130,15 @@ parser2Router.post('/jobs/:jobId/questions/:questionId/recrop', async (req, res)
         figureUrl: q.figureUrl,
         matchTable: q.matchTable,
         structuredTable: q.structuredTable,
-        reviewNotes: '',
+        reviewNotes: q.reviewNotes || '',
         confidenceScore: Math.max(q.confidenceScore || 90, 92)
       });
 
       const updated = await updateParser2Question(jobId, questionId, {
+        sourcePageNumber: pageMeta.startPage,
+        sourcePageEnd: pageMeta.endPage,
+        sourcePages: pageMeta.sourcePages,
+        sourcePageRange: pageMeta.label,
         optionFigures: optFigures,
         originalOptionFigures: origOptFigs,
         options: updatedOpts,
@@ -952,16 +1155,30 @@ parser2Router.post('/jobs/:jobId/questions/:questionId/recrop', async (req, res)
         success: true,
         figure: figureRecord,
         question: updated,
-        message: `Cropped and attached to Option (${targetOption}) for Question ${q.questionNumber}!`
+        message: `Cropped Page ${targetPage} and attached to Option (${effectiveTargetOption}) for Q${q.questionNumber}!`
       });
     }
 
     const preservedOriginal = q.originalFigureUrl || q.figureUrl || figureRecord.figureUrl;
     const isAddMode = cropMode === 'add' && Boolean(q.figureUrl);
-    const nextPrimaryFigureUrl = isAddMode ? q.figureUrl! : figureRecord.figureUrl;
-    const updatedFiguresList = isAddMode
-      ? [...(q.figures || []), figureRecord]
-      : [figureRecord, ...(q.figures || []).filter(f => f.id !== figureRecord.id)];
+    let updatedFiguresList: Parser2Figure[];
+    if (replaceFigureId) {
+      updatedFiguresList = (q.figures || []).map(f => (f.id === replaceFigureId ? figureRecord : f));
+      if (!updatedFiguresList.some(f => f.id === figureRecord.id)) {
+        updatedFiguresList.push(figureRecord);
+      }
+    } else if (isAddMode) {
+      updatedFiguresList = [...(q.figures || []), figureRecord];
+    } else {
+      updatedFiguresList = [figureRecord, ...(q.figures || []).filter(f => f.id !== figureRecord.id)];
+    }
+
+    const nextPrimaryFigureUrl =
+      replaceFigureId && q.figureUrl && !q.figures?.some(f => f.id === replaceFigureId && f.figureUrl === q.figureUrl)
+        ? q.figureUrl
+        : isAddMode
+        ? q.figureUrl!
+        : figureRecord.figureUrl;
 
     const strict = evaluateStrictQuestionStatus({
       questionType: q.questionType,
@@ -971,11 +1188,15 @@ parser2Router.post('/jobs/:jobId/questions/:questionId/recrop', async (req, res)
       figureUrl: nextPrimaryFigureUrl,
       matchTable: q.matchTable,
       structuredTable: q.structuredTable,
-      reviewNotes: '',
+      reviewNotes: q.reviewNotes || '',
       confidenceScore: Math.max(q.confidenceScore || 90, 92)
     });
 
     const updated = await updateParser2Question(jobId, questionId, {
+      sourcePageNumber: pageMeta.startPage,
+      sourcePageEnd: pageMeta.endPage,
+      sourcePages: pageMeta.sourcePages,
+      sourcePageRange: pageMeta.label,
       figureUrl: nextPrimaryFigureUrl,
       originalFigureUrl: preservedOriginal,
       figures: updatedFiguresList,
@@ -994,26 +1215,111 @@ parser2Router.post('/jobs/:jobId/questions/:questionId/recrop', async (req, res)
       figure: figureRecord,
       question: updated,
       message: isAddMode
-        ? `Added additional figure to Question ${q.questionNumber}!`
-        : `Figure cropped successfully for Question ${q.questionNumber}!`
+        ? `Attached Page ${targetPage} crop (${resolvedCropType}) to Question ${q.questionNumber}!`
+        : `Figure cropped from Page ${targetPage} for Question ${q.questionNumber}!`
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
 
+// Delete a specific crop figure attached to a question
+parser2Router.delete('/jobs/:jobId/questions/:questionId/figures/:figureId', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
+  try {
+    const { jobId, questionId, figureId } = req.params;
+    const questions = await getParser2Questions(jobId);
+    const q = questions.find(item => item.id === questionId);
+    if (!q) return res.status(404).json({ success: false, error: 'Question not found.' });
+
+    const remainingFigs = (q.figures || []).filter(f => f.id !== figureId);
+    const removedFig = (q.figures || []).find(f => f.id === figureId);
+    const nextPrimaryUrl =
+      removedFig && q.figureUrl === removedFig.figureUrl
+        ? remainingFigs[0]?.figureUrl
+        : remainingFigs.length > 0
+        ? q.figureUrl || remainingFigs[0].figureUrl
+        : undefined;
+
+    const allJobFigs = (await getParser2Figures(jobId)).filter(f => f.id !== figureId);
+    await saveParser2Figures(jobId, allJobFigs);
+
+    const strict = evaluateStrictQuestionStatus({
+      questionType: q.questionType,
+      questionText: q.questionText,
+      options: q.options,
+      optionFigures: q.optionFigures,
+      figureUrl: nextPrimaryUrl,
+      matchTable: q.matchTable,
+      structuredTable: q.structuredTable,
+      reviewNotes: q.reviewNotes || '',
+      confidenceScore: q.confidenceScore || 85
+    });
+
+    const updated = await updateParser2Question(jobId, questionId, {
+      figureUrl: nextPrimaryUrl,
+      figures: remainingFigs,
+      figureAssetIds: remainingFigs.map(f => f.id),
+      verificationStatus: strict.verificationStatus,
+      reviewRequired: strict.reviewRequired,
+      reviewNotes: strict.reviewNotes,
+      componentValidation: strict.componentValidation
+    });
+
+    await refreshJobStatsAndReport(jobId);
+    return res.json({ success: true, question: updated, message: 'Removed crop attachment.' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Set a specific attached crop as primary figure for a question
+parser2Router.put('/jobs/:jobId/questions/:questionId/figures/:figureId/primary', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
+  try {
+    const { jobId, questionId, figureId } = req.params;
+    const questions = await getParser2Questions(jobId);
+    const q = questions.find(item => item.id === questionId);
+    if (!q) return res.status(404).json({ success: false, error: 'Question not found.' });
+
+    const target = (q.figures || []).find(f => f.id === figureId);
+    if (!target) return res.status(404).json({ success: false, error: 'Figure not found on question.' });
+
+    const reordered = [target, ...(q.figures || []).filter(f => f.id !== figureId)];
+    const updated = await updateParser2Question(jobId, questionId, {
+      figureUrl: target.figureUrl,
+      figures: reordered,
+      figureAssetIds: reordered.map(f => f.id)
+    });
+    await refreshJobStatsAndReport(jobId);
+    return res.json({ success: true, question: updated, message: 'Updated primary figure.' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 parser2Router.post('/jobs/:jobId/questions/:questionId/auto-recrop', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     const { jobId, questionId } = req.params;
-    const { targetOption } = req.body || {};
+    const { targetOption, previewOnly = false, activePage } = req.body || {};
     const validOpt = targetOption && ['A', 'B', 'C', 'D'].includes(targetOption) ? targetOption : undefined;
 
-    const updated = await jobQueueService.reprocessSingleQuestionVisuals(jobId, questionId, validOpt);
-    await refreshJobStatsAndReport(jobId);
+    const updated = await jobQueueService.reprocessSingleQuestionVisuals(jobId, questionId, {
+      targetOption: validOpt,
+      previewOnly: Boolean(previewOnly),
+      activePage: activePage ? Number(activePage) : undefined
+    });
+    if (!previewOnly) {
+      await refreshJobStatsAndReport(jobId);
+    }
     return res.json({
       success: true,
       question: updated,
-      message: `AI auto-locate finished for Question ${updated.questionNumber}.`
+      previewSuggestion: updated.previewSuggestion,
+      message: previewOnly
+        ? updated.previewSuggestion?.note || 'AI auto-locate preview ready.'
+        : `AI auto-locate finished for Question ${updated.questionNumber}.`
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -1021,6 +1327,7 @@ parser2Router.post('/jobs/:jobId/questions/:questionId/auto-recrop', async (req,
 });
 
 parser2Router.post('/jobs/:jobId/questions/:questionId/restore-original-figure', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     const { jobId, questionId } = req.params;
     const { targetOption } = req.body || {};
@@ -1082,6 +1389,7 @@ parser2Router.post('/jobs/:jobId/questions/:questionId/restore-original-figure',
 });
 
 parser2Router.post('/jobs/:jobId/questions/:questionId/upload-figure', upload.single('figureFile'), async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     const { jobId, questionId } = req.params;
     const file = req.file;
@@ -1218,20 +1526,22 @@ parser2Router.get('/jobs/:jobId/validation', async (req, res) => {
 // 7. Publishing to Student Mock Test Engine (Explicit Human Action)
 // -------------------------------------------------------------
 parser2Router.post('/jobs/:jobId/publish', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     const { jobId } = req.params;
     const job = await getParser2JobById(jobId);
     if (!job) return res.status(404).json({ success: false, error: 'Job not found' });
 
     const questions = await getParser2Questions(jobId);
-    if (questions.length === 0) {
-      return res.status(400).json({ success: false, error: 'Cannot publish a test with 0 questions.' });
+    const activeQuestions = questions.filter(q => !q.isDeleted);
+    if (activeQuestions.length === 0) {
+      return res.status(400).json({ success: false, error: 'Cannot publish a test with 0 saved questions.' });
     }
 
     const excludeIncomplete = Boolean(req.body.excludeIncomplete);
     const questionsToAudit = excludeIncomplete
-      ? questions.filter(q => !q.isDeleted && !INCOMPLETE_PARSER2_STATUSES.has(q.verificationStatus))
-      : questions;
+      ? activeQuestions.filter(q => !INCOMPLETE_PARSER2_STATUSES.has(q.verificationStatus))
+      : activeQuestions;
 
     const report = validationEngine.auditQuestions(jobId, questionsToAudit, questionsToAudit.length);
     if (!report.canPublish && req.body.force !== true && !excludeIncomplete) {
@@ -1317,12 +1627,23 @@ parser2Router.post('/jobs/:jobId/publish', async (req, res) => {
       ncertCoveragePercent: ncertCoveragePercent ? parseInt(ncertCoveragePercent, 10) : 95
     });
 
-    // Atomic sync to Firebase RTDB (and server store read-back verification)
-    const { rtdbSynced } = await syncPublishedTestToRemoteStores(result.test, result.mockQuestions);
+    if (!result.mockQuestions || result.mockQuestions.length === 0 || !result.dbSynced) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to persist mock test questions to server store. Please try again.'
+      });
+    }
+
+    // Atomic sync to Firebase RTDB + Cloudflare R2 + Cloudflare D1
+    const { rtdbSynced, r2Synced, d1Synced } = await syncPublishedTestToRemoteStores(result.test, result.mockQuestions);
 
     job.status = 'published';
     job.currentStage = `Published to Student CBT (${result.testId})`;
     job.publishedTestId = result.testId;
+    job.totalQuestions = Math.max(job.totalQuestions || 0, activeQuestions.length);
+    job.questionsDetected = Math.max(job.questionsDetected || 0, activeQuestions.length);
+    job.questionsSaved = result.mockQuestions.length;
+    job.savedVerified = true;
     job.lastActivityAt = new Date().toISOString();
     await saveParser2Job(job);
 
@@ -1340,6 +1661,8 @@ parser2Router.post('/jobs/:jobId/publish', async (req, res) => {
       isStandalone: Boolean(result.test.isStandalone),
       dbSynced: result.dbSynced,
       rtdbSynced,
+      r2Synced,
+      d1Synced,
       visibleInStudentCatalog: result.test.status === 'published' && (result.test.visibility || 'public') === 'public',
       verifiedAt: new Date().toISOString()
     };
@@ -1348,6 +1671,7 @@ parser2Router.post('/jobs/:jobId/publish', async (req, res) => {
       success: true,
       testId: result.testId,
       test: result.test,
+      job,
       createdCategory,
       publicationVerification,
       message: result.message
@@ -1358,32 +1682,39 @@ parser2Router.post('/jobs/:jobId/publish', async (req, res) => {
   }
 });
 
-// Sync / Repair Publication for already published tests missing in Student CBT or categories
+// Sync / Repair Publication for already published tests missing in Student CBT or showing Saved 0 Qs
 parser2Router.post('/jobs/:jobId/repair-publication', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     const { jobId } = req.params;
-    const job = await getParser2JobById(jobId);
-    if (!job) return res.status(404).json({ success: false, error: 'Job not found' });
+    const reconciledJob = (await reconcileParser2JobCounts(jobId)) || (await getParser2JobById(jobId));
+    if (!reconciledJob) return res.status(404).json({ success: false, error: 'Job not found' });
 
     const questions = await getParser2Questions(jobId);
+    const activeQs = questions.filter(q => !q.isDeleted);
     const fallbackCategoryIds = Array.isArray(req.body?.categoryIds) ? req.body.categoryIds : undefined;
 
     const repaired = await repairPublishedParser2Test({
-      job,
+      job: reconciledJob,
       questions,
       fallbackCategoryIds
     });
 
-    job.status = 'published';
-    job.publishedTestId = repaired.test.id;
-    job.currentStage = `Published & Synced (${repaired.test.id})`;
-    job.lastActivityAt = new Date().toISOString();
-    await saveParser2Job(job);
+    reconciledJob.status = 'published';
+    reconciledJob.publishedTestId = repaired.test.id;
+    reconciledJob.totalQuestions = Math.max(reconciledJob.totalQuestions || 0, activeQs.length);
+    reconciledJob.questionsDetected = Math.max(reconciledJob.questionsDetected || 0, activeQs.length);
+    reconciledJob.questionsSaved = repaired.verification.savedQuestionsCount;
+    reconciledJob.savedVerified = repaired.verification.savedQuestionsCount > 0;
+    reconciledJob.currentStage = `Published & Synced (${repaired.test.id})`;
+    reconciledJob.lastActivityAt = new Date().toISOString();
+    await saveParser2Job(reconciledJob);
 
     return res.json({
       success: true,
       testId: repaired.test.id,
       test: repaired.test,
+      job: reconciledJob,
       publicationVerification: repaired.verification,
       message: `Publication synced & verified for "${repaired.test.title}" (${repaired.verification.savedQuestionsCount} Qs).`
     });
@@ -1415,6 +1746,7 @@ parser2Router.get('/settings', async (_req, res) => {
 });
 
 parser2Router.put('/settings', async (req, res) => {
+  if (!requireAdminIfIdentified(req, res)) return;
   try {
     const updated = await saveParser2Settings(req.body);
     return res.json({ success: true, settings: updated });

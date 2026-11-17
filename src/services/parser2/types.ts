@@ -176,18 +176,40 @@ export interface Parser2StructuredTable {
   caption?: string;
 }
 
+export type Parser2CropType =
+  | 'complete_question'
+  | 'question_continuation'
+  | 'option_A'
+  | 'option_B'
+  | 'option_C'
+  | 'option_D'
+  | 'combined_options'
+  | 'diagram'
+  | 'graph'
+  | 'circuit'
+  | 'table'
+  | 'match_the_column'
+  | 'chemical_structure'
+  | 'math_expression'
+  | 'other';
+
 export interface Parser2Figure {
   id: string;
   jobId: string;
   questionId?: string;
   questionNumber?: number;
   pageNumber: number;
+  sourcePdfId?: string;
   figureKey: string;
   figureUrl: string;
-  boundingBox?: [number, number, number, number]; // [ymin, xmin, ymax, xmax] in normalized 0..1000 or pt
+  boundingBox?: [number, number, number, number]; // [ymin, xmin, ymax, xmax] in normalized 0..1000
+  pixelBox?: { x: number; y: number; width: number; height: number };
   width?: number;
   height?: number;
-  figureType: 'diagram' | 'chemical_structure' | 'graph' | 'table' | 'embedded_image';
+  naturalWidth?: number;
+  naturalHeight?: number;
+  figureType: Parser2CropType | 'embedded_image';
+  cropType?: Parser2CropType;
   caption?: string;
   isManualCrop?: boolean;
   createdAt: string;
@@ -209,6 +231,15 @@ export interface Parser2Question {
   explanationImageUrl?: string;
   sourcePdfId?: string;
   sourcePageNumber: number;
+  sourcePageEnd?: number;
+  sourcePages?: number[];
+  sourcePageRange?: string;
+  detectedAnswer?: 'A' | 'B' | 'C' | 'D';
+  importedAnswer?: 'A' | 'B' | 'C' | 'D';
+  answerSetCode?: string;
+  answerSourcePage?: number;
+  answerConfidence?: number;
+  answerKeyStatus?: 'matched' | 'missing' | 'conflict' | 'needs_review' | 'verified';
   pageLayout?: 'two_column_bilingual' | 'two_column_english' | 'single_column';
   chemistryContentType?: 'none' | 'simple_text' | 'complex_structures' | 'mixed';
   figureAssetIds?: string[];
@@ -263,6 +294,10 @@ export function isPlaceholderOption(val: string | undefined | null): boolean {
 
   return (
     /^(?:(?:option|विकल्प)\s*[\(\[]?[a-d1-4१-४][\)\]]?|option\s+[a-d1-4]|[\(\[][a-d1-4][\)\]])$/i.test(trimmed) ||
+    /insufficient\s+data/i.test(trimmed) ||
+    /not\s+(?:visible|provided|available|readable|shown)\s+in\s+(?:the\s+)?(?:snippet|image|crop|page)/i.test(trimmed) ||
+    /cannot\s+be\s+(?:determined|read|extracted)/i.test(trimmed) ||
+    /^\[?\s*(?:illegible|unclear|unreadable|missing\s+option(?:\s+text)?|data\s+missing|not\s+available|n\/a)\s*\]?$/i.test(trimmed) ||
     trimmed === '[missing option text]' ||
     trimmed === 'missing option' ||
     trimmed === '(empty - click edit to add)' ||
@@ -279,7 +314,10 @@ export interface Parser2AnswerKeyEntry {
   rawAnswer: string;
   verifiedAnswer: 'A' | 'B' | 'C' | 'D';
   explanation?: string;
-  sourceType: 'pdf_page' | 'solution_pdf' | 'text_paste' | 'image_upload' | 'manual';
+  setCode?: string;
+  sourcePage?: number;
+  confidence?: number;
+  sourceType: 'pdf_page' | 'solution_pdf' | 'answer_key_pdf' | 'text_paste' | 'image_upload' | 'manual';
   matchedAt: string;
 }
 

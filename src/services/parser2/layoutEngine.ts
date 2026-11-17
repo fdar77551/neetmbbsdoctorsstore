@@ -143,14 +143,37 @@ export function isAllSimpleChemicalFormulaOptions(
   return validChemCount >= 2;
 }
 
-function isPlaceholderOptionText(val: string): boolean {
+export function formatSourcePageRange(
+  pages: number[] | undefined,
+  fallbackPage: number = 1
+): { startPage: number; endPage: number; sourcePages: number[]; label: string } {
+  const valid = Array.from(
+    new Set((pages || []).filter((p) => Number.isFinite(p) && p >= 1).map((p) => Math.round(p)))
+  ).sort((a, b) => a - b);
+  if (valid.length === 0) {
+    const safe = Math.max(1, Math.round(fallbackPage || 1));
+    return { startPage: safe, endPage: safe, sourcePages: [safe], label: `Page ${safe}` };
+  }
+  const startPage = valid[0];
+  const endPage = valid[valid.length - 1];
+  const label = startPage === endPage ? `Page ${startPage}` : `Page ${startPage}–${endPage}`;
+  return { startPage, endPage, sourcePages: valid, label };
+}
+
+export function isPlaceholderOptionText(val: string | undefined | null): boolean {
+  if (!val) return true;
   const t = val.trim().toLowerCase();
   return (
     !t ||
+    /insufficient\s+data/i.test(t) ||
+    /not\s+(?:visible|provided|available|readable|shown)\s+in\s+(?:the\s+)?(?:snippet|image|crop|page)/i.test(t) ||
+    /cannot\s+be\s+(?:determined|read|extracted)/i.test(t) ||
+    /^\[?\s*(?:illegible|unclear|unreadable|missing\s+option(?:\s+text)?|data\s+missing|not\s+available)\s*\]?$/i.test(t) ||
     t === '[missing option text]' ||
     t === 'missing option' ||
     t === '(empty - click edit to add)' ||
     t === '[empty]' ||
+    t === 'empty' ||
     /^(?:option\s*[\(\[]?[a-d1-4][\)\]]?|[\(\[][a-d1-4][\)\]])$/i.test(t)
   );
 }
@@ -173,8 +196,11 @@ export function isQuestionTextTruncated(text: string | undefined | null): boolea
     return true;
   }
 
-  // Ends dangling mid-phrase
-  if (/\b(?:of|the|a|an|with|for|between|when|where|which|and|from|to|in|at|by|is|are|was|were)\s*$/i.test(trimmed)) {
+  // Ends dangling mid-phrase (allow complete NEET stems >= 25 chars ending in "is"/"are" before options)
+  if (/\b(?:of|the|a|an|with|for|between|when|where|which|and|from|to|in|at|by|as)\s*$/i.test(trimmed)) {
+    return true;
+  }
+  if (trimmed.length < 25 && /\b(?:is|are|was|were)\s*$/i.test(trimmed)) {
     return true;
   }
 

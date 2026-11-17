@@ -11,6 +11,8 @@ import {
   Parser2Subject, 
   Parser2Settings,
   Parser2ComponentValidation,
+  Parser2AnswerKeyEntry,
+  Parser2CropType,
   isPlaceholderOption
 } from './types';
 import { 
@@ -21,7 +23,8 @@ import {
   isMatchQuestionPrompt,
   isTableQuestionPrompt,
   parseMatchTableFromText,
-  parseStructuredTableFromText
+  parseStructuredTableFromText,
+  formatSourcePageRange
 } from './layoutEngine';
 import { 
   getParser2Jobs,
@@ -90,14 +93,14 @@ export function evaluateStrictQuestionStatus(params: {
   reviewNotes: string;
   componentValidation: Parser2ComponentValidation;
 } {
-  let reviewNotes = params.reviewNotes || '';
+  let rawNotes = (params.reviewNotes || '').trim();
   let confidenceScore = params.confidenceScore ?? 90;
   if (confidenceScore > 0 && confidenceScore <= 1) {
     confidenceScore = Math.round(confidenceScore * 100);
   }
 
   const optionsTextJoined = (params.options || []).map(o => o.value || o.text || '').join(' ');
-  const visualReq = detectVisualRequirement(params.questionText, optionsTextJoined, reviewNotes);
+  const visualReq = detectVisualRequirement(params.questionText, optionsTextJoined, rawNotes);
 
   const hasMissingOptions =
     !params.options ||
@@ -195,6 +198,29 @@ export function evaluateStrictQuestionStatus(params: {
         : undefined
     }
   };
+
+  // Strip stale warning segments once the underlying component has resolved cleanly
+  const noteSegments = rawNotes
+    .split(/\s*•\s*|\n+/)
+    .map(s => s.trim())
+    .filter(Boolean)
+    .filter(seg => {
+      const low = seg.toLowerCase();
+      if (!missingMatchTable && !missingStructuredTable && /(?:missing\s+(?:list\s*i|list\s*ii|structured\s*table)|list\s*ii\s+table\s+rows|table\s+is\s+missing)/i.test(low)) {
+        return false;
+      }
+      if (!hasMissingOptions && /(?:options\s+are\s+missing|missing\s+or\s+empty;\s*verify\s+options|insufficient\s+data)/i.test(low)) {
+        return false;
+      }
+      if (!hasMissingFigure && !params.figureMismatchDetected && /(?:figure\s+is\s+missing|diagram\s+is\s+missing|graph\s+that\s+is\s+not\s+attached|did\s+not\s+match\s+question\s+context)/i.test(low)) {
+        return false;
+      }
+      if (!hasTruncatedStem && /(?:statement\s+appears\s+truncated|starts\s+mid-sentence)/i.test(low)) {
+        return false;
+      }
+      return true;
+    });
+  const reviewNotes = noteSegments.join(' • ');
 
   if (hasMissingOptions) {
     return {
@@ -324,26 +350,77 @@ export class JobQueueService {
    */
   public async applyAnswerKeyToJob(
     jobId: string,
-    input: { rawText?: string; imageBase64?: string; mimeType?: string; overwriteManual?: boolean }
+    input: {
+      rawText?: string;
+      imageBase64?: string;
+      mimeType?: string;
+      pdfBuffer?: Buffer;
+      entries?: Array<{
+        questionNumber: number;
+        verifiedAnswer: string;
+        setCode?: string;
+        sourcePage?: number;
+        confidence?: number;
+        explanation?: string;
+      }>;
+      setCode?: string;
+      overwriteManual?: boolean;
+      replaceAll?: boolean;
+    }
   ): Promise<AnswerKeyMatchResult> {
     const job = await getParser2JobById(jobId);
     if (!job) throw new Error('Job not found');
 
-    let incomingKeys: Record<number, any> = {};
+    let incomingKeys: Record<number, Parser2AnswerKeyEntry> = {};
     let incomingSolutions: Record<number, { answer?: 'A' | 'B' | 'C' | 'D'; explanation: string }> = {};
+    const now = new Date().toISOString();
 
+    if (input.pdfBuffer) {
+      const pdfRes = await answerKeyService.parseAnswerKeyPdf(input.pdfBuffer, { setCode: input.setCode });
+      incomingKeys = { ...incomingKeys, ...pdfRes.keys };
+    }
     if (input.imageBase64) {
       const imgKeys = await answerKeyService.parseAnswerKeyImage(input.imageBase64, input.mimeType);
-      incomingKeys = { ...incomingKeys, ...imgKeys };
+      for (const [kStr, v] of Object.entries(imgKeys)) {
+        incomingKeys[Number(kStr)] = {
+          ...v,
+          setCode: input.setCode || v.setCode,
+          confidence: v.confidence ?? 92
+        };
+      }
     }
     if (input.rawText && input.rawText.trim()) {
       const txtKeys = answerKeyService.parseAnswerKeyText(input.rawText, 'text_paste');
       const sols = answerKeyService.parseSolutionsDocument(input.rawText);
-      incomingKeys = { ...incomingKeys, ...txtKeys };
+      for (const [kStr, v] of Object.entries(txtKeys)) {
+        incomingKeys[Number(kStr)] = {
+          ...v,
+          setCode: input.setCode || v.setCode,
+          confidence: v.confidence ?? 98
+        };
+      }
       incomingSolutions = { ...incomingSolutions, ...sols };
     }
+    if (Array.isArray(input.entries)) {
+      for (const e of input.entries) {
+        const norm = answerKeyService.normalizeOptionLabel(e.verifiedAnswer || '');
+        if (e.questionNumber > 0 && norm) {
+          incomingKeys[e.questionNumber] = {
+            questionNumber: e.questionNumber,
+            rawAnswer: e.verifiedAnswer,
+            verifiedAnswer: norm,
+            setCode: e.setCode || input.setCode,
+            sourcePage: e.sourcePage,
+            confidence: e.confidence ?? 100,
+            explanation: e.explanation,
+            sourceType: 'manual',
+            matchedAt: now
+          };
+        }
+      }
+    }
 
-    const existingKeys = await getParser2AnswerKeys(jobId);
+    const existingKeys = input.replaceAll ? {} : await getParser2AnswerKeys(jobId);
     const mergedKeys = { ...existingKeys, ...incomingKeys };
     await saveParser2AnswerKeys(jobId, mergedKeys);
 
@@ -372,17 +449,184 @@ export class JobQueueService {
       verifiedQuestions: questions.filter(q => q.verificationStatus === 'verified').length,
       reviewRequiredCount: questions.filter(q => q.reviewRequired).length,
       manuallyEditedCount: questions.filter(q => q.isManuallyEdited).length,
-      lastActivityAt: new Date().toISOString()
+      lastActivityAt: now
     });
 
     await addParser2Log(
       jobId,
       'validation',
-      `Answer key applied: ${result.matchedCount} matched, ${result.missingQuestions.length} missing key, ${result.skippedManualCount} manual edit(s) preserved.`,
+      `Answer key applied: ${result.matchedCount} matched, ${result.missingQuestions.length} missing key, ${result.conflictCount} conflicts, ${result.skippedManualCount} manual edit(s) preserved.`,
       result.matchedCount > 0 ? 'success' : 'warn'
     );
 
     return result;
+  }
+
+  /**
+   * Auto-detect answer key entries from pages already inside the job's current PDF (returns preview or applies).
+   */
+  public async detectAnswerKeyFromCurrentPdf(
+    jobId: string,
+    options?: { apply?: boolean; overwriteManual?: boolean; setCode?: string }
+  ): Promise<{
+    detectedCount: number;
+    keyPages: number[];
+    entries: Parser2AnswerKeyEntry[];
+    comparison: ReturnType<typeof answerKeyService.buildAnswerKeyComparison>;
+    applied: boolean;
+  }> {
+    const job = await getParser2JobById(jobId);
+    if (!job) throw new Error('Job not found');
+    const pdfBuffer = await getParser2AssetBuffer(jobId, 'source', 'questions.pdf');
+    if (!pdfBuffer) throw new Error('Source questions.pdf not found in job storage.');
+
+    const pages = await getParser2Pages(jobId);
+    const totalPages = job.totalPages || pages.length || (await this.getPdfPageCount(pdfBuffer));
+    const settings = await getParser2Settings();
+    const dpi = Math.max(180, settings.figureDpi || 200);
+    const geminiModel = job.geminiModel || settings.geminiModel || 'gemini-4-hydrogen';
+
+    // Prioritize explicit key pages & trailing pages, then scan all pages if needed
+    const pageOrder: number[] = [];
+    for (let p = totalPages; p >= 1; p--) pageOrder.push(p);
+    pageOrder.sort((a, b) => {
+      const pA = pages.find(x => x.pageNumber === a);
+      const pB = pages.find(x => x.pageNumber === b);
+      const aHint = /answer\s*key|hints|key\s*sheet/i.test(pA?.ocrMarkdown || '') ? 1 : 0;
+      const bHint = /answer\s*key|hints|key\s*sheet/i.test(pB?.ocrMarkdown || '') ? 1 : 0;
+      if (bHint !== aHint) return bHint - aHint;
+      return b - a;
+    });
+
+    const detectedMap: Record<number, Parser2AnswerKeyEntry> = {};
+    const keyPages: number[] = [];
+    const now = new Date().toISOString();
+
+    for (const pNum of pageOrder) {
+      const pageRec = pages.find(x => x.pageNumber === pNum);
+      let pageText = pageRec?.ocrMarkdown || '';
+      if (!pageText) {
+        try {
+          pageText = await figureExtractionService.extractPdfPageText(pdfBuffer, pNum);
+        } catch {}
+      }
+
+      const mentionsKey = /answer\s*key|hints\s*&?\s*solutions|key\s*sheet/i.test(pageText);
+      const isTrailing = pNum >= Math.max(1, totalPages - 2);
+      const isSparse = (pageRec?.extractedQuestionNumbers?.length || 0) <= 2;
+
+      if (!mentionsKey && !isTrailing && !isSparse) continue;
+
+      const textOnlyKeys = answerKeyService.parseAnswerKeyText(pageText, 'pdf_page');
+      const hasQuestionStems = /\b\d{1,3}\s*[\.\)]\s*[A-Za-z]{6,}[\s\S]{15,}\([1-4A-D]\)/.test(pageText);
+
+      if (Object.keys(textOnlyKeys).length >= 15 && !hasQuestionStems) {
+        keyPages.push(pNum);
+        for (const [kStr, e] of Object.entries(textOnlyKeys)) {
+          detectedMap[Number(kStr)] = {
+            ...e,
+            sourcePage: pNum,
+            setCode: options?.setCode || e.setCode,
+            confidence: 97,
+            matchedAt: now
+          };
+        }
+        continue;
+      }
+
+      if (geminiVerificationService.isConfigured()) {
+        try {
+          const buf = await figureExtractionService.renderPdfPageToPng(pdfBuffer, pNum, dpi);
+          const detect = await geminiVerificationService.detectAndParseAnswerKeyPage(pNum, buf, pageText, geminiModel);
+          if (detect.isAnswerKeyPage && detect.entries.length > 0) {
+            keyPages.push(pNum);
+            for (const item of detect.entries) {
+              detectedMap[item.questionNumber] = {
+                questionNumber: item.questionNumber,
+                rawAnswer: item.rawAnswer || item.answer,
+                verifiedAnswer: item.answer,
+                sourcePage: pNum,
+                setCode: options?.setCode,
+                confidence: 95,
+                sourceType: 'pdf_page',
+                matchedAt: now
+              };
+            }
+          }
+        } catch {}
+      }
+    }
+
+    const questions = await getParser2Questions(jobId);
+    const existingKeys = await getParser2AnswerKeys(jobId);
+    const previewKeys = { ...existingKeys, ...detectedMap };
+
+    if (options?.apply && Object.keys(detectedMap).length > 0) {
+      await this.applyAnswerKeyToJob(jobId, {
+        entries: Object.values(detectedMap).map(e => ({
+          questionNumber: e.questionNumber,
+          verifiedAnswer: e.verifiedAnswer,
+          setCode: e.setCode,
+          sourcePage: e.sourcePage,
+          confidence: e.confidence
+        })),
+        overwriteManual: options.overwriteManual ?? false,
+        setCode: options.setCode
+      });
+    }
+
+    const refreshedQuestions = options?.apply ? await getParser2Questions(jobId) : questions;
+    const finalKeys = options?.apply ? await getParser2AnswerKeys(jobId) : previewKeys;
+    const comparison = answerKeyService.buildAnswerKeyComparison(refreshedQuestions, finalKeys);
+
+    return {
+      detectedCount: Object.keys(detectedMap).length,
+      keyPages: Array.from(new Set(keyPages)).sort((a, b) => a - b),
+      entries: Object.values(detectedMap).sort((a, b) => a.questionNumber - b.questionNumber),
+      comparison,
+      applied: Boolean(options?.apply && Object.keys(detectedMap).length > 0)
+    };
+  }
+
+  /**
+   * Remove / reset all answer keys for a job cleanly
+   */
+  public async clearAnswerKeysForJob(jobId: string): Promise<{ clearedCount: number }> {
+    const job = await getParser2JobById(jobId);
+    if (!job) throw new Error('Job not found');
+    const existingKeys = await getParser2AnswerKeys(jobId);
+    const clearedCount = Object.keys(existingKeys).length;
+    await saveParser2AnswerKeys(jobId, {});
+
+    const questions = await getParser2Questions(jobId);
+    for (const q of questions) {
+      const isManualAns = q.isManuallyEdited && q.editedFields?.includes('correctAnswer');
+      q.importedAnswer = undefined;
+      q.answerSourcePage = undefined;
+      q.answerConfidence = undefined;
+      if (!isManualAns) {
+        q.correctAnswer = undefined;
+        q.answerStatus = 'answer_missing';
+        q.answerKeyStatus = 'missing';
+      }
+    }
+    if (questions.length > 0) {
+      await saveParser2Questions(jobId, questions);
+    }
+
+    const expectedCount = job.questionRange ? this.parseExpectedCount(job.questionRange) : (questions.length || 180);
+    const report = validationEngine.auditQuestions(jobId, questions, expectedCount);
+    await saveParser2ValidationReport(report);
+    await saveParser2Job({
+      ...job,
+      hasAnswerKey: false,
+      qualityScore: report.qualityScore,
+      reconciliation: report.reconciliation,
+      qualityBreakdown: report.qualityBreakdown,
+      lastActivityAt: new Date().toISOString()
+    });
+    await addParser2Log(jobId, 'validation', `Cleared ${clearedCount} answer key entry(ies).`, 'info');
+    return { clearedCount };
   }
 
   /**
@@ -463,11 +707,33 @@ export class JobQueueService {
   /**
    * Targeted single-question AI auto-recrop & option recovery (invoked from Admin UI)
    */
+  /**
+   * Targeted single-question AI auto-recrop & option recovery (invoked from Admin UI & Crop Editor).
+   * Supports previewOnly mode for the Crop Editor so the user can review/resize the box before saving.
+   */
   public async reprocessSingleQuestionVisuals(
     jobId: string,
     questionId: string,
-    targetOption?: 'A' | 'B' | 'C' | 'D'
-  ): Promise<Parser2Question> {
+    targetOptionOrOptions?:
+      | 'A'
+      | 'B'
+      | 'C'
+      | 'D'
+      | { targetOption?: 'A' | 'B' | 'C' | 'D'; previewOnly?: boolean; activePage?: number }
+  ): Promise<Parser2Question & {
+    previewSuggestion?: {
+      suggestedPageNumber: number;
+      suggestedBoundingBox?: [number, number, number, number];
+      suggestedCropType?: Parser2CropType;
+      note?: string;
+    };
+  }> {
+    const opts =
+      typeof targetOptionOrOptions === 'string'
+        ? { targetOption: targetOptionOrOptions }
+        : (targetOptionOrOptions || {});
+    const targetOption = opts.targetOption;
+
     const job = await getParser2JobById(jobId);
     if (!job) throw new Error('Job not found');
 
@@ -480,18 +746,27 @@ export class JobQueueService {
 
     const settings = await getParser2Settings();
     const dpi = Math.max(200, settings.figureDpi || 200);
-    const pageNum = q.sourcePageNumber || 1;
+    const pageNum = opts.activePage || q.sourcePageNumber || 1;
+    const totalPages = job.totalPages || 1;
     const pageImageBuffer = await figureExtractionService.renderPdfPageToPng(pdfBuffer, pageNum, dpi);
 
     const needsNextPageInspect =
+      Boolean(opts.previewOnly) ||
       Boolean(targetOption) ||
       q.verificationStatus === 'options_incomplete' ||
       q.verificationStatus === 'text_incomplete';
 
+    const nextCandidatePage =
+      q.sourcePageEnd && q.sourcePageEnd !== pageNum
+        ? q.sourcePageEnd
+        : pageNum < totalPages
+        ? pageNum + 1
+        : undefined;
+
     let nextPageImageBuffer: Buffer | undefined;
-    if (needsNextPageInspect && pageNum < (job.totalPages || 0)) {
+    if (needsNextPageInspect && nextCandidatePage && nextCandidatePage >= 1 && nextCandidatePage <= totalPages) {
       try {
-        nextPageImageBuffer = await figureExtractionService.renderPdfPageToPng(pdfBuffer, pageNum + 1, dpi);
+        nextPageImageBuffer = await figureExtractionService.renderPdfPageToPng(pdfBuffer, nextCandidatePage, dpi);
       } catch {}
     }
 
@@ -511,7 +786,28 @@ export class JobQueueService {
 
     const layoutMode: CropLayoutMode = recovery.pageLayout || q.pageLayout || 'two_column_bilingual';
     const targetImgBuf = recovery.fromNextPage && nextPageImageBuffer ? nextPageImageBuffer : pageImageBuffer;
-    const targetImgPageNum = recovery.fromNextPage && nextPageImageBuffer ? pageNum + 1 : pageNum;
+    const targetImgPageNum =
+      recovery.fromNextPage && nextPageImageBuffer && nextCandidatePage ? nextCandidatePage : pageNum;
+
+    if (opts.previewOnly) {
+      const boxFromOption =
+        targetOption && recovery.recoveredOptionBoundingBoxes?.[targetOption]
+          ? recovery.recoveredOptionBoundingBoxes[targetOption]
+          : undefined;
+      const suggestedBox = boxFromOption || recovery.recoveredDiagramBoundingBox;
+      const suggestedCropType: Parser2CropType = targetOption
+        ? (`option_${targetOption}` as Parser2CropType)
+        : ((recovery.recoveredDiagramType as Parser2CropType) || 'diagram');
+      return {
+        ...q,
+        previewSuggestion: {
+          suggestedPageNumber: targetImgPageNum,
+          suggestedBoundingBox: suggestedBox,
+          suggestedCropType,
+          note: recovery.notes || (suggestedBox ? `Located on Page ${targetImgPageNum}` : 'No clear figure box detected on current/next page')
+        }
+      };
+    }
 
     let updatedQuestionText = q.questionText;
     if (recovery.recoveredQuestionText && recovery.recoveredQuestionText.trim().length > q.questionText.length) {
@@ -595,6 +891,11 @@ export class JobQueueService {
       }
     }
 
+    const pageMeta = formatSourcePageRange(
+      [...(q.sourcePages || [q.sourcePageNumber]), targetImgPageNum],
+      q.sourcePageNumber
+    );
+
     const strictStatus = evaluateStrictQuestionStatus({
       questionType: q.questionType,
       questionText: updatedQuestionText,
@@ -611,6 +912,10 @@ export class JobQueueService {
     const updated = await updateParser2Question(jobId, questionId, {
       questionText: updatedQuestionText,
       options: updatedOptions,
+      sourcePageNumber: pageMeta.startPage,
+      sourcePageEnd: pageMeta.endPage,
+      sourcePages: pageMeta.sourcePages,
+      sourcePageRange: pageMeta.label,
       figureUrl: updatedFigureUrl,
       originalFigureUrl: q.originalFigureUrl || updatedFigureUrl,
       figures: updatedFigures,
@@ -625,7 +930,6 @@ export class JobQueueService {
 
     await saveParser2Figures(jobId, allFigures);
 
-    // Recompute validation report & job counters
     const refreshed = await getParser2Questions(jobId);
     const report = validationEngine.auditQuestions(jobId, refreshed, job.totalQuestions || refreshed.length || 180);
     await saveParser2ValidationReport(report);
@@ -932,16 +1236,233 @@ export class JobQueueService {
 
       page.ocrMarkdown = ocrMarkdown;
 
-      // Stage 3: Gemini Multimodal Verification & Parsing
+      // Stage 3: Gemini Multimodal Verification & Parsing + Auto Answer-Key Page Detection
       let verifiedQuestions: any[] = [];
       if (settings.geminiVerificationEnabled && geminiVerificationService.isConfigured()) {
-        verifiedQuestions = await geminiVerificationService.verifyPageQuestions(
-          page.pageNumber,
-          pageImageBuffer,
-          ocrMarkdown || `Page ${page.pageNumber}`,
-          subject,
-          geminiModel
-        );
+        const preExistingQs = await getParser2Questions(jobId);
+        const prevQs = preExistingQs
+          .filter(q => q.sourcePageNumber < page.pageNumber)
+          .sort((a, b) => b.questionNumber - a.questionNumber);
+        const prevLastQ = prevQs[0];
+        const prevPageLastQNum = prevLastQ?.questionNumber || undefined;
+        const prevPageTailContext = prevLastQ
+          ? {
+              questionNumber: prevLastQ.questionNumber,
+              tailText: prevLastQ.questionText,
+              missingOptions: prevLastQ.options?.some(o => !o.imageUrl && (!o.value || isPlaceholderOption(o.value))),
+              danglingAnchorOnly: false
+            }
+          : undefined;
+
+        const isLikelyScannedPage = (ocrMarkdown || '').replace(/@neetmbbsdoctors/gi, '').trim().length < 320;
+        const mentionsKeySheet = /answer\s*key|hints\s*&?\s*solutions|key\s*sheet/i.test(ocrMarkdown || '');
+
+        // On the final page(s) or explicit Key Sheets, check for embedded Answer Key Sheet FIRST
+        if (mentionsKeySheet || page.pageNumber === totalPages) {
+          const keyDetect = await geminiVerificationService.detectAndParseAnswerKeyPage(
+            page.pageNumber,
+            pageImageBuffer,
+            ocrMarkdown || '',
+            geminiModel
+          );
+          if (keyDetect.isAnswerKeyPage && keyDetect.entries.length > 0) {
+            const existingKeys = await getParser2AnswerKeys(jobId);
+            const nowIso = new Date().toISOString();
+            const mergedKeys = { ...existingKeys };
+            for (const entry of keyDetect.entries) {
+              mergedKeys[entry.questionNumber] = {
+                questionNumber: entry.questionNumber,
+                rawAnswer: entry.rawAnswer || entry.answer,
+                verifiedAnswer: entry.answer,
+                sourceType: 'pdf_page',
+                matchedAt: nowIso
+              };
+            }
+            await saveParser2AnswerKeys(jobId, mergedKeys);
+
+            const currentQuestions = await getParser2Questions(jobId);
+            if (currentQuestions.length > 0) {
+              answerKeyService.applyKeysAndSolutionsToQuestions(currentQuestions, mergedKeys, {}, {
+                overwriteManual: false,
+                markMissingUnmatched: false
+              });
+              await saveParser2Questions(jobId, currentQuestions);
+            }
+
+            page.status = 'completed';
+            page.processingTimeMs = Date.now() - startTime;
+            page.extractedQuestionNumbers = [];
+            await saveParser2Page(page);
+            await addParser2Log(
+              jobId,
+              'validation',
+              `Auto-detected Answer Key on Page ${page.pageNumber} (${keyDetect.entries.length} keys extracted and saved in ${page.processingTimeMs}ms).`,
+              'success'
+            );
+            return;
+          }
+        }
+
+        if (isLikelyScannedPage && page.pageNumber < totalPages) {
+          // Direct High-Res Two-Column English Split Pass for scanned image pages: avoids wasted whole-page call + doubles per-character DPI
+          verifiedQuestions = await geminiVerificationService.verifyTwoColumnEnglishPage(
+            page.pageNumber,
+            pageImageBuffer,
+            ocrMarkdown || `Page ${page.pageNumber}`,
+            subject,
+            geminiModel,
+            prevPageTailContext || prevPageLastQNum
+          );
+          if (verifiedQuestions.length === 0) {
+            verifiedQuestions = await geminiVerificationService.verifyPageQuestions(
+              page.pageNumber,
+              pageImageBuffer,
+              ocrMarkdown || `Page ${page.pageNumber}`,
+              subject,
+              geminiModel
+            );
+          } else {
+            page.pageLayout = 'two_column_english';
+          }
+        } else {
+          const tVerifyStart = Date.now();
+          verifiedQuestions = await geminiVerificationService.verifyPageQuestions(
+            page.pageNumber,
+            pageImageBuffer,
+            ocrMarkdown || `Page ${page.pageNumber}`,
+            subject,
+            geminiModel
+          );
+          const verifyMs = Date.now() - tVerifyStart;
+
+          // Fallback answer-key check if sparse page returned <= 1 question near end
+          if (!mentionsKeySheet && verifiedQuestions.length <= 1 && (page.pageNumber >= totalPages - 1 || totalPages <= 2)) {
+            const keyDetect = await geminiVerificationService.detectAndParseAnswerKeyPage(
+              page.pageNumber,
+              pageImageBuffer,
+              ocrMarkdown || '',
+              geminiModel
+            );
+            if (keyDetect.isAnswerKeyPage && keyDetect.entries.length > 0) {
+              const existingKeys = await getParser2AnswerKeys(jobId);
+              const nowIso = new Date().toISOString();
+              const mergedKeys = { ...existingKeys };
+              for (const entry of keyDetect.entries) {
+                mergedKeys[entry.questionNumber] = {
+                  questionNumber: entry.questionNumber,
+                  rawAnswer: entry.rawAnswer || entry.answer,
+                  verifiedAnswer: entry.answer,
+                  sourceType: 'pdf_page',
+                  matchedAt: nowIso
+                };
+              }
+              await saveParser2AnswerKeys(jobId, mergedKeys);
+              const currentQuestions = await getParser2Questions(jobId);
+              if (currentQuestions.length > 0) {
+                answerKeyService.applyKeysAndSolutionsToQuestions(currentQuestions, mergedKeys, {}, {
+                  overwriteManual: false,
+                  markMissingUnmatched: false
+                });
+                await saveParser2Questions(jobId, currentQuestions);
+              }
+              page.status = 'completed';
+              page.processingTimeMs = Date.now() - startTime;
+              page.extractedQuestionNumbers = [];
+              await saveParser2Page(page);
+              await addParser2Log(
+                jobId,
+                'validation',
+                `Auto-detected Answer Key on Page ${page.pageNumber} (${keyDetect.entries.length} keys extracted and saved in ${page.processingTimeMs}ms).`,
+                'success'
+              );
+              return;
+            }
+          }
+
+          // High-res Two-Column English Split Pass: run when full-page returned empty OR when options/match-tables/diagrams/sequence have gaps
+          const sortedFull = [...verifiedQuestions].sort((a, b) => Number(a.questionNumber) - Number(b.questionNumber));
+          const hasMissingOrGap =
+            sortedFull.length === 0 ||
+            sortedFull.some(
+              vq =>
+                !vq.verifiedOptions ||
+                vq.verifiedOptions.length < 4 ||
+                vq.verifiedOptions.some((o: any) => !o?.value || isPlaceholderOption(o.value)) ||
+                (isMatchQuestionPrompt(vq.verifiedQuestionText || '') && !vq.matchTableData?.rows?.length) ||
+                (isTableQuestionPrompt(vq.verifiedQuestionText || '') && !vq.structuredTableData?.rows?.length && !vq.diagramBoundingBox)
+            ) ||
+            sortedFull.some(
+              (vq: any, idx: number, arr: any[]) =>
+                idx > 0 && Number(vq.questionNumber) - Number(arr[idx - 1].questionNumber) > 1
+            );
+          const isTwoColEnglish =
+            !verifiedQuestions.some(vq => vq.pageLayout === 'two_column_bilingual') &&
+            hasMissingOrGap;
+
+          if (isTwoColEnglish) {
+            const splitQuestions = await geminiVerificationService.verifyTwoColumnEnglishPage(
+              page.pageNumber,
+              pageImageBuffer,
+              ocrMarkdown || `Page ${page.pageNumber}`,
+              subject,
+              geminiModel,
+              prevPageTailContext || prevPageLastQNum
+            );
+            if (verifyMs > 15000 && splitQuestions.length > 0) {
+              await addParser2Log(jobId, 'gemini_verification', `Page ${page.pageNumber} full-page Vision took ${verifyMs}ms; merged ${splitQuestions.length} dual-column questions.`, 'info');
+            }
+
+            if (splitQuestions.length > 0) {
+              const mergedByNum = new Map<number, any>();
+              for (const q of verifiedQuestions) {
+                if (q?.questionNumber) mergedByNum.set(Number(q.questionNumber), q);
+              }
+              for (const sq of splitQuestions) {
+                if (!sq?.questionNumber) continue;
+                const prev = mergedByNum.get(Number(sq.questionNumber));
+                if (!prev) {
+                  mergedByNum.set(Number(sq.questionNumber), sq);
+                } else {
+                  const mergedOpts = (['A', 'B', 'C', 'D'] as const).map(lbl => {
+                    const pOpt = prev.verifiedOptions?.find((o: any) => o.label === lbl)?.value?.trim() || '';
+                    const sOpt = sq.verifiedOptions?.find((o: any) => o.label === lbl)?.value?.trim() || '';
+                    const pValid = pOpt && !isPlaceholderOption(pOpt);
+                    const sValid = sOpt && !isPlaceholderOption(sOpt);
+                    if (sValid && !pValid) return { label: lbl, value: sOpt };
+                    if (pValid && !sValid) return { label: lbl, value: pOpt };
+                    return { label: lbl, value: sOpt.length >= pOpt.length ? sOpt : pOpt };
+                  });
+
+                  mergedByNum.set(Number(sq.questionNumber), {
+                    ...prev,
+                    pageLayout: 'two_column_english',
+                    verifiedQuestionText:
+                      (sq.verifiedQuestionText || '').trim().length > (prev.verifiedQuestionText || '').trim().length
+                        ? sq.verifiedQuestionText
+                        : prev.verifiedQuestionText,
+                    verifiedOptions: mergedOpts,
+                    hasDiagram: Boolean(prev.hasDiagram || sq.hasDiagram),
+                    figureType: sq.figureType || prev.figureType,
+                    diagramBoundingBox: sq.diagramBoundingBox || prev.diagramBoundingBox,
+                    matchTableData:
+                      (sq.matchTableData?.rows?.length || 0) >= (prev.matchTableData?.rows?.length || 0)
+                        ? sq.matchTableData || prev.matchTableData
+                        : prev.matchTableData,
+                    structuredTableData:
+                      (sq.structuredTableData?.rows?.length || 0) >= (prev.structuredTableData?.rows?.length || 0)
+                        ? sq.structuredTableData || prev.structuredTableData
+                        : prev.structuredTableData,
+                    optionBoundingBoxes: sq.optionBoundingBoxes || prev.optionBoundingBoxes,
+                    confidenceScore: Math.max(prev.confidenceScore || 0, sq.confidenceScore || 0),
+                    reviewRequired: Boolean(prev.reviewRequired && sq.reviewRequired)
+                  });
+                }
+              }
+              verifiedQuestions = Array.from(mergedByNum.values()).sort((a, b) => a.questionNumber - b.questionNumber);
+              page.pageLayout = 'two_column_english';
+            }
+          }
+        }
       } else {
         const localExtracted = parser2LayoutEngine.parseQuestionsFromText(ocrMarkdown || '', subject, page.pageNumber);
         verifiedQuestions = localExtracted.map(q => ({
@@ -965,9 +1486,15 @@ export class JobQueueService {
 
       // Lazily load next page buffer ONLY if a question on this page needs cross-page recovery
       let nextPageImageBufferCache: Buffer | undefined;
+      let perPageRecoveryCount = 0;
 
       for (const vq of verifiedQuestions) {
-        if (!vq.questionNumber || !vq.verifiedQuestionText) continue;
+        if (!vq.questionNumber) continue;
+        const preQ = existingQuestionsSnapshot.find(q => q.questionNumber === vq.questionNumber);
+        if (!vq.verifiedQuestionText && !preQ) continue;
+        if (!vq.verifiedQuestionText && preQ) {
+          vq.verifiedQuestionText = preQ.questionText;
+        }
 
         const layoutMode: CropLayoutMode = vq.pageLayout || 'two_column_bilingual';
         if (!page.pageLayout && vq.pageLayout) page.pageLayout = vq.pageLayout;
@@ -977,6 +1504,24 @@ export class JobQueueService {
         let figureRecord: Parser2Figure | undefined = undefined;
         const optionFiguresMap: { [label: string]: string } = {};
         let figureMismatchDetected = false;
+
+        // Stage 4a-pre: Rescue MCQ options accidentally emitted inside structuredTableData (e.g. 2x2 box choices)
+        const rescuedFromTable = this.rescueOptionsFromStructuredTable(vq.structuredTableData);
+        if (rescuedFromTable.rescuedCount >= 2) {
+          const existingMap = new Map<string, string>();
+          for (const o of (vq.verifiedOptions || [])) {
+            if (o?.label && o?.value && !isPlaceholderOption(o.value)) {
+              existingMap.set(String(o.label).toUpperCase(), o.value);
+            }
+          }
+          vq.verifiedOptions = (['A', 'B', 'C', 'D'] as const).map(lbl => ({
+            label: lbl,
+            value: existingMap.get(lbl) || rescuedFromTable.options[lbl] || ''
+          }));
+          if (rescuedFromTable.wasOptionOnlyTable) {
+            vq.structuredTableData = undefined;
+          }
+        }
 
         // Stage 4a: Normalize & Format Text Options FIRST (before deciding whether option crops are needed!)
         let normalizedOptions = (['A', 'B', 'C', 'D'] as const).map(lbl => {
@@ -1115,7 +1660,8 @@ export class JobQueueService {
         const needsOptionRecovery = normalizedOptions.some(o => !o.imageUrl && (!o.value || isPlaceholderOption(o.value)));
         const needsTextRecovery = isQuestionTextTruncated(cleanedQuestionText);
 
-        if ((needsFigureRecovery || needsOptionRecovery || needsTextRecovery) && settings.geminiVerificationEnabled && geminiVerificationService.isConfigured()) {
+        if ((needsFigureRecovery || needsOptionRecovery || needsTextRecovery) && settings.geminiVerificationEnabled && geminiVerificationService.isConfigured() && (needsFigureRecovery || perPageRecoveryCount < 4)) {
+          perPageRecoveryCount++;
           if (needsOptionRecovery && page.pageNumber < totalPages && !nextPageImageBufferCache) {
             try {
               nextPageImageBufferCache = await figureExtractionService.renderPdfPageToPng(pdfBuffer, page.pageNumber + 1, dpi);
@@ -1162,6 +1708,8 @@ export class JobQueueService {
               pageFiguresToUpsert.push(figureRecord);
               figureMismatchDetected = false;
               await addParser2Log(jobId, 'figure_extraction', `Recovered missing ${figureRecord.figureType} for Q${vq.questionNumber} (Page ${targetRecPageNum}).`, 'success');
+            } else if (recoveredCrop.rejectionReason) {
+              await addParser2Log(jobId, 'figure_extraction', `Q${vq.questionNumber} recovery crop rejected (${recoveredCrop.rejectionReason})`, 'warn');
             }
           }
 
@@ -1240,11 +1788,22 @@ export class JobQueueService {
 
         if (matchTableData && matchTableData.rows && matchTableData.rows.length > 0) {
           cleanedQuestionText = cleanQuestionTextForMatchTable(cleanedQuestionText, matchTableData);
+          // Canonical Single Table Rule: never store duplicate structuredTable alongside matchTable
+          structuredTableData = undefined;
+        }
+
+        // Discard hallucinated "Scale / Features" tables generated to describe a physical diagram (e.g. Vernier scale)
+        if (structuredTableData && (visualReq.needsFigure || figureUrl) && !isTableQuestionPrompt(cleanedQuestionText)) {
+          const cap = `${structuredTableData.caption || ''} ${(structuredTableData.headers || []).join(' ')}`.toLowerCase();
+          if (/(?:vernier|main\s*scale|screw\s*gauge|diagram|shows\s+(?:major|secondary)\s+divisions|features)/i.test(cap)) {
+            structuredTableData = undefined;
+          }
         }
 
         const resolvedQuestionType: Parser2Question['questionType'] =
-          vq.detectedQuestionType ||
-          (matchTableData ? 'match_the_column' : structuredTableData ? 'table_based' : figureUrl ? 'diagram_based' : 'single_mcq');
+          matchTableData?.rows?.length
+            ? 'match_the_column'
+            : vq.detectedQuestionType || (structuredTableData ? 'table_based' : figureUrl ? 'diagram_based' : 'single_mcq');
 
         // Stage 7: Strict Verification Status Evaluation (never marks incomplete/missing-table/missing-figure as verified!)
         const strict = evaluateStrictQuestionStatus({
@@ -1261,6 +1820,12 @@ export class JobQueueService {
           figureMismatchDetected
         });
 
+        const spannedPages = [page.pageNumber];
+        if (figureRecord?.pageNumber && !spannedPages.includes(figureRecord.pageNumber)) {
+          spannedPages.push(figureRecord.pageNumber);
+        }
+        const pageMeta = formatSourcePageRange(spannedPages, page.pageNumber);
+
         const nowIso = new Date().toISOString();
         const qRecord: Parser2Question = {
           id: `q-${jobId}-${vq.questionNumber}`,
@@ -1271,7 +1836,10 @@ export class JobQueueService {
           questionType: resolvedQuestionType,
           questionText: cleanedQuestionText,
           options: normalizedOptions,
-          sourcePageNumber: page.pageNumber,
+          sourcePageNumber: pageMeta.startPage,
+          sourcePageEnd: pageMeta.endPage,
+          sourcePages: pageMeta.sourcePages,
+          sourcePageRange: pageMeta.label,
           pageLayout: layoutMode === 'manual' ? undefined : layoutMode,
           chemistryContentType,
           figureUrl,
@@ -1592,28 +2160,30 @@ export class JobQueueService {
       const candidates = questions.filter(
         q =>
           !q.isManuallyEdited &&
-          q.sourcePageNumber < totalPages &&
+          q.sourcePageNumber <= totalPages &&
           (q.verificationStatus === 'options_incomplete' ||
             q.verificationStatus === 'text_incomplete' ||
-            q.verificationStatus === 'table_incomplete')
+            q.verificationStatus === 'table_incomplete' ||
+            q.verificationStatus === 'missing_figure')
       );
-
-      if (candidates.length === 0) return;
 
       const dpi = Math.max(180, settings.figureDpi || 200);
       const geminiModel = settings.geminiModel || 'gemini-4-hydrogen';
       let updatedCount = 0;
 
       const updatedCrossPageQuestions: Parser2Question[] = [];
-      for (const q of candidates.slice(0, 15)) {
+      const recoveryFigures: Parser2Figure[] = [];
+
+      for (const q of candidates.slice(0, 20)) {
         const curPage = pages.find(p => p.pageNumber === q.sourcePageNumber);
-        const nextPage = pages.find(p => p.pageNumber === q.sourcePageNumber + 1);
-        if (!curPage || !nextPage) continue;
+        const nextPage = q.sourcePageNumber < totalPages ? pages.find(p => p.pageNumber === q.sourcePageNumber + 1) : undefined;
+        if (!curPage) continue;
 
         let changed = false;
+        let touchedNextPage = false;
 
         // 1. Deterministic lead-in scan on nextPage OCR markdown before the next question starts
-        if (nextPage.ocrMarkdown && q.verificationStatus === 'options_incomplete') {
+        if (nextPage?.ocrMarkdown && q.verificationStatus === 'options_incomplete') {
           const engNext = parser2LayoutEngine.extractEnglishColumn(nextPage.ocrMarkdown);
           const nextQIdx = engNext.search(/(?:^|\n)\s*(?:\*\*)?\d{1,3}\s*[\.\)]\s*/);
           const leadingChunk = nextQIdx > 0 ? engNext.slice(0, nextQIdx) : engNext.slice(0, 600);
@@ -1630,23 +2200,28 @@ export class JobQueueService {
                 if (candidateVal && !isPlaceholderOption(candidateVal)) {
                   q.options[idx] = { ...q.options[idx], text: candidateVal, value: candidateVal };
                   changed = true;
+                  touchedNextPage = true;
                 }
               }
             }
           }
         }
 
-        // 2. Multimodal lookahead across Page P & Page P+1 if still incomplete
+        // 2. Multimodal lookahead across Page P (& Page P+1 if available)
         if (
           settings.geminiVerificationEnabled &&
           geminiVerificationService.isConfigured() &&
           (q.options.some(o => !o.imageUrl && (!o.value || isPlaceholderOption(o.value))) ||
             q.verificationStatus === 'text_incomplete' ||
-            q.verificationStatus === 'table_incomplete')
+            q.verificationStatus === 'table_incomplete' ||
+            q.verificationStatus === 'missing_figure')
         ) {
           try {
             const pBuf = await figureExtractionService.renderPdfPageToPng(pdfBuffer, q.sourcePageNumber, dpi);
-            const nBuf = await figureExtractionService.renderPdfPageToPng(pdfBuffer, q.sourcePageNumber + 1, dpi);
+            const nBuf =
+              q.sourcePageNumber < totalPages
+                ? await figureExtractionService.renderPdfPageToPng(pdfBuffer, q.sourcePageNumber + 1, dpi)
+                : undefined;
             const rec = await geminiVerificationService.recoverMissingQuestionContent({
               pageNumber: q.sourcePageNumber,
               pageImageBuffer: pBuf,
@@ -1654,9 +2229,9 @@ export class JobQueueService {
               questionNumber: q.questionNumber,
               currentQuestionText: q.questionText,
               currentOptions: q.options.map(o => ({ label: o.label, value: o.value })),
-              missingFigure: false,
+              missingFigure: q.verificationStatus === 'missing_figure',
               missingOptions: q.options.some(o => !o.imageUrl && (!o.value || isPlaceholderOption(o.value))),
-              truncatedText: q.verificationStatus === 'text_incomplete',
+              truncatedText: q.verificationStatus === 'text_incomplete' || q.verificationStatus === 'table_incomplete',
               subject,
               modelName: geminiModel
             });
@@ -1664,6 +2239,7 @@ export class JobQueueService {
             if (rec.recoveredQuestionText && rec.recoveredQuestionText.trim().length > q.questionText.length) {
               q.questionText = formatScientificMathAndPowers(rec.recoveredQuestionText.trim());
               changed = true;
+              if (rec.fromNextPage && nBuf) touchedNextPage = true;
             }
             if (rec.recoveredOptions && rec.recoveredOptions.length > 0) {
               for (const ro of rec.recoveredOptions) {
@@ -1673,21 +2249,63 @@ export class JobQueueService {
                   const formatted = formatScientificMathAndPowers(ro.value.trim());
                   q.options[idx] = { ...q.options[idx], text: formatted, value: formatted };
                   changed = true;
+                  if (nBuf) touchedNextPage = true;
                 }
               }
             }
             if (rec.recoveredMatchTableData && rec.recoveredMatchTableData.rows?.length) {
               q.matchTable = rec.recoveredMatchTableData;
+              q.structuredTable = undefined;
+              q.questionText = cleanQuestionTextForMatchTable(q.questionText, q.matchTable);
               changed = true;
+              if (rec.fromNextPage && nBuf) touchedNextPage = true;
             }
-            if (rec.recoveredStructuredTableData && rec.recoveredStructuredTableData.rows?.length) {
+            if (!q.matchTable?.rows?.length && rec.recoveredStructuredTableData && rec.recoveredStructuredTableData.rows?.length) {
               q.structuredTable = rec.recoveredStructuredTableData;
               changed = true;
+              if (rec.fromNextPage && nBuf) touchedNextPage = true;
+            }
+            if (!q.figureUrl && rec.recoveredDiagramBoundingBox && rec.recoveredDiagramBoundingBox.length === 4) {
+              const targetBuf = rec.fromNextPage && nBuf ? nBuf : pBuf;
+              const targetPg = rec.fromNextPage && nBuf ? q.sourcePageNumber + 1 : q.sourcePageNumber;
+              const cropRes = await this.validateAndCropPrimaryFigure({
+                jobId,
+                pageNumber: targetPg,
+                questionNumber: q.questionNumber,
+                questionText: q.questionText,
+                pageImageBuffer: targetBuf,
+                boundingBox: rec.recoveredDiagramBoundingBox,
+                figureType: (rec.recoveredDiagramType as any) || 'diagram',
+                layoutMode: (rec.pageLayout as any) || q.pageLayout || 'two_column_english',
+                modelName: geminiModel
+              });
+              if (cropRes.figureRecord) {
+                q.figureUrl = cropRes.figureRecord.figureUrl;
+                q.originalFigureUrl = q.originalFigureUrl || cropRes.figureRecord.figureUrl;
+                q.figures = [cropRes.figureRecord, ...(q.figures || [])];
+                q.figureAssetIds = [cropRes.figureRecord.id];
+                recoveryFigures.push(cropRes.figureRecord);
+                changed = true;
+                if (targetPg > q.sourcePageNumber) touchedNextPage = true;
+              }
             }
           } catch {}
         }
 
         if (changed) {
+          if (q.matchTable?.rows?.length) {
+            q.structuredTable = undefined;
+          }
+          if (touchedNextPage && q.sourcePageNumber < totalPages) {
+            const pageMeta = formatSourcePageRange(
+              [...(q.sourcePages || [q.sourcePageNumber]), q.sourcePageNumber + 1],
+              q.sourcePageNumber
+            );
+            q.sourcePageNumber = pageMeta.startPage;
+            q.sourcePageEnd = pageMeta.endPage;
+            q.sourcePages = pageMeta.sourcePages;
+            q.sourcePageRange = pageMeta.label;
+          }
           const strict = evaluateStrictQuestionStatus({
             questionType: q.questionType,
             questionText: q.questionText,
@@ -1711,18 +2329,210 @@ export class JobQueueService {
         }
       }
 
+      // 3. Sequence-Gap Integrity Recovery (recovers any missing integers e.g. Q21 across pg 2->3)
+      if (questions.length > 0 && settings.geminiVerificationEnabled && geminiVerificationService.isConfigured()) {
+        const sortedNums = questions.map(q => q.questionNumber).sort((a, b) => a - b);
+        const minQ = sortedNums[0] <= 5 ? 1 : sortedNums[0];
+        const maxQ = sortedNums[sortedNums.length - 1];
+        const presentSet = new Set(sortedNums);
+        const missingNums: number[] = [];
+        for (let n = minQ; n <= maxQ; n++) {
+          if (!presentSet.has(n)) missingNums.push(n);
+        }
+
+        for (const missingNum of missingNums.slice(0, 15)) {
+          const prevQ = [...questions].filter(q => q.questionNumber < missingNum).sort((a, b) => b.questionNumber - a.questionNumber)[0];
+          const nextQ = [...questions].filter(q => q.questionNumber > missingNum).sort((a, b) => a.questionNumber - b.questionNumber)[0];
+          const pageA = prevQ?.sourcePageNumber || nextQ?.sourcePageNumber || 1;
+          const pageB = nextQ?.sourcePageNumber && nextQ.sourcePageNumber !== pageA ? nextQ.sourcePageNumber : Math.min(totalPages, pageA + 1);
+
+          try {
+            const bufA = await figureExtractionService.renderPdfPageToPng(pdfBuffer, pageA, dpi);
+            const bufB = pageB !== pageA && pageB <= totalPages ? await figureExtractionService.renderPdfPageToPng(pdfBuffer, pageB, dpi) : undefined;
+            const rec = await geminiVerificationService.recoverMissingQuestionContent({
+              pageNumber: pageA,
+              pageImageBuffer: bufA,
+              nextPageImageBuffer: bufB,
+              questionNumber: missingNum,
+              currentQuestionText: '',
+              currentOptions: [],
+              missingFigure: true,
+              missingOptions: true,
+              truncatedText: true,
+              subject,
+              modelName: geminiModel
+            });
+
+            if (rec.recoveredQuestionText && rec.recoveredQuestionText.trim().length > 8) {
+              const gapRescued = this.rescueOptionsFromStructuredTable(rec.recoveredStructuredTableData);
+              if (gapRescued.rescuedCount >= 2 && gapRescued.wasOptionOnlyTable) {
+                rec.recoveredStructuredTableData = undefined;
+              }
+              let recoveredStem = formatScientificMathAndPowers(rec.recoveredQuestionText.trim());
+              const recOpts: Parser2Question['options'] = (['A', 'B', 'C', 'D'] as const).map(lbl => {
+                const found = rec.recoveredOptions?.find(o => o.label === lbl);
+                const rawVal = found?.value && !isPlaceholderOption(found.value) ? found.value : gapRescued.options[lbl] || '';
+                const val = rawVal && !isPlaceholderOption(rawVal) ? formatScientificMathAndPowers(rawVal.trim()) : '';
+                return { label: lbl, text: val, value: val };
+              });
+
+              let recFigUrl: string | undefined;
+              let recFigs: Parser2Figure[] = [];
+              if (rec.recoveredDiagramBoundingBox && rec.recoveredDiagramBoundingBox.length === 4) {
+                const targetBuf = rec.fromNextPage && bufB ? bufB : bufA;
+                const targetPg = rec.fromNextPage && bufB ? pageB : pageA;
+                const cropRes = await this.validateAndCropPrimaryFigure({
+                  jobId,
+                  pageNumber: targetPg,
+                  questionNumber: missingNum,
+                  questionText: recoveredStem,
+                  pageImageBuffer: targetBuf,
+                  boundingBox: rec.recoveredDiagramBoundingBox,
+                  figureType: (rec.recoveredDiagramType as any) || 'diagram',
+                  layoutMode: (rec.pageLayout as any) || 'two_column_english',
+                  modelName: geminiModel
+                });
+                if (cropRes.figureRecord) {
+                  recFigUrl = cropRes.figureRecord.figureUrl;
+                  recFigs = [cropRes.figureRecord];
+                  recoveryFigures.push(cropRes.figureRecord);
+                }
+              }
+
+              if (rec.recoveredMatchTableData?.rows?.length) {
+                recoveredStem = cleanQuestionTextForMatchTable(recoveredStem, rec.recoveredMatchTableData);
+              }
+
+              const qType: Parser2Question['questionType'] =
+                rec.recoveredMatchTableData?.rows?.length
+                  ? 'match_the_column'
+                  : rec.recoveredStructuredTableData?.rows?.length
+                  ? 'table_based'
+                  : recFigUrl
+                  ? 'diagram_based'
+                  : 'single_mcq';
+
+              const strict = evaluateStrictQuestionStatus({
+                questionType: qType,
+                questionText: recoveredStem,
+                options: recOpts,
+                figureUrl: recFigUrl,
+                matchTable: rec.recoveredMatchTableData,
+                structuredTable: rec.recoveredStructuredTableData,
+                confidenceScore: rec.confidenceScore || 85
+              });
+
+              const nowIso = new Date().toISOString();
+              const recoveredQ: Parser2Question = {
+                id: `q-${jobId}-${missingNum}`,
+                jobId,
+                questionNumber: missingNum,
+                subject,
+                chapter: '',
+                questionType: qType,
+                questionText: recoveredStem,
+                options: recOpts,
+                sourcePageNumber: rec.fromNextPage && bufB ? pageB : pageA,
+                pageLayout: (rec.pageLayout as any) || 'two_column_english',
+                figureUrl: recFigUrl,
+                originalFigureUrl: recFigUrl,
+                figures: recFigs,
+                figureAssetIds: recFigs.map(f => f.id),
+                matchTable: rec.recoveredMatchTableData,
+                structuredTable: rec.recoveredStructuredTableData,
+                extractionEngine: 'gemini',
+                verificationStatus: strict.verificationStatus,
+                confidenceScore: strict.confidenceScore,
+                reviewRequired: strict.reviewRequired,
+                reviewNotes: strict.reviewNotes || `Recovered Q${missingNum} via sequence-gap boundary pass.`,
+                componentValidation: strict.componentValidation,
+                createdAt: nowIso,
+                updatedAt: nowIso
+              };
+
+              updatedCrossPageQuestions.push(recoveredQ);
+              updatedCount++;
+            }
+          } catch {}
+        }
+      }
+
+      if (recoveryFigures.length > 0) {
+        await upsertParser2Figures(jobId, recoveryFigures);
+      }
       if (updatedCount > 0) {
         await upsertParser2Questions(jobId, updatedCrossPageQuestions);
         await addParser2Log(
           jobId,
           'validation',
-          `Cross-page boundary pass recovered content for ${updatedCount} question(s).`,
+          `Cross-boundary & sequence-gap pass recovered/completed ${updatedCount} question(s).`,
           'info'
         );
       }
     } catch (err: any) {
       console.warn('[JobQueue] stitchCrossPageContinuations note:', err.message);
     }
+  }
+
+  /**
+   * Rescues MCQ options (A)-(D) that Gemini occasionally puts into structuredTableData rows.
+   */
+  private rescueOptionsFromStructuredTable(tableData?: {
+    headers?: string[];
+    rows?: string[][];
+    caption?: string;
+  }): { rescuedCount: number; options: Partial<Record<'A' | 'B' | 'C' | 'D', string>>; wasOptionOnlyTable: boolean } {
+    const out: Partial<Record<'A' | 'B' | 'C' | 'D', string>> = {};
+    if (!tableData || !Array.isArray(tableData.rows) || tableData.rows.length === 0) {
+      return { rescuedCount: 0, options: out, wasOptionOnlyTable: false };
+    }
+
+    let matchedCells = 0;
+    let totalCells = 0;
+    const mapLabel = (raw: string): 'A' | 'B' | 'C' | 'D' | null => {
+      const up = raw.toUpperCase();
+      if (up === 'A' || up === '1') return 'A';
+      if (up === 'B' || up === '2') return 'B';
+      if (up === 'C' || up === '3') return 'C';
+      if (up === 'D' || up === '4') return 'D';
+      return null;
+    };
+
+    for (const row of tableData.rows) {
+      if (!Array.isArray(row)) continue;
+      // Pattern 1: Key-Value row like ["(A)", "1"]
+      if (row.length === 2) {
+        const keyOnly = String(row[0] || '').trim().match(/^\(?([A-D1-4])\)?[\.\):]?$/i);
+        if (keyOnly) {
+          const lbl = mapLabel(keyOnly[1]);
+          const val = String(row[1] || '').trim();
+          if (lbl && val) {
+            out[lbl] = val;
+            matchedCells += 2;
+            totalCells += 2;
+            continue;
+          }
+        }
+      }
+      // Pattern 2: Cells containing inline markers like "(A) Mass", "(B) Length", etc.
+      for (const cell of row) {
+        const txt = String(cell || '').trim();
+        if (!txt) continue;
+        totalCells++;
+        const m = txt.match(/^\(?([A-D1-4])\)?[\.\):]\s*(.+)$/i);
+        if (m) {
+          const lbl = mapLabel(m[1]);
+          if (lbl && m[2].trim()) {
+            out[lbl] = m[2].trim();
+            matchedCells++;
+          }
+        }
+      }
+    }
+
+    const rescuedCount = Object.keys(out).length;
+    const wasOptionOnlyTable = rescuedCount >= 2 && matchedCells >= Math.max(2, totalCells - 1);
+    return { rescuedCount, options: out, wasOptionOnlyTable };
   }
 
   private async getPdfPageCount(buffer: Buffer): Promise<number> {

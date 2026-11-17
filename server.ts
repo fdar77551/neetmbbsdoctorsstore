@@ -616,6 +616,13 @@ async function hydrateDualDatabases() {
       });
       await syncToFirebaseRTDB("mock_tests", testsMap);
     }
+    if (db.mock_questions && typeof db.mock_questions === "object") {
+      for (const [testId, qs] of Object.entries(db.mock_questions)) {
+        if (Array.isArray(qs) && qs.length > 0) {
+          syncToFirebaseRTDB(`mock_questions/${encodeURIComponent(testId)}`, qs).catch(() => {});
+        }
+      }
+    }
     if (Array.isArray(db.test_categories) && db.test_categories.length > 0) {
       await syncToFirebaseRTDB("test_categories", db.test_categories);
     }
@@ -1320,16 +1327,19 @@ app.post("/api/payment/create-order", async (req, res) => {
   }
 });
 
-// 2. Verify Razorpay Payment Signature
+// 2. Verify Razorpay Payment Signature (Server-Authoritative HMAC-SHA256 + Purchase Unlock)
 app.post("/api/payment/verify", async (req, res) => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, order_data } = req.body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, order_data, mockTestUnlock } = req.body;
 
     if (!razorpay_order_id || !razorpay_payment_id) {
       return res.status(400).json({ success: false, message: "Missing required payment parameters" });
     }
 
     let isValid = false;
+    const isSandboxBypassAllowed =
+      process.env.ALLOW_SANDBOX_PAYMENTS === "true" ||
+      (!RAZORPAY_KEY_SECRET && process.env.NODE_ENV !== "production");
 
     // Server-side HMAC-SHA256 signature verification
     if (razorpay_signature && RAZORPAY_KEY_SECRET && razorpay_signature !== "sandbox_verified_signature") {
@@ -1338,10 +1348,11 @@ app.post("/api/payment/verify", async (req, res) => {
         .update(`${razorpay_order_id}|${razorpay_payment_id}`)
         .digest("hex");
 
-      isValid = generated_signature === razorpay_signature;
-    } else {
-      // In sandbox/test mode or if payment id format starts with pay_
-      isValid = Boolean(razorpay_payment_id && razorpay_payment_id.startsWith("pay_"));
+      const genBuf = Buffer.from(generated_signature, "hex");
+      const sigBuf = Buffer.from(String(razorpay_signature), "hex");
+      isValid = genBuf.length === sigBuf.length && crypto.timingSafeEqual(genBuf, sigBuf);
+    } else if (razorpay_signature === "sandbox_verified_signature" && isSandboxBypassAllowed) {
+      isValid = Boolean(razorpay_payment_id && String(razorpay_payment_id).startsWith("pay_"));
     }
 
     // Call Pipedream verification webhook
@@ -1363,6 +1374,38 @@ app.post("/api/payment/verify", async (req, res) => {
       }
     } catch (e: any) {
       console.warn("Pipedream webhook notification error:", e.message);
+    }
+
+    // Persist verified Mock Test / Pass purchase server-side when valid
+    if (isValid && mockTestUnlock && mockTestUnlock.testId && (mockTestUnlock.userEmail || mockTestUnlock.userId)) {
+      try {
+        const db = loadDatabase();
+        if (!Array.isArray(db.mock_purchases)) db.mock_purchases = [];
+        const purchaseRecord = {
+          id: `purch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          userId: mockTestUnlock.userId || mockTestUnlock.userEmail,
+          userEmail: String(mockTestUnlock.userEmail || "").toLowerCase().trim(),
+          testId: mockTestUnlock.testId,
+          packageType: mockTestUnlock.packageType || undefined,
+          amount: Number(mockTestUnlock.amount || order_data?.amount || 0),
+          paymentId: razorpay_payment_id,
+          orderId: razorpay_order_id,
+          verifiedServerSide: true,
+          purchasedAt: new Date().toISOString()
+        };
+        const exists = db.mock_purchases.some(
+          (p: any) =>
+            p.paymentId === razorpay_payment_id ||
+            (p.userEmail === purchaseRecord.userEmail && p.testId === purchaseRecord.testId)
+        );
+        if (!exists) {
+          db.mock_purchases.unshift(purchaseRecord);
+          saveDatabase(db);
+          syncToFirebaseRTDB("mock_purchases", db.mock_purchases).catch(() => {});
+        }
+      } catch (pErr: any) {
+        console.warn("Server purchase unlock persistence note:", pErr.message);
+      }
     }
 
     // Trigger Telegram Notification for verified payment
@@ -1388,7 +1431,7 @@ app.post("/api/payment/verify", async (req, res) => {
     } else {
       return res.status(400).json({
         success: false,
-        message: "Payment verification failed. Invalid signature."
+        message: "Payment verification failed. Invalid HMAC signature."
       });
     }
   } catch (error: any) {
@@ -2914,6 +2957,16 @@ app.delete("/api/db/support/:id", async (req, res) => {
 });
 
 // 6. MOCK TESTS & QUESTIONS PERSISTENCE
+const SERVER_ADMIN_EMAILS = new Set(["fdar77551@gmail.com", "shahzaibhusain6@gmail.com"]);
+function requireAdminIfIdentifiedServer(req: express.Request, res: express.Response): boolean {
+  const email = String(req.headers["x-user-email"] || req.body?.adminEmail || "").toLowerCase().trim();
+  if (email && !SERVER_ADMIN_EMAILS.has(email)) {
+    res.status(403).json({ success: false, error: "Unauthorized: Admin privileges required." });
+    return false;
+  }
+  return true;
+}
+
 app.get("/api/db/mock-tests", async (_req, res) => {
   try {
     const db = loadDatabase();
@@ -2924,6 +2977,7 @@ app.get("/api/db/mock-tests", async (_req, res) => {
 });
 
 app.post("/api/db/mock-tests", async (req, res) => {
+  if (!requireAdminIfIdentifiedServer(req, res)) return;
   try {
     const db = loadDatabase();
     const rawTests = Array.isArray(req.body) ? req.body : req.body.tests || [];
@@ -2939,6 +2993,7 @@ app.post("/api/db/mock-tests", async (req, res) => {
 });
 
 app.post("/api/db/mock-tests/:testId/categories", async (req, res) => {
+  if (!requireAdminIfIdentifiedServer(req, res)) return;
   try {
     const db = loadDatabase();
     const { testId } = req.params;
@@ -3037,6 +3092,7 @@ app.get("/api/test-categories", async (_req, res) => {
 });
 
 app.post("/api/test-categories", async (req, res) => {
+  if (!requireAdminIfIdentifiedServer(req, res)) return;
   try {
     const db = loadDatabase();
     const categories = normalizeTestCategories(db.test_categories);
@@ -3105,6 +3161,7 @@ app.post("/api/test-categories", async (req, res) => {
 });
 
 app.put("/api/test-categories/:id", async (req, res) => {
+  if (!requireAdminIfIdentifiedServer(req, res)) return;
   try {
     const db = loadDatabase();
     const categories = normalizeTestCategories(db.test_categories);
@@ -3144,6 +3201,7 @@ app.put("/api/test-categories/:id", async (req, res) => {
 });
 
 app.delete("/api/test-categories/:id", async (req, res) => {
+  if (!requireAdminIfIdentifiedServer(req, res)) return;
   try {
     const db = loadDatabase();
     const categories = normalizeTestCategories(db.test_categories);
@@ -3290,7 +3348,7 @@ app.post("/api/d1/tests", async (req, res) => {
     const db = loadDatabase();
     const testsToSave = Array.isArray(req.body.tests) ? req.body.tests : (req.body.test ? [req.body.test] : (Array.isArray(req.body) ? req.body : []));
     if (!db.mock_tests) db.mock_tests = [];
-    
+
     // Clean tests (strip heavy embedded questions)
     const cleaned = testsToSave.map((t: any) => {
       const { questions: _, ...rest } = t;
@@ -3300,10 +3358,11 @@ app.post("/api/d1/tests", async (req, res) => {
     for (const ct of cleaned) {
       const idx = db.mock_tests.findIndex((existing: any) => existing.id === ct.id);
       if (idx > -1) {
-        db.mock_tests[idx] = ct;
+        db.mock_tests[idx] = { ...db.mock_tests[idx], ...ct };
       } else {
         db.mock_tests.unshift(ct);
       }
+      syncToFirebaseRTDB(`mock_tests/${encodeURIComponent(ct.id)}`, ct).catch(() => {});
     }
     saveDatabase(db);
     return res.json({ success: true, savedCount: cleaned.length });
@@ -3343,6 +3402,7 @@ app.post("/api/d1/questions", async (req, res) => {
       }
     }
     saveDatabase(db);
+    syncToFirebaseRTDB(`mock_questions/${encodeURIComponent(testId)}`, questions).catch(() => {});
     return res.json({ success: true, testId, count: questions.length });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -3358,11 +3418,11 @@ app.post("/api/d1/sync", async (req, res) => {
       for (const t of body.tests) {
         const { questions: _, ...cleanT } = t;
         const idx = db.mock_tests.findIndex((existing: any) => existing.id === cleanT.id);
-        if (idx > -1) db.mock_tests[idx] = cleanT;
+        if (idx > -1) db.mock_tests[idx] = { ...db.mock_tests[idx], ...cleanT };
         else db.mock_tests.unshift(cleanT);
       }
     }
-    if (body.testQuestions && typeof body.testQuestions === 'object') {
+    if (body.testQuestions && typeof body.testQuestions === "object") {
       if (!db.mock_questions) db.mock_questions = {};
       Object.assign(db.mock_questions, body.testQuestions);
     }

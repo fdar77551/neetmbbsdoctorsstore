@@ -34,6 +34,7 @@ export interface MistralOcrResponse {
 export class MistralOcrService {
   private apiKey: string;
   private baseUrl = 'https://api.mistral.ai/v1';
+  private rateLimitedUntil: number = 0;
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.MISTRAL_API_KEY || 'mstrl_lI2FZX73d3MJPivLFIPQQAwZ0PQZYS4v_1B17tc';
@@ -61,7 +62,8 @@ export class MistralOcrService {
       headers: {
         'Authorization': `Bearer ${this.apiKey}`
       },
-      body: formData
+      body: formData,
+      signal: AbortSignal.timeout(20000)
     });
 
     if (!res.ok) {
@@ -80,7 +82,8 @@ export class MistralOcrService {
     const res = await fetch(`${this.baseUrl}/files/${fileId}/signed_url`, {
       headers: {
         'Authorization': `Bearer ${this.apiKey}`
-      }
+      },
+      signal: AbortSignal.timeout(12000)
     });
 
     if (!res.ok) {
@@ -103,6 +106,9 @@ export class MistralOcrService {
     if (!this.isConfigured()) {
       throw new Error('Mistral API Key is not configured.');
     }
+    if (Date.now() < this.rateLimitedUntil) {
+      return { pages: [], model: 'mistral-ocr-rate-limited', rateLimited: true };
+    }
 
     const payload: any = {
       model: 'mistral-ocr-latest',
@@ -117,7 +123,7 @@ export class MistralOcrService {
       payload.pages = pages;
     }
 
-    let retries = 3;
+    let retries = 2;
     let delay = 1500;
 
     while (retries > 0) {
@@ -128,12 +134,12 @@ export class MistralOcrService {
             'Authorization': `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(25000)
         });
 
         if (res.status === 429) {
-          // Rate limited, wait and retry
-          console.warn(`[MistralOCR] Rate limit 429 received, retrying in ${delay}ms...`);
+          this.rateLimitedUntil = Date.now() + 45000;
           await new Promise(r => setTimeout(r, delay));
           delay *= 2;
           retries--;
@@ -169,6 +175,15 @@ export class MistralOcrService {
       throw new Error('Mistral API Key is not configured.');
     }
 
+    // Immediate non-blocking delegation if Mistral 429 cooldown is currently active
+    if (Date.now() < this.rateLimitedUntil) {
+      return {
+        pages: [],
+        model: 'mistral-ocr-rate-limited',
+        rateLimited: true
+      };
+    }
+
     const payload = {
       model: 'mistral-ocr-latest',
       document: {
@@ -178,8 +193,7 @@ export class MistralOcrService {
       include_image_base64: includeImageBase64
     };
 
-    let retries = 3;
-    let delay = 3000;
+    let retries = 2;
 
     while (retries > 0) {
       try {
@@ -189,7 +203,8 @@ export class MistralOcrService {
             'Authorization': `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(15000)
         });
 
         if (res.ok) {
@@ -199,15 +214,15 @@ export class MistralOcrService {
         if (res.status === 429) {
           retries--;
           const retryHeader = res.headers.get('retry-after');
-          const waitMs = retryHeader ? Math.min(10000, parseInt(retryHeader, 10) * 1000) : delay;
-          if (retries > 0) {
-            console.log(`[MistralOCR] Rate limit 429 received, waiting ${waitMs}ms before retry (${retries} left)...`);
-            await new Promise(r => setTimeout(r, waitMs));
-            delay *= 2;
+          const retrySec = retryHeader ? parseInt(retryHeader, 10) : 0;
+          const cooldownMs = retrySec > 0 ? Math.min(60000, retrySec * 1000) : 45000;
+          this.rateLimitedUntil = Date.now() + cooldownMs;
+
+          if (retries > 0 && retrySec <= 2) {
+            await new Promise(r => setTimeout(r, 1200));
             continue;
           }
-          // After retries exhausted, return graceful fallback rather than throwing uncaught error
-          console.log(`[MistralOCR] Mistral 429 rate limit window active; delegating to Ghostscript OCR and Gemini visual parser.`);
+          console.log(`[MistralOCR] Rate limit 429 active (cooldown ${Math.round(cooldownMs / 1000)}s); delegating to Ghostscript + Gemini visual parser.`);
           return {
             pages: [],
             model: 'mistral-ocr-rate-limited',
@@ -225,8 +240,7 @@ export class MistralOcrService {
       } catch (err: any) {
         retries--;
         if (retries > 0) {
-          await new Promise(r => setTimeout(r, delay));
-          delay *= 2;
+          await new Promise(r => setTimeout(r, 800));
         } else {
           return {
             pages: [],

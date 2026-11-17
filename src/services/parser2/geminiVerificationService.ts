@@ -6,6 +6,13 @@ import sharp from 'sharp';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { Parser2Question, Parser2Subject } from './types';
 import { parser2LayoutEngine } from './layoutEngine';
+import { answerKeyService } from './answerKeyService';
+
+export interface AnswerKeyPageDetectionResult {
+  isAnswerKeyPage: boolean;
+  pageLayout?: 'two_column_english' | 'single_column' | 'grid';
+  entries: Array<{ questionNumber: number; answer: 'A' | 'B' | 'C' | 'D'; rawAnswer?: string }>;
+}
 
 export interface GeminiVerificationResult {
   questionNumber: number;
@@ -79,6 +86,7 @@ export interface TargetedRecoveryResult {
 export class GeminiVerificationService {
   private ai: GoogleGenAI | null = null;
   private defaultModel = 'gemini-4-hydrogen';
+  private modelCooldownUntil = new Map<string, number>();
 
   constructor() {
     this.ensureClient();
@@ -107,10 +115,12 @@ export class GeminiVerificationService {
 
   private resolveModelCandidates(preferredModel?: string): string[] {
     const raw = (preferredModel || this.defaultModel).trim();
-    // Map legacy alias to active low-latency Gemini 4 Flash model
     const normalized = raw === 'gemini-3.8-flash' ? 'gemini-4-hydrogen' : raw;
-    const candidates = [normalized, 'gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
-    return Array.from(new Set(candidates.filter(Boolean)));
+    const baseCandidates = Array.from(new Set([normalized, 'gemini-4-hydrogen', 'gemini-3.1-flash-lite'].filter(Boolean)));
+    const now = Date.now();
+    const healthy = baseCandidates.filter(m => (this.modelCooldownUntil.get(m) || 0) <= now);
+    const cooling = baseCandidates.filter(m => (this.modelCooldownUntil.get(m) || 0) > now);
+    return [...healthy, ...cooling];
   }
 
   private buildThinkingConfig(model: string): { thinkingConfig?: { thinkingLevel: ThinkingLevel } } {
@@ -118,7 +128,7 @@ export class GeminiVerificationService {
       return {};
     }
     if (model.startsWith('gemini-4-') || model.startsWith('gemini-3')) {
-      return { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } };
+      return { thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL } };
     }
     return {};
   }
@@ -141,6 +151,7 @@ export class GeminiVerificationService {
   }
 
   private isRetriableError(err: any): boolean {
+    if (err instanceof SyntaxError) return true;
     const msg = String(err?.message || err || '');
     return (
       msg.includes('504') ||
@@ -158,8 +169,33 @@ export class GeminiVerificationService {
       msg.includes('aborted') ||
       msg.includes('ETIMEDOUT') ||
       msg.includes('ECONNRESET') ||
-      msg.includes('fetch failed')
+      msg.includes('fetch failed') ||
+      msg.includes('Unexpected end of JSON') ||
+      msg.includes('Unterminated string')
     );
+  }
+
+  private parseJsonArraySafe(rawText: string | undefined): GeminiVerificationResult[] {
+    let cleaned = (rawText ?? '[]').trim();
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    }
+    try {
+      const parsed = JSON.parse(cleaned);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (parseErr) {
+      // Rescue truncated trailing array item from stream cutoffs if earlier complete objects exist
+      const lastObjEnd = cleaned.lastIndexOf('},');
+      if (cleaned.startsWith('[') && lastObjEnd > 0) {
+        try {
+          const salvaged = JSON.parse(cleaned.slice(0, lastObjEnd + 1) + ']');
+          if (Array.isArray(salvaged) && salvaged.length > 0) {
+            return salvaged;
+          }
+        } catch {}
+      }
+      throw parseErr;
+    }
   }
 
   private async runWithDeadlineAndFallback<T>(params: {
@@ -173,29 +209,28 @@ export class GeminiVerificationService {
 
     for (let i = 0; i < models.length; i++) {
       const model = models[i];
-      const maxTries = i === 0 ? 2 : 1;
-      for (let t = 0; t < maxTries; t++) {
-        const controller = new AbortController();
-        const attemptTimeout = t === 0 ? params.timeoutMs : Math.max(20000, params.timeoutMs - 6000);
-        const timer = setTimeout(() => controller.abort(new Error(`Client deadline guard (${attemptTimeout}ms)`)), attemptTimeout);
-        try {
-          const result = await params.executeAttempt(model, i + t, controller.signal);
-          clearTimeout(timer);
-          return result;
-        } catch (err: any) {
-          clearTimeout(timer);
-          lastError = err;
-          const msg = String(err?.message || err || '');
-          // If model doesn't exist (404), skip straight to next fallback model
-          if (msg.includes('404') || msg.includes('NOT_FOUND')) {
-            break;
-          }
-          if (!this.isRetriableError(err)) {
-            throw err;
-          }
-          if (t + 1 < maxTries || i + 1 < models.length) {
-            await new Promise(r => setTimeout(r, 700 * (t + 1)));
-          }
+      const controller = new AbortController();
+      const attemptTimeout = model === 'gemini-4-hydrogen' && i === 0 ? Math.min(params.timeoutMs, 20000) : Math.max(params.timeoutMs, 34000);
+      const timer = setTimeout(() => controller.abort(new Error(`Client deadline guard (${attemptTimeout}ms)`)), attemptTimeout);
+      try {
+        const result = await params.executeAttempt(model, i, controller.signal);
+        clearTimeout(timer);
+        this.modelCooldownUntil.delete(model);
+        return result;
+      } catch (err: any) {
+        clearTimeout(timer);
+        lastError = err;
+        const msg = String(err?.message || err || '');
+        if (!this.isRetriableError(err)) {
+          throw err;
+        }
+        // Cool down timed-out or rate-limited model for 10 min so subsequent pages route straight to fast healthy fallback
+        if (i === 0 && models.length > 1) {
+          this.modelCooldownUntil.set(model, Date.now() + 600_000);
+          console.log(`[GeminiVerification] Cooling down ${model} for 10m (${this.summarizeGeminiError(err)}); promoting ${models[1]}.`);
+        }
+        if (i + 1 < models.length && !(msg.includes('404') || msg.includes('NOT_FOUND'))) {
+          await new Promise(r => setTimeout(r, 250));
         }
       }
     }
@@ -249,19 +284,20 @@ You are given:
 YOUR TASK:
 Inspect the original PDF page image VISUALLY and carefully extract every English examination question, all 4 options, exact mathematical/chemical notation, structured tables, AND tight visual bounding boxes ONLY for genuine figures/graphs/structures.
 
-COVER / INSTRUCTIONS PAGE HANDLING:
+COVER / INSTRUCTIONS / ANSWER KEY PAGE HANDLING:
 - If this page is a Cover Page, Title Page, or contains only General Instructions ("Instructions to Candidates", "3 Hours Duration", "Max Marks: 720") without questions, return [].
-- Never extract instruction rules as questions.
+- If this page is purely an Answer Key sheet or Hints/Answer Table (e.g. "Answer Key", "1. (A) 2. (B) ... 50. (C)") with NO full MCQ question stems/options, return [] so the dedicated Answer Key detector extracts all entries accurately.
+- Never extract instruction rules or answer-key-only rows as questions.
 
 PAGE LAYOUT DETECTION:
 - Identify "pageLayout":
   * "two_column_bilingual": English questions on left half (~x: 30..490), Hindi translation on right half (~x: 510..970).
-  * "two_column_english": English questions printed in two side-by-side columns with no Hindi column.
+  * "two_column_english": English questions printed in two side-by-side columns with no Hindi column. IMPORTANT: Extract ALL Column 1 (left half, x: 0..500) questions top-to-bottom FIRST, then ALL Column 2 (right half, x: 500..1000) questions top-to-bottom.
   * "single_column": Full-width single-column English questions.
 
 STRICT VERIFICATION GUIDELINES:
 1. OPTION EXTRACTION (ZERO TOLERANCE ON MISSING OR PLACEHOLDER OPTIONS):
-   - NEVER output placeholder strings like "Option (A)", "Option B", "[Missing Option Text]", or "(Empty)".
+   - NEVER output placeholder or refusal strings like "Insufficient data in snippet", "Not visible in snippet", "Cannot be determined", "Option (A)", "Option B", "[Missing Option Text]", or "(Empty)". If an option is genuinely cut off onto the next page, output "" (empty string) for that option instead of any explanatory placeholder!
    - Detect options arranged horizontally "(1) ... (2) ... (3) ... (4) ...", vertically, or in 2x2 grids.
    - An option MUST NEVER repeat the question stem!
    - Preserve statement combinations verbatim: e.g. "(A) and (E) only", "(D) only".
@@ -286,11 +322,13 @@ STRICT VERIFICATION GUIDELINES:
    - Column boundary rule: If "pageLayout" is "two_column_bilingual", English diagrams MUST stay in left column (xmax <= 490). In "single_column" or "two_column_english", use the exact diagram column coordinates.
 
 4. COMPLETE QUESTION STEM, VECTORS, MATH SYMBOLS, LISTS & TABLES PRECISION:
-   - Never start mid-sentence; capture full stem from beginning including sub-statements (A)-(E), Assertion (A) / Reason (R), or Statements I & II.
+   - Never start mid-sentence or stop mid-sentence; capture the ENTIRE stem from start through all wrapped lines (e.g. "...taken as fundamental units, then dimensions of gravitational constant are").
    - Preserve chemistry reaction arrows (→, ⇌, Δ), charges (+, −), subscripts/superscripts, fractions, roots (√), Greek letters (Δ, λ, ω, θ, σ, μ₀, ε₀), dimensions ("[M⁻³ L⁻² T⁻² A⁻⁴]"), and inverse trig ("tan⁻¹(...)").
    - NEVER leave raw "$" LaTeX delimiters or raw commands like "\\frac", "\\hat", "\\vec", "i_cap", "j_cap", or "k_cap"! Convert vectors and symbols directly to clean Unicode: "î", "ĵ", "k̂", "F⃗", "3î + 4ĵ", "×", "±", "≤", "≥", "√".
-   - For Match-the-Column / List I vs List II questions: keep ONLY the introductory instruction in "verifiedQuestionText" and YOU MUST populate structured "matchTableData" with ALL rows from List I / Column I and List II / Column II (including Roman numerals i, ii, iii, iv). Never mark a match question complete without "matchTableData"!
-   - For Table-based questions: populate "structuredTableData" with exact column "headers" and all data "rows". If a complex table cannot be transcribed cleanly, also provide "diagramBoundingBox" with "figureType": "table" as visual fallback.
+   - NEVER put MCQ choices "(A)..(D)" or "(1)..(4)" into "structuredTableData"! All 4 options MUST ALWAYS be in "verifiedOptions" even when arranged in a 2x2 grid or table.
+   - NEVER convert a visual drawing (Vernier calipers, screw gauge, scale ticks, pulley, circuit, ray diagram, graph) into a descriptive "structuredTableData" summary! Set "hasDiagram": true and provide a tight "diagramBoundingBox" around ONLY the illustration instead.
+   - For Match-the-Column / List I vs List II questions: keep ONLY the introductory instruction in "verifiedQuestionText" and YOU MUST populate structured "matchTableData" with ALL rows from List I / Column I and List II / Column II (including Roman numerals i, ii, iii, iv). When "matchTableData" is populated, DO NOT also emit a duplicate "structuredTableData" with the same List I/Column I rows!
+   - For non-match stem data tables: populate "structuredTableData" with exact column "headers" and all data "rows". If a complex table cannot be transcribed cleanly, also provide "diagramBoundingBox" with "figureType": "table" as visual fallback.
 
 OCR Markdown Context:
 """
@@ -304,7 +342,7 @@ ${(ocrMarkdown || '').slice(0, 8000)}
       return await this.runWithDeadlineAndFallback({
         ai,
         preferredModel: modelName,
-        timeoutMs: 44000,
+        timeoutMs: 22000,
         executeAttempt: async (currentModel, attemptIdx, abortSignal) => {
           const payload =
             attemptIdx === 0
@@ -419,14 +457,420 @@ ${(ocrMarkdown || '').slice(0, 8000)}
             }
           });
 
-          const jsonStr = (response.text ?? '[]').trim();
-          const results: GeminiVerificationResult[] = JSON.parse(jsonStr);
+          const results = this.parseJsonArraySafe(response.text);
           return results;
         }
       });
     } catch (e: any) {
       console.log(`[GeminiVerification] Page ${pageNumber}: Gemini verification deferred (${this.summarizeGeminiError(e)}). Continuing with OCR extraction fallback.`);
       return this.fallbackParseOcrMarkdown(ocrMarkdown, subject, pageNumber);
+    }
+  }
+
+  /**
+   * High-Resolution Two-Column English Split Extraction:
+   * Crops Left Column (0..0.518w) and Right Column (0.482w..w) at full resolution,
+   * extracts Column 1 strictly top-to-bottom then Column 2 strictly top-to-bottom,
+   * re-projects column bounding boxes back to full-page [0..1000] scale, and stitches
+   * any question split across the Column 1 bottom -> Column 2 top boundary.
+   */
+  public async verifyTwoColumnEnglishPage(
+    pageNumber: number,
+    pageImageBuffer: Buffer,
+    ocrMarkdown: string,
+    subject: Parser2Subject,
+    modelName: string = this.defaultModel,
+    prevPageTailContext?: number | {
+      questionNumber: number;
+      tailText?: string;
+      missingOptions?: boolean;
+      danglingAnchorOnly?: boolean;
+    }
+  ): Promise<GeminiVerificationResult[]> {
+    const prevPageLastQuestionNumber =
+      typeof prevPageTailContext === 'number'
+        ? prevPageTailContext
+        : prevPageTailContext?.questionNumber;
+    const prevPageTailNote =
+      typeof prevPageTailContext === 'object' && prevPageTailContext
+        ? prevPageTailContext
+        : undefined;
+    const ai = this.ensureClient();
+    if (!ai) return [];
+
+    try {
+      const meta = await sharp(pageImageBuffer).metadata();
+      const imgW = meta.width || 1600;
+      const imgH = meta.height || 2200;
+
+      const leftColEndRatio = 0.518;
+      const rightColStartRatio = 0.482;
+      const rightColWidthRatio = 1 - rightColStartRatio;
+
+      const leftW = Math.max(200, Math.round(imgW * leftColEndRatio));
+      const rightLeft = Math.max(0, Math.round(imgW * rightColStartRatio));
+      const rightW = Math.max(200, imgW - rightLeft);
+
+      const [leftBuf, rightBuf] = await Promise.all([
+        sharp(pageImageBuffer).extract({ left: 0, top: 0, width: leftW, height: imgH }).png().toBuffer(),
+        sharp(pageImageBuffer).extract({ left: rightLeft, top: 0, width: rightW, height: imgH }).png().toBuffer()
+      ]);
+
+      const projectBox = (
+        box: number[] | undefined,
+        colStartRatio: number,
+        colWidthRatio: number
+      ): [number, number, number, number] | undefined => {
+        if (!Array.isArray(box) || box.length !== 4) return undefined;
+        const [ymin, xmin, ymax, xmax] = box.map(Number);
+        if ([ymin, xmin, ymax, xmax].some(v => Number.isNaN(v))) return undefined;
+        const fYmin = Math.max(0, Math.min(1000, Math.round(Math.min(ymin, ymax))));
+        const fYmax = Math.max(0, Math.min(1000, Math.round(Math.max(ymin, ymax))));
+        const fXmin = Math.max(0, Math.min(1000, Math.round((colStartRatio + (Math.min(xmin, xmax) / 1000) * colWidthRatio) * 1000)));
+        const fXmax = Math.max(0, Math.min(1000, Math.round((colStartRatio + (Math.max(xmin, xmax) / 1000) * colWidthRatio) * 1000)));
+        if (fYmax - fYmin < 15 || fXmax - fXmin < 15) return undefined;
+        return [fYmin, fXmin, fYmax, fXmax];
+      };
+
+      const projectResult = (
+        r: GeminiVerificationResult,
+        colStartRatio: number,
+        colWidthRatio: number
+      ): GeminiVerificationResult => {
+        const mappedOptBoxes = r.optionBoundingBoxes
+          ? {
+              A: projectBox(r.optionBoundingBoxes.A, colStartRatio, colWidthRatio),
+              B: projectBox(r.optionBoundingBoxes.B, colStartRatio, colWidthRatio),
+              C: projectBox(r.optionBoundingBoxes.C, colStartRatio, colWidthRatio),
+              D: projectBox(r.optionBoundingBoxes.D, colStartRatio, colWidthRatio)
+            }
+          : undefined;
+        const hasAnyOptBox = Boolean(mappedOptBoxes && (mappedOptBoxes.A || mappedOptBoxes.B || mappedOptBoxes.C || mappedOptBoxes.D));
+        return {
+          ...r,
+          pageLayout: 'two_column_english',
+          diagramBoundingBox: projectBox(r.diagramBoundingBox, colStartRatio, colWidthRatio),
+          optionBoundingBoxes: hasAnyOptBox ? mappedOptBoxes : undefined
+        };
+      };
+
+      const extractCol = async (
+        colBuf: Buffer,
+        side: 'LEFT' | 'RIGHT',
+        continuationQNum?: number,
+        compactOnly: boolean = false,
+        tailSnippet?: string
+      ): Promise<GeminiVerificationResult[]> => {
+        const contHint = continuationQNum
+          ? `CONTINUATION HINT: Any unnumbered options (e.g. (1)/(A)..(4)/(D)), equations, remaining stem text, or List-I/List-II table at the VERY TOP of this ${side} column ABOVE the first printed question number belong to Question ${continuationQNum} from the previous ${side === 'LEFT' ? `page${tailSnippet ? ` (whose bottom snippet was: "${tailSnippet.slice(0, 160)}")` : ''}` : 'LEFT column'} — emit an item with questionNumber: ${continuationQNum} containing those continuing stem/options/table!`
+          : `1. If a question is partially split across columns or pages, still extract whatever stem/table/options belong to it with its exact questionNumber.`;
+        const colPrompt = `You are inspecting the ${side} COLUMN crop of PDF Page ${pageNumber} (Subject: ${subject}, two-column English MCQ exam paper).
+Extract EVERY question and continuation visible in this ${side} column STRICTLY from TOP to BOTTOM.
+RULES:
+1. ${contHint}
+2. NEVER omit a printed question number in this column — extract EVERY question visible from top to bottom (including questions with incomplete/wrapping options or tables) and read COMPLETE stems across all wrapped lines (never truncate mid-sentence).
+3. NEVER output refusal strings like "Insufficient data in snippet", "Not provided", or "[Empty]" as option text! If an option is missing/cut off onto the next column or page, output "" (empty string). ALWAYS place all visible choices (A..D / 1..4) into "verifiedOptions" even in 2x2 grids — NEVER put choices into "structuredTableData".
+4. Preserve ALL superscripts, exponents (e.g. 10⁻³, M⁻¹ L³ T⁻², p⁻³, x^(1/2)), subscripts, square roots (√), Greek symbols (Δ, λ, θ, ε₀, μ₀, σ), significant figures (0.00204), vectors (î, ĵ, k̂, F⃗), and inverse trig (tan⁻¹) cleanly in Unicode. NEVER leave raw LaTeX like $...$ or \\frac.
+5. Match-the-Column / List-I vs List-II questions MUST populate "matchTableData" completely with all rows (and MUST NOT duplicate the same rows into "structuredTableData"). Only genuine non-match stem data tables go into "structuredTableData".
+6. Detect ANY visual diagram, Vernier caliper / micrometer / screw gauge / pulley / circuit / graph in this column, set "hasDiagram": true, and return TIGHT "diagramBoundingBox": [ymin, xmin, ymax, xmax] (0..1000 scale relative to this column image) around ONLY the artwork/scale/graph. NEVER turn a Vernier scale or apparatus drawing into a fake text "structuredTableData"!
+7. If this column is ONLY an Answer Key list (e.g. "Q1 (A) Q2 (B)..."), return [].
+
+OCR context:
+"""
+${(ocrMarkdown || '').slice(0, 3500)}
+"""`;
+
+        const payload = await this.preparePageImagePayload(colBuf, compactOnly ? 960 : 1150, compactOnly ? 78 : 86);
+        let compactColPayload: { data: string; mimeType: string } | null = compactOnly ? payload : null;
+
+        return this.runWithDeadlineAndFallback({
+          ai,
+          preferredModel: compactOnly ? 'gemini-3.1-flash-lite' : modelName,
+          timeoutMs: 38000,
+          executeAttempt: async (currentModel, attemptIdx, abortSignal) => {
+            const p = attemptIdx === 0 && !compactOnly ? payload : (compactColPayload ??= await this.preparePageImagePayload(colBuf, 920, 78));
+            const resp = await ai.models.generateContent({
+              model: currentModel,
+              contents: {
+                parts: [
+                  { inlineData: { mimeType: p.mimeType, data: p.data } },
+                  { text: colPrompt }
+                ]
+              },
+              config: {
+                abortSignal,
+                ...this.buildThinkingConfig(currentModel),
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      questionNumber: { type: Type.INTEGER },
+                      verifiedQuestionText: { type: Type.STRING },
+                      verifiedOptions: {
+                        type: Type.ARRAY,
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            label: { type: Type.STRING },
+                            value: { type: Type.STRING }
+                          },
+                          required: ['label', 'value']
+                        }
+                      },
+                      detectedQuestionType: { type: Type.STRING },
+                      hasDiagram: { type: Type.BOOLEAN },
+                      figureType: { type: Type.STRING },
+                      diagramBoundingBox: { type: Type.ARRAY, items: { type: Type.NUMBER } },
+                      isChemistryStructure: { type: Type.BOOLEAN },
+                      chemistryContentType: { type: Type.STRING },
+                      matchTableData: {
+                        type: Type.OBJECT,
+                        properties: {
+                          columnAHeader: { type: Type.STRING },
+                          columnBHeader: { type: Type.STRING },
+                          rows: {
+                            type: Type.ARRAY,
+                            items: {
+                              type: Type.OBJECT,
+                              properties: {
+                                colAKey: { type: Type.STRING },
+                                colAText: { type: Type.STRING },
+                                colBKey: { type: Type.STRING },
+                                colBText: { type: Type.STRING }
+                              },
+                              required: ['colAKey', 'colAText', 'colBKey', 'colBText']
+                            }
+                          }
+                        }
+                      },
+                      structuredTableData: {
+                        type: Type.OBJECT,
+                        properties: {
+                          caption: { type: Type.STRING },
+                          headers: { type: Type.ARRAY, items: { type: Type.STRING } },
+                          rows: { type: Type.ARRAY, items: { type: Type.ARRAY, items: { type: Type.STRING } } }
+                        }
+                      },
+                      optionBoundingBoxes: {
+                        type: Type.OBJECT,
+                        properties: {
+                          A: { type: Type.ARRAY, items: { type: Type.NUMBER } },
+                          B: { type: Type.ARRAY, items: { type: Type.NUMBER } },
+                          C: { type: Type.ARRAY, items: { type: Type.NUMBER } },
+                          D: { type: Type.ARRAY, items: { type: Type.NUMBER } }
+                        }
+                      },
+                      confidenceScore: { type: Type.INTEGER },
+                      reviewRequired: { type: Type.BOOLEAN },
+                      reviewNotes: { type: Type.STRING }
+                    },
+                    required: ['questionNumber', 'verifiedQuestionText', 'verifiedOptions', 'confidenceScore', 'reviewRequired']
+                  }
+                }
+              }
+            });
+            return this.parseJsonArraySafe(resp.text);
+          }
+        });
+      };
+
+      // Extract LEFT column then RIGHT column sequentially so columns never compete on quota/timeout,
+      // pass LEFT's last questionNumber as continuation hint for RIGHT, and automatically retry any column
+      // that transiently fails or returns empty while the adjacent column has questions.
+      let leftRaw = await extractCol(leftBuf, 'LEFT', prevPageLastQuestionNumber, false, prevPageTailNote?.tailText).catch((err) => {
+        console.warn(`[GeminiVerification] Page ${pageNumber} LEFT column error (${this.summarizeGeminiError(err)}); retrying compact.`);
+        return [] as GeminiVerificationResult[];
+      });
+      if (leftRaw.length === 0) {
+        await new Promise(r => setTimeout(r, 400));
+        leftRaw = await extractCol(leftBuf, 'LEFT', prevPageLastQuestionNumber, true, prevPageTailNote?.tailText).catch((err) => {
+          console.warn(`[GeminiVerification] Page ${pageNumber} LEFT retry failed: ${this.summarizeGeminiError(err)}`);
+          return [] as GeminiVerificationResult[];
+        });
+      }
+
+      const leftMaxQ = leftRaw.reduce((max, item) => Math.max(max, Number(item?.questionNumber) || 0), prevPageLastQuestionNumber || 0);
+      let rightRaw = await extractCol(rightBuf, 'RIGHT', leftMaxQ > 0 ? leftMaxQ : undefined).catch((err) => {
+        console.warn(`[GeminiVerification] Page ${pageNumber} RIGHT column error (${this.summarizeGeminiError(err)}); retrying compact.`);
+        return [] as GeminiVerificationResult[];
+      });
+      if (rightRaw.length === 0 && leftRaw.length > 0) {
+        await new Promise(r => setTimeout(r, 400));
+        rightRaw = await extractCol(rightBuf, 'RIGHT', leftMaxQ > 0 ? leftMaxQ : undefined, true).catch((err) => {
+          console.warn(`[GeminiVerification] Page ${pageNumber} RIGHT retry failed: ${this.summarizeGeminiError(err)}`);
+          return [] as GeminiVerificationResult[];
+        });
+      }
+
+      const leftProjected = leftRaw.map(r => projectResult(r, 0, leftColEndRatio));
+      const rightProjected = rightRaw.map(r => projectResult(r, rightColStartRatio, rightColWidthRatio));
+
+      // Merge strictly preserving Col 1 then Col 2 order, stitching duplicate questionNumbers across the center boundary
+      const byQ = new Map<number, GeminiVerificationResult>();
+      for (const item of [...leftProjected, ...rightProjected]) {
+        if (!item || !item.questionNumber || item.questionNumber <= 0) continue;
+        const existing = byQ.get(item.questionNumber);
+        if (!existing) {
+          byQ.set(item.questionNumber, item);
+        } else {
+          // Stitch stem, options, matchTable, structuredTable, diagramBoundingBox across Column 1 -> Column 2 split
+          const mergedOptions = (['A', 'B', 'C', 'D'] as const).map(lbl => {
+            const eOpt = existing.verifiedOptions?.find(o => o.label === lbl);
+            const nOpt = item.verifiedOptions?.find(o => o.label === lbl);
+            const eVal = (eOpt?.value || '').trim();
+            const nVal = (nOpt?.value || '').trim();
+            return { label: lbl, value: nVal.length > eVal.length ? nVal : eVal };
+          });
+          byQ.set(item.questionNumber, {
+            ...existing,
+            verifiedQuestionText:
+              item.verifiedQuestionText.trim().length > existing.verifiedQuestionText.trim().length
+                ? item.verifiedQuestionText
+                : existing.verifiedQuestionText,
+            verifiedOptions: mergedOptions,
+            hasDiagram: Boolean(existing.hasDiagram || item.hasDiagram),
+            figureType: existing.figureType || item.figureType,
+            diagramBoundingBox: existing.diagramBoundingBox || item.diagramBoundingBox,
+            matchTableData:
+              (item.matchTableData?.rows?.length || 0) > (existing.matchTableData?.rows?.length || 0)
+                ? item.matchTableData
+                : existing.matchTableData,
+            structuredTableData:
+              (item.structuredTableData?.rows?.length || 0) > (existing.structuredTableData?.rows?.length || 0)
+                ? item.structuredTableData
+                : existing.structuredTableData,
+            optionBoundingBoxes: existing.optionBoundingBoxes || item.optionBoundingBoxes,
+            confidenceScore: Math.max(existing.confidenceScore || 0, item.confidenceScore || 0),
+            reviewRequired: Boolean(existing.reviewRequired && item.reviewRequired)
+          });
+        }
+      }
+
+      return Array.from(byQ.values()).sort((a, b) => a.questionNumber - b.questionNumber);
+    } catch (err: any) {
+      console.warn(`[GeminiVerification] Two-column split pass fallback on Page ${pageNumber}:`, this.summarizeGeminiError(err));
+      return [];
+    }
+  }
+
+  /**
+   * Automatic Answer Key / Hints Sheet Detection on PDF Pages (e.g. Page 6 of Test 1 Units & Measurements).
+   */
+  public async detectAndParseAnswerKeyPage(
+    pageNumber: number,
+    pageImageBuffer: Buffer,
+    ocrMarkdown: string,
+    modelName: string = this.defaultModel
+  ): Promise<AnswerKeyPageDetectionResult> {
+    const cleanedOcr = (ocrMarkdown || '').trim();
+    const hasMcqStems = /\b1\s*[\.\)]\s*[A-Za-z]{4,}[\s\S]{15,}\([1-4A-D]\)\s*[A-Za-z0-9]/.test(cleanedOcr);
+    const hasAnswerKeyKeyword = /answer\s*key|hints\s*&?\s*solutions|key\s*sheet/i.test(cleanedOcr);
+
+    // Deterministic fast path only if text already looks clearly like a pure key sheet and has >= 15 entries
+    if (cleanedOcr.length > 40 && !hasMcqStems) {
+      const det = answerKeyService.parseAnswerKeyText(cleanedOcr, 'pdf_page');
+      const detEntries = Object.values(det)
+        .filter(e => e.verifiedAnswer)
+        .map(e => ({ questionNumber: e.questionNumber, answer: e.verifiedAnswer!, rawAnswer: e.rawAnswer }));
+      if (detEntries.length >= 15 && (hasAnswerKeyKeyword || detEntries.length >= 25)) {
+        return {
+          isAnswerKeyPage: true,
+          pageLayout: 'two_column_english',
+          entries: detEntries.sort((a, b) => a.questionNumber - b.questionNumber)
+        };
+      }
+    }
+
+    const ai = this.ensureClient();
+    if (!ai) {
+      return { isAnswerKeyPage: false, entries: [] };
+    }
+
+    const prompt = `Inspect PDF Page ${pageNumber} carefully.
+Determine if this page is primarily an **Answer Key Sheet / Key Grid** (listing question numbers mapped to their correct option like "1. (A)  2. (B) ... 50. (C)" or a table of Q.No vs Ans), rather than full MCQ questions.
+
+RULES:
+- If this page contains full MCQ questions and options (even at bottom), set "isAnswerKeyPage": false and "entries": [].
+- If this page IS an Answer Key page:
+  1. Set "isAnswerKeyPage": true.
+  2. Read EVERY column / row carefully from top to bottom across all columns (Left column, Right column, or table grid).
+  3. Extract EVERY questionNumber (integer) and answer letter ("A", "B", "C", or "D" — map 1->A, 2->B, 3->C, 4->D).
+  4. Preserve exact questionNumber -> answer alignment; never guess missing rows.`;
+
+    try {
+      const primaryPayload = await this.preparePageImagePayload(pageImageBuffer, 1450, 86);
+      const parsed = await this.runWithDeadlineAndFallback({
+        ai,
+        preferredModel: modelName,
+        timeoutMs: 18000,
+        executeAttempt: async (currentModel, attemptIdx, abortSignal) => {
+          const payload =
+            attemptIdx === 0
+              ? primaryPayload
+              : await this.preparePageImagePayload(pageImageBuffer, 1100, 78);
+
+          const resp = await ai.models.generateContent({
+            model: currentModel,
+            contents: {
+              parts: [
+                { inlineData: { mimeType: payload.mimeType, data: payload.data } },
+                { text: prompt }
+              ]
+            },
+            config: {
+              abortSignal,
+              ...this.buildThinkingConfig(currentModel),
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  isAnswerKeyPage: { type: Type.BOOLEAN },
+                  pageLayout: { type: Type.STRING },
+                  entries: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        questionNumber: { type: Type.INTEGER },
+                        rawAnswer: { type: Type.STRING },
+                        answer: { type: Type.STRING, description: 'A, B, C, or D' }
+                      },
+                      required: ['questionNumber', 'answer']
+                    }
+                  }
+                },
+                required: ['isAnswerKeyPage', 'entries']
+              }
+            }
+          });
+          return JSON.parse((resp.text ?? '{}').trim());
+        }
+      });
+
+      const validEntries: AnswerKeyPageDetectionResult['entries'] = [];
+      const seenQ = new Set<number>();
+      for (const e of parsed?.entries || []) {
+        const norm = answerKeyService.normalizeOptionLabel(e.answer || e.rawAnswer || '');
+        if (e.questionNumber > 0 && e.questionNumber <= 250 && norm && !seenQ.has(e.questionNumber)) {
+          seenQ.add(e.questionNumber);
+          validEntries.push({
+            questionNumber: e.questionNumber,
+            answer: norm,
+            rawAnswer: e.rawAnswer || e.answer
+          });
+        }
+      }
+
+      return {
+        isAnswerKeyPage: Boolean(parsed?.isAnswerKeyPage) && validEntries.length >= 3,
+        pageLayout: parsed?.pageLayout,
+        entries: validEntries.sort((a, b) => a.questionNumber - b.questionNumber)
+      };
+    } catch (err: any) {
+      console.log(`[GeminiVerification] Page ${pageNumber} answer-key check deferred (${this.summarizeGeminiError(err)}).`);
+      return { isAnswerKeyPage: false, entries: [] };
     }
   }
 
@@ -458,14 +902,14 @@ ${(ocrMarkdown || '').slice(0, 8000)}
 Question: "${questionText.slice(0, 400)}"
 
 Verify strictly:
-1. Is this image ONLY ordinary printed text lines / sentences / numbered options like "(1) ...", "(4) ...", or paragraphs from a question? If YES, set "isTextOnlyOrQuestionText": true and "isGenuineScientificFigure": false!
-2. Does it actually show a genuine non-text scientific figure (physics apparatus/diagram, circuit, ray diagram, X-Y graph/plot/curve, or 2D chemical bond-line/ring structure, or structured table)?
+1. Is this image ONLY ordinary prose paragraphs / sentences or pure text lines from a question? If YES, set "isTextOnlyOrQuestionText": true and "isGenuineScientificFigure": false!
+2. Does it show a genuine scientific figure — including physics apparatus/diagrams, Vernier calipers, micrometer screw gauges, ruler scales with tick marks/numbers, circuits, ray diagrams, X-Y graphs/plots/curves, 2D chemical bond-line/ring structures, or data tables? If YES, set "isGenuineScientificFigure": true and "isTextOnlyOrQuestionText": false!
 3. Does the figure contextually match the question stem above (not an unrelated adjacent question's diagram)?`;
 
       const response = await this.runWithDeadlineAndFallback({
         ai,
         preferredModel: modelName || 'gemini-3.1-flash-lite',
-        timeoutMs: 22000,
+        timeoutMs: 14000,
         executeAttempt: async (currentModel, _idx, abortSignal) =>
           ai.models.generateContent({
             model: currentModel,
@@ -559,7 +1003,7 @@ RULES:
       const response = await this.runWithDeadlineAndFallback({
         ai,
         preferredModel: params.modelName,
-        timeoutMs: 36000,
+        timeoutMs: 18000,
         executeAttempt: async (currentModel, attemptIdx, abortSignal) => {
           const useCompact = attemptIdx > 0;
           const pImg = useCompact
@@ -615,6 +1059,37 @@ RULES:
                       B: { type: Type.ARRAY, items: { type: Type.NUMBER } },
                       C: { type: Type.ARRAY, items: { type: Type.NUMBER } },
                       D: { type: Type.ARRAY, items: { type: Type.NUMBER } }
+                    }
+                  },
+                  recoveredMatchTableData: {
+                    type: Type.OBJECT,
+                    properties: {
+                      columnAHeader: { type: Type.STRING },
+                      columnBHeader: { type: Type.STRING },
+                      rows: {
+                        type: Type.ARRAY,
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            colAKey: { type: Type.STRING },
+                            colAText: { type: Type.STRING },
+                            colBKey: { type: Type.STRING },
+                            colBText: { type: Type.STRING }
+                          },
+                          required: ['colAKey', 'colAText', 'colBKey', 'colBText']
+                        }
+                      }
+                    }
+                  },
+                  recoveredStructuredTableData: {
+                    type: Type.OBJECT,
+                    properties: {
+                      caption: { type: Type.STRING },
+                      headers: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      rows: {
+                        type: Type.ARRAY,
+                        items: { type: Type.ARRAY, items: { type: Type.STRING } }
+                      }
                     }
                   },
                   confidenceScore: { type: Type.INTEGER },

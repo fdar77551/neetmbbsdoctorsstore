@@ -42,6 +42,7 @@ import {
   isPlaceholderOption
 } from '../../services/parser2/types';
 import { syncAllMockTestsFromSources, hasSuspiciousMathNotation } from '../../lib/mockTestData';
+import { getAdminRequestHeaders } from '../../lib/firebase';
 import { Parser2JobCreator } from './Parser2JobCreator';
 import { Parser2QuestionCard } from './Parser2QuestionCard';
 import { Parser2QuestionEditModal } from './Parser2QuestionEditModal';
@@ -49,6 +50,7 @@ import { Parser2CropModal } from './Parser2CropModal';
 import { Parser2ValidationModal } from './Parser2ValidationModal';
 import { Parser2SettingsModal } from './Parser2SettingsModal';
 import { Parser2PublishModal } from './Parser2PublishModal';
+import { Parser2AnswerKeyModal } from './Parser2AnswerKeyModal';
 
 const ACTIVE_STATUS_SET = new Set<Parser2JobStatus>([
   'uploaded',
@@ -99,19 +101,13 @@ export const Parser2Dashboard: React.FC = () => {
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [isAnswerKeyModalOpen, setIsAnswerKeyModalOpen] = useState(false);
 
-  // Answer Key Import Modal State
-  const [akRawText, setAkRawText] = useState('');
-  const [akFile, setAkFile] = useState<File | null>(null);
-  const [akOverwriteManual, setAkOverwriteManual] = useState(false);
-  const [isImportingKey, setIsImportingKey] = useState(false);
-  const akFileRef = useRef<HTMLInputElement>(null);
-
   const [editingQuestion, setEditingQuestion] = useState<Parser2Question | null>(null);
   const [copyFromPageMode, setCopyFromPageMode] = useState(false);
   const [recroppingQuestion, setRecroppingQuestion] = useState<Parser2Question | null>(null);
   const [recropTargetOption, setRecropTargetOption] = useState<'A' | 'B' | 'C' | 'D' | undefined>(undefined);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
   const [deleteConfirmJobId, setDeleteConfirmJobId] = useState<string | null>(null);
 
   const logEndRef = useRef<HTMLDivElement>(null);
@@ -124,16 +120,31 @@ export const Parser2Dashboard: React.FC = () => {
   // 1. Fetch all jobs (always sorted newest-first from backend)
   const fetchJobs = async () => {
     try {
-      const res = await fetch('/api/parser2/jobs');
+      const res = await fetch('/api/parser2/jobs', {
+        headers: getAdminRequestHeaders()
+      });
+      const ct = res.headers.get('content-type') || '';
+      if (!res.ok || !ct.includes('application/json')) {
+        const msg = !ct.includes('application/json')
+          ? `Parser API returned non-JSON response (${res.status}). Check Worker /api/parser2/* routing and D1 bindings.`
+          : `Failed to fetch parsing jobs (HTTP ${res.status}).`;
+        setApiError(msg);
+        return;
+      }
       const data = await res.json();
       if (data.success && Array.isArray(data.jobs)) {
+        setApiError(null);
         setJobs(data.jobs);
         setSelectedJobId(prev => {
           if (prev && data.jobs.some((j: Parser2Job) => j.id === prev)) return prev;
           return data.jobs.length > 0 ? data.jobs[0].id : null;
         });
+      } else {
+        setApiError(data.error || 'Parser API returned unsuccessful response.');
       }
-    } catch (e) {
+    } catch (e: any) {
+      const msg = `Cannot reach Parser backend: ${e?.message || 'Network error'}`;
+      setApiError(msg);
       console.warn('Error fetching Parser2 jobs:', e);
     }
   };
@@ -216,12 +227,17 @@ export const Parser2Dashboard: React.FC = () => {
     const id = targetJobId || selectedJobId;
     if (!id) return;
     try {
-      const res = await fetch(`/api/parser2/jobs/${id}/start`, { method: 'POST' });
+      const res = await fetch(`/api/parser2/jobs/${id}/start`, {
+        method: 'POST',
+        headers: getAdminRequestHeaders()
+      });
       const data = await res.json();
       if (data.success) {
         triggerToast('Background extraction started / resumed.');
         fetchJobs();
         fetchJobDetails(id);
+      } else {
+        triggerToast('Start failed: ' + (data.error || `HTTP ${res.status}`));
       }
     } catch (e: any) {
       triggerToast('Error starting pipeline: ' + e.message);
@@ -232,7 +248,10 @@ export const Parser2Dashboard: React.FC = () => {
     const id = targetJobId || selectedJobId;
     if (!id) return;
     try {
-      const res = await fetch(`/api/parser2/jobs/${id}/pause`, { method: 'POST' });
+      const res = await fetch(`/api/parser2/jobs/${id}/pause`, {
+        method: 'POST',
+        headers: getAdminRequestHeaders()
+      });
       const data = await res.json();
       if (data.success) {
         triggerToast('Pipeline paused safely at checkpoint.');
@@ -248,7 +267,10 @@ export const Parser2Dashboard: React.FC = () => {
     const id = targetJobId || selectedJobId;
     if (!id) return;
     try {
-      const res = await fetch(`/api/parser2/jobs/${id}/retry-failed`, { method: 'POST' });
+      const res = await fetch(`/api/parser2/jobs/${id}/retry-failed`, {
+        method: 'POST',
+        headers: getAdminRequestHeaders()
+      });
       const data = await res.json();
       if (data.success) {
         triggerToast('Retrying failed pages with exponential backoff...');
@@ -262,7 +284,10 @@ export const Parser2Dashboard: React.FC = () => {
 
   const handleDeleteJob = async (jobId: string) => {
     try {
-      const res = await fetch(`/api/parser2/jobs/${jobId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/parser2/jobs/${jobId}`, {
+        method: 'DELETE',
+        headers: getAdminRequestHeaders()
+      });
       const data = await res.json();
       if (data.success) {
         triggerToast('Job deleted.');
@@ -273,69 +298,21 @@ export const Parser2Dashboard: React.FC = () => {
           setSelectedJobId(remaining.length > 0 ? remaining[0].id : null);
           if (remaining.length === 0) setSelectedJob(null);
         }
+      } else {
+        triggerToast('Delete failed: ' + (data.error || `HTTP ${res.status}`));
       }
     } catch (e: any) {
       triggerToast('Error deleting job: ' + e.message);
     }
   };
 
-  const handleImportAnswerKey = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedJobId) return;
-    if (!akRawText.trim() && !akFile) {
-      triggerToast('Paste answer key text or choose an answer key image/text file.');
-      return;
-    }
-
-    setIsImportingKey(true);
-    try {
-      let res: Response;
-      if (akFile) {
-        const formData = new FormData();
-        formData.append('answerKeyFile', akFile);
-        if (akRawText.trim()) formData.append('rawText', akRawText.trim());
-        formData.append('overwriteManual', String(akOverwriteManual));
-        res = await fetch(`/api/parser2/jobs/${selectedJobId}/answer-key`, {
-          method: 'POST',
-          body: formData
-        });
-      } else {
-        res = await fetch(`/api/parser2/jobs/${selectedJobId}/answer-key`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            rawText: akRawText.trim(),
-            overwriteManual: akOverwriteManual
-          })
-        });
-      }
-
-      const data = await res.json();
-      if (data.success) {
-        if (Array.isArray(data.questions)) setQuestions(data.questions);
-        if (data.job) setSelectedJob(data.job);
-        if (data.validationReport) setValidationReport(data.validationReport);
-        setIsAnswerKeyModalOpen(false);
-        setAkRawText('');
-        setAkFile(null);
-        triggerToast(data.message || 'Answer key imported and matched cleanly!');
-        fetchJobs();
-      } else {
-        triggerToast('Answer key import error: ' + (data.error || 'Unknown error'));
-      }
-    } catch (err: any) {
-      triggerToast('Error importing answer key: ' + err.message);
-    } finally {
-      setIsImportingKey(false);
-    }
-  };
 
   const handleApproveQuestion = async (qId: string) => {
     if (!selectedJobId) return;
     try {
       const res = await fetch(`/api/parser2/jobs/${selectedJobId}/questions/${qId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ verificationStatus: 'verified', reviewRequired: false, reviewNotes: '' })
       });
       const data = await res.json();
@@ -356,7 +333,7 @@ export const Parser2Dashboard: React.FC = () => {
     try {
       const res = await fetch(`/api/parser2/jobs/${selectedJobId}/questions/${qId}/auto-recrop`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ targetOption })
       });
       const data = await res.json();
@@ -378,7 +355,7 @@ export const Parser2Dashboard: React.FC = () => {
     try {
       const res = await fetch(`/api/parser2/jobs/${selectedJobId}/questions/${qId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ isDeleted: true })
       });
       const data = await res.json();
@@ -397,7 +374,7 @@ export const Parser2Dashboard: React.FC = () => {
     try {
       const res = await fetch(`/api/parser2/jobs/${selectedJobId}/questions/${qId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           figureUrl: null,
           figures: [],
@@ -422,7 +399,7 @@ export const Parser2Dashboard: React.FC = () => {
     try {
       const res = await fetch(`/api/parser2/jobs/${selectedJobId}/questions/bulk-verify`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({})
       });
       const data = await res.json();
@@ -444,7 +421,10 @@ export const Parser2Dashboard: React.FC = () => {
     if (!jobId || isRepairingPublication) return;
     setIsRepairingPublication(true);
     try {
-      const res = await fetch(`/api/parser2/jobs/${jobId}/repair-publication`, { method: 'POST' });
+      const res = await fetch(`/api/parser2/jobs/${jobId}/repair-publication`, {
+        method: 'POST',
+        headers: getAdminRequestHeaders()
+      });
       const data = await res.json();
       if (data.success) {
         await syncAllMockTestsFromSources().catch(() => []);
@@ -647,10 +627,27 @@ export const Parser2Dashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Backend API Sync Error Banner (no silent failures) */}
+      {apiError && (
+        <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 flex flex-wrap items-center justify-between gap-2 text-xs font-bold shadow-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span className="truncate sm:whitespace-normal">{apiError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={fetchJobs}
+            className="min-h-[36px] px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold cursor-pointer shrink-0"
+          >
+            Retry Sync
+          </button>
+        </div>
+      )}
+
       {/* ================================================================= */}
       {/* PERSISTENT JOB HISTORY & BACKGROUND QUEUE PANEL (NEWEST FIRST) */}
       {/* ================================================================= */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-4 space-y-3">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-3.5 sm:p-4 space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-blue-600" />
@@ -691,7 +688,9 @@ export const Parser2Dashboard: React.FC = () => {
 
         {filteredJobs.length === 0 ? (
           <div className="p-6 text-center rounded-xl border border-dashed border-slate-200 text-xs text-slate-500">
-            {jobs.length === 0
+            {apiError
+              ? 'Unable to load parsing job history due to API error above.'
+              : jobs.length === 0
               ? 'No parsing jobs recorded yet. Click "New Parsing Job" to start background extraction.'
               : 'No jobs match the selected status filter.'}
           </div>
@@ -702,25 +701,31 @@ export const Parser2Dashboard: React.FC = () => {
                 const isSelected = j.id === selectedJobId;
                 const active = isJobActiveStatus(j.status);
                 const pct = j.totalPages > 0 ? Math.round((j.completedPages / j.totalPages) * 100) : 0;
-                const savedCount = j.questionsSaved ?? j.totalQuestions ?? 0;
+                const savedCount =
+                  (typeof j.questionsSaved === 'number' && j.questionsSaved > 0)
+                    ? j.questionsSaved
+                    : (typeof j.totalQuestions === 'number' && j.totalQuestions > 0)
+                    ? j.totalQuestions
+                    : 0;
+                const needsSyncRepair = Boolean(j.publishedTestId) && (savedCount === 0 || j.savedVerified === false);
 
                 return (
                   <div
                     key={j.id}
                     onClick={() => setSelectedJobId(j.id)}
-                    className={`p-2.5 sm:p-3 rounded-xl border-2 transition cursor-pointer flex flex-col justify-between gap-1.5 ${
+                    className={`p-2.5 sm:p-3 rounded-xl border transition cursor-pointer flex flex-col justify-between gap-1.5 ${
                       isSelected
-                        ? 'bg-blue-50/60 border-blue-600 shadow-xs'
+                        ? 'bg-blue-50/60 border-blue-600 ring-1 ring-blue-600 shadow-xs'
                         : 'bg-slate-50/40 border-slate-200 hover:border-blue-300'
                     }`}
                   >
-                    <div className="space-y-1">
+                    <div className="space-y-0.5">
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-xs font-black text-slate-900 line-clamp-1">
                           {j.testName}
                         </span>
                         <span
-                          className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full shrink-0 border ${
+                          className={`text-[9.5px] font-extrabold uppercase px-2 py-0.5 rounded-full shrink-0 border ${
                             active
                               ? 'bg-amber-100 text-amber-800 border-amber-300'
                               : j.status === 'published'
@@ -738,22 +743,22 @@ export const Parser2Dashboard: React.FC = () => {
                         </span>
                       </div>
 
-                      <div className="text-[11px] text-slate-500 truncate">
+                      <div className="text-[10.5px] text-slate-500 truncate">
                         PDF: {j.originalPdfFileName || j.sourceQuestionPdfName || 'questions.pdf'} · {j.subject}
                       </div>
 
                       {j.currentStage && (
-                        <div className="text-[10.5px] font-semibold text-blue-700 truncate">
+                        <div className="text-[10px] font-semibold text-blue-700 truncate">
                           {j.currentStage}
                         </div>
                       )}
                     </div>
 
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <div className="flex items-center justify-between text-[11px] font-bold text-slate-700 tabular-nums">
                         <span>
                           Pg {j.completedPages}/{j.totalPages || '?'} · Saved {savedCount}{j.questionsDetected && j.questionsDetected > savedCount ? `/${j.questionsDetected}` : ''} Qs
-                          {j.savedVerified ? ' ✓' : ''}
+                          {j.savedVerified && savedCount > 0 ? ' ✓' : ''}
                         </span>
                         <span>
                           {typeof j.qualityScore === 'number' ? `Q: ${j.qualityScore}%` : `${pct}%`}
@@ -771,11 +776,22 @@ export const Parser2Dashboard: React.FC = () => {
                         </div>
                       )}
 
-                      <div className="flex items-center justify-between text-[10px] text-slate-400">
-                        <span>{new Date(j.createdAt).toLocaleString()}</span>
-                        {j.publishedTestId && (
-                          <span className="font-bold text-purple-700">Published</span>
-                        )}
+                      <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400">
+                        <span className="truncate">{new Date(j.createdAt).toLocaleString()}</span>
+                        {needsSyncRepair ? (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              handleRepairPublication(j.id);
+                            }}
+                            className="px-2 py-0.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-900 font-extrabold text-[10px] cursor-pointer shrink-0"
+                          >
+                            Repair Sync
+                          </button>
+                        ) : j.publishedTestId ? (
+                          <span className="font-bold text-purple-700 shrink-0">Published</span>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -890,7 +906,7 @@ export const Parser2Dashboard: React.FC = () => {
                   onClick={() => setIsAnswerKeyModalOpen(true)}
                   className="min-h-[40px] px-3.5 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl transition cursor-pointer flex items-center gap-1.5"
                 >
-                  <Key className="w-3.5 h-3.5" /> Import Answer Key
+                  <Key className="w-3.5 h-3.5" /> Manage Answer Key
                 </button>
 
                 <button
@@ -1405,7 +1421,9 @@ export const Parser2Dashboard: React.FC = () => {
               <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-2 overflow-x-auto">
                 <span className="text-xs font-bold text-slate-500 shrink-0 mr-1">Select Page:</span>
                 {Array.from({ length: selectedJob.totalPages || 45 }, (_, idx) => idx + 1).map(pNum => {
-                  const qCount = questions.filter(q => q.sourcePageNumber === pNum).length;
+                  const qCount = questions.filter(
+                    q => q.sourcePageNumber === pNum || (Array.isArray(q.sourcePages) && q.sourcePages.includes(pNum))
+                  ).length;
                   const isSelected = selectedComparisonPage === pNum;
                   return (
                     <button
@@ -1470,11 +1488,15 @@ export const Parser2Dashboard: React.FC = () => {
 
                   <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
                     <span>High-Resolution Vector PDF Render</span>
-                    {questions.filter(q => q.sourcePageNumber === selectedComparisonPage).length > 0 && (
+                    {questions.filter(
+                      q => q.sourcePageNumber === selectedComparisonPage || (Array.isArray(q.sourcePages) && q.sourcePages.includes(selectedComparisonPage))
+                    ).length > 0 && (
                       <button
                         type="button"
                         onClick={() => {
-                          const firstQ = questions.find(q => q.sourcePageNumber === selectedComparisonPage);
+                          const firstQ = questions.find(
+                            q => q.sourcePageNumber === selectedComparisonPage || (Array.isArray(q.sourcePages) && q.sourcePages.includes(selectedComparisonPage))
+                          );
                           if (firstQ) setRecroppingQuestion(firstQ);
                         }}
                         className="text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 cursor-pointer"
@@ -1490,18 +1512,24 @@ export const Parser2Dashboard: React.FC = () => {
                     <h4 className="text-xs font-black uppercase text-slate-500 tracking-wider">Extracted Data</h4>
                     <div className="text-sm font-bold text-slate-900">
                       Questions on Page {selectedComparisonPage} (
-                      {questions.filter(q => q.sourcePageNumber === selectedComparisonPage).length})
+                      {questions.filter(
+                        q => q.sourcePageNumber === selectedComparisonPage || (Array.isArray(q.sourcePages) && q.sourcePages.includes(selectedComparisonPage))
+                      ).length})
                     </div>
                   </div>
 
-                  {questions.filter(q => q.sourcePageNumber === selectedComparisonPage).length === 0 ? (
+                  {questions.filter(
+                    q => q.sourcePageNumber === selectedComparisonPage || (Array.isArray(q.sourcePages) && q.sourcePages.includes(selectedComparisonPage))
+                  ).length === 0 ? (
                     <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 text-xs text-slate-500">
                       No questions mapped to Page {selectedComparisonPage}.
                     </div>
                   ) : (
                     <div className="space-y-3 max-h-[700px] overflow-y-auto pr-1">
                       {questions
-                        .filter(q => q.sourcePageNumber === selectedComparisonPage)
+                        .filter(
+                          q => q.sourcePageNumber === selectedComparisonPage || (Array.isArray(q.sourcePages) && q.sourcePages.includes(selectedComparisonPage))
+                        )
                         .map(q => (
                           <Parser2QuestionCard
                             key={q.id}
@@ -1647,98 +1675,20 @@ export const Parser2Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Import Answer Key Modal */}
+      {/* Answer Key Engine Modal */}
       {isAnswerKeyModalOpen && selectedJob && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Key className="w-4 h-4 text-indigo-600" />
-                <h4 className="text-sm font-black text-slate-900 font-['Outfit',sans-serif]">
-                  Import Answer Key for {selectedJob.testName}
-                </h4>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsAnswerKeyModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleImportAnswerKey} className="p-5 space-y-3.5">
-              <p className="text-xs text-slate-600">
-                Matches strictly by question number. Existing step-by-step explanations and manual reviewer edits are preserved.
-              </p>
-
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  Upload Answer Key Screenshot or TXT
-                </label>
-                <div
-                  onClick={() => akFileRef.current?.click()}
-                  className={`p-3 border border-dashed rounded-xl text-center cursor-pointer text-xs font-bold ${
-                    akFile ? 'border-emerald-500 bg-emerald-50 text-emerald-800' : 'border-slate-300 bg-slate-50 text-slate-600 hover:border-indigo-400'
-                  }`}
-                >
-                  <input
-                    ref={akFileRef}
-                    type="file"
-                    accept="image/*,.txt"
-                    className="hidden"
-                    onChange={e => setAkFile(e.target.files?.[0] || null)}
-                  />
-                  {akFile ? (
-                    <span>{akFile.name} selected</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5">
-                      <Upload className="w-3.5 h-3.5" /> Choose Answer Key Image / TXT
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Or Paste Answer Key Text</label>
-                <textarea
-                  rows={4}
-                  value={akRawText}
-                  onChange={e => setAkRawText(e.target.value)}
-                  placeholder="Example: 1. (A)  2. (3)  3. B  4-D ..."
-                  className="w-full p-2.5 text-xs font-mono border border-slate-300 rounded-xl outline-hidden focus:ring-2 focus:ring-indigo-500 resize-none"
-                />
-              </div>
-
-              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={akOverwriteManual}
-                  onChange={e => setAkOverwriteManual(e.target.checked)}
-                  className="w-4 h-4 rounded text-indigo-600"
-                />
-                <span>Also overwrite questions marked &quot;Manually Edited&quot; (off by default)</span>
-              </label>
-
-              <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsAnswerKeyModalOpen(false)}
-                  className="min-h-[38px] px-4 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isImportingKey}
-                  className="min-h-[38px] px-4 py-1.5 text-xs font-black text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-xl cursor-pointer"
-                >
-                  {isImportingKey ? 'Matching...' : 'Apply Answer Key'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <Parser2AnswerKeyModal
+          job={selectedJob}
+          questions={questions}
+          onClose={() => setIsAnswerKeyModalOpen(false)}
+          onDataUpdated={payload => {
+            if (Array.isArray(payload.questions)) setQuestions(payload.questions);
+            if (payload.job) setSelectedJob(payload.job);
+            if (payload.validationReport) setValidationReport(payload.validationReport);
+            if (payload.message) triggerToast(payload.message);
+            fetchJobs();
+          }}
+        />
       )}
 
       {/* Delete Confirmation Modal */}
@@ -1864,6 +1814,15 @@ export const Parser2Dashboard: React.FC = () => {
           onClose={() => {
             setRecroppingQuestion(null);
             setRecropTargetOption(undefined);
+          }}
+          onQuestionUpdated={updatedQ => {
+            setQuestions(prev => prev.map(q => (q.id === updatedQ.id ? updatedQ : q)));
+            setRecroppingQuestion(updatedQ);
+            if (editingQuestion && editingQuestion.id === updatedQ.id) {
+              setEditingQuestion(updatedQ);
+            }
+            fetchJobQuestionsAndFigures(selectedJob.id);
+            fetchJobDetails(selectedJob.id);
           }}
           onSuccess={(newFigUrl, updatedQuestion) => {
             setQuestions(prev =>

@@ -414,6 +414,10 @@ export interface MockQuestion {
   marks?: number;
   negativeMarks?: number;
   pdfPageNumber?: number;
+  pdfPageRange?: string;
+  sourcePageEnd?: number;
+  sourcePages?: number[];
+  sourcePageRange?: string;
   figureCropInfo?: {
     box?: number[];
     pageNumber?: number;

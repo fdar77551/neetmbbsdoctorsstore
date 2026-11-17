@@ -20,7 +20,6 @@ export const NewsletterFooter: React.FC<NewsletterFooterProps> = ({ storeConfig 
         <div className="space-y-0.5 min-w-0 pr-1">
           <h4 className="text-xs font-black text-white font-['Outfit',sans-serif] tracking-wide flex items-center gap-1.5">
             <span>Connect With Us</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           </h4>
           <p className="text-[9.5px] text-blue-200/80 truncate">
             Official NEET UG study channels & updates

@@ -8,7 +8,7 @@ import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import sharp from 'sharp';
-import { Parser2Figure } from './types';
+import { Parser2CropType, Parser2Figure } from './types';
 import { uploadParser2Asset } from './parser2R2Storage';
 
 const execAsync = promisify(exec);
@@ -131,8 +131,16 @@ export class FigureExtractionService {
     pageImageBuffer: Buffer,
     boundingBox: [number, number, number, number], // [ymin, xmin, ymax, xmax]
     isNormalized: boolean = true,
-    layoutMode: CropLayoutMode = 'two_column_bilingual'
-  ): Promise<{ buffer: Buffer; width: number; height: number; pageWidth: number; pageHeight: number }> {
+    layoutMode: CropLayoutMode = 'two_column_bilingual',
+    cropOptions?: { skipTrim?: boolean }
+  ): Promise<{
+    buffer: Buffer;
+    width: number;
+    height: number;
+    pageWidth: number;
+    pageHeight: number;
+    pixelBox: { x: number; y: number; width: number; height: number };
+  }> {
     const metadata = await sharp(pageImageBuffer).metadata();
     const imgWidth = metadata.width || 1000;
     const imgHeight = metadata.height || 1400;
@@ -147,7 +155,6 @@ export class FigureExtractionService {
     let height: number;
 
     if (isNormalized) {
-      // Only enforce English-column gutter fence when page is bilingual two-column and NOT a manual user crop
       if (layoutMode === 'two_column_bilingual' && xmin < 480 && xmax > 495 && xmax < 750) {
         xmax = 490;
       }
@@ -169,19 +176,33 @@ export class FigureExtractionService {
     width = Math.min(width, imgWidth - left);
     height = Math.min(height, imgHeight - top);
 
-    if (width < 15 || height < 15) {
+    if (width < 12 || height < 12) {
       throw new Error(`Crop area too small (${width}x${height})`);
     }
 
-    // 1. Initial crop with white background fill
+    const pixelBox = { x: left, y: top, width, height };
+
+    // 1. Initial exact pixel crop with white background fill
     const initialCrop = await sharp(pageImageBuffer)
       .extract({ left, top, width, height })
       .flatten({ background: { r: 255, g: 255, b: 255 } })
       .png({ quality: 95 })
       .toBuffer();
 
-    // 2. Intelligent whitespace auto-trim: tightens the crop around real figure ink,
-    // stripping away blank margins while adding clean 10px breathing padding
+    // For manual admin crops (or explicit skipTrim), return the exact pixel region 1:1 with live preview!
+    if (layoutMode === 'manual' || cropOptions?.skipTrim) {
+      const exactMeta = await sharp(initialCrop).metadata();
+      return {
+        buffer: initialCrop,
+        width: exactMeta.width || width,
+        height: exactMeta.height || height,
+        pageWidth: imgWidth,
+        pageHeight: imgHeight,
+        pixelBox
+      };
+    }
+
+    // 2. Intelligent whitespace auto-trim for AI-detected auto-crops
     try {
       const trimmed = await sharp(initialCrop)
         .trim({ background: { r: 255, g: 255, b: 255 }, threshold: 22 })
@@ -195,7 +216,8 @@ export class FigureExtractionService {
         width: trimmedMeta.width || width,
         height: trimmedMeta.height || height,
         pageWidth: imgWidth,
-        pageHeight: imgHeight
+        pageHeight: imgHeight,
+        pixelBox
       };
     } catch {
       const fallbackMeta = await sharp(initialCrop).metadata();
@@ -204,7 +226,8 @@ export class FigureExtractionService {
         width: fallbackMeta.width || width,
         height: fallbackMeta.height || height,
         pageWidth: imgWidth,
-        pageHeight: imgHeight
+        pageHeight: imgHeight,
+        pixelBox
       };
     }
   }
@@ -432,8 +455,17 @@ export class FigureExtractionService {
     isManualCrop: boolean = false,
     options?: {
       layoutMode?: CropLayoutMode;
-      preCropped?: { buffer: Buffer; width: number; height: number };
+      preCropped?: {
+        buffer: Buffer;
+        width: number;
+        height: number;
+        pixelBox?: { x: number; y: number; width: number; height: number };
+      };
       suffix?: string;
+      questionId?: string;
+      sourcePdfId?: string;
+      cropType?: Parser2CropType;
+      skipTrim?: boolean;
     }
   ): Promise<Parser2Figure> {
     const cropped = options?.preCropped
@@ -442,7 +474,8 @@ export class FigureExtractionService {
           pageImageBuffer,
           boundingBox,
           true,
-          isManualCrop ? 'manual' : (options?.layoutMode || 'two_column_bilingual')
+          isManualCrop ? 'manual' : (options?.layoutMode || 'two_column_bilingual'),
+          { skipTrim: options?.skipTrim ?? isManualCrop }
         );
 
     const uniqueSuffix = options?.suffix ? `_${options.suffix}` : '';
@@ -450,17 +483,24 @@ export class FigureExtractionService {
     const fileName = `q${questionNumber}_p${pageNumber}${uniqueSuffix}_${Date.now()}_${rand}.png`;
     const storageResult = await uploadParser2Asset(jobId, 'figures', fileName, cropped.buffer, 'image/png');
 
+    const resolvedCropType = options?.cropType || (figureType !== 'embedded_image' ? figureType : 'diagram');
     const figure: Parser2Figure = {
       id: `fig-${jobId}-q${questionNumber}${uniqueSuffix}-${Date.now()}-${rand}`,
       jobId,
+      questionId: options?.questionId || `q-${jobId}-${questionNumber}`,
       questionNumber,
       pageNumber,
+      sourcePdfId: options?.sourcePdfId || 'questions.pdf',
       figureKey: storageResult.storageKey,
       figureUrl: storageResult.publicUrl,
       boundingBox,
+      pixelBox: cropped.pixelBox,
       width: cropped.width,
       height: cropped.height,
+      naturalWidth: cropped.width,
+      naturalHeight: cropped.height,
       figureType,
+      cropType: resolvedCropType,
       isManualCrop,
       createdAt: new Date().toISOString()
     };

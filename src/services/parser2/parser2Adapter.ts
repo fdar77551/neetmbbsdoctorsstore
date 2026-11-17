@@ -99,8 +99,9 @@ export function mapParser2QuestionsToMock(
         }
       : undefined;
 
+    const hasMatchRows = Boolean(formattedMatchTable && formattedMatchTable.rows.length > 0);
     const formattedStructuredTable =
-      q.structuredTable && Array.isArray(q.structuredTable.rows) && q.structuredTable.rows.length > 0
+      !hasMatchRows && q.structuredTable && Array.isArray(q.structuredTable.rows) && q.structuredTable.rows.length > 0
         ? {
             headers: q.structuredTable.headers || [],
             rows: q.structuredTable.rows,
@@ -128,6 +129,16 @@ export function mapParser2QuestionsToMock(
         ? effectiveSubject
         : 'Physics';
 
+    const sourcePages = Array.isArray(q.sourcePages) && q.sourcePages.length > 0
+      ? q.sourcePages
+      : [q.sourcePageNumber || 1];
+    const sourcePageEnd = q.sourcePageEnd || sourcePages[sourcePages.length - 1] || q.sourcePageNumber || 1;
+    const sourcePageRange = q.sourcePageRange || (
+      q.sourcePageNumber && sourcePageEnd > q.sourcePageNumber
+        ? `Page ${q.sourcePageNumber}–${sourcePageEnd}`
+        : `Page ${q.sourcePageNumber || 1}`
+    );
+
     return {
       id: `q-${targetTestId}-${q.questionNumber}`,
       testId: targetTestId,
@@ -145,7 +156,12 @@ export function mapParser2QuestionsToMock(
       optionFigures: q.optionFigures,
       matchTable: formattedMatchTable,
       structuredTable: formattedStructuredTable,
+      sourcePageNumber: q.sourcePageNumber,
+      sourcePageEnd,
+      sourcePages,
+      sourcePageRange,
       pdfPageNumber: q.sourcePageNumber,
+      pdfPageRange: sourcePageRange,
       hasFigure: Boolean(q.figureUrl),
       languages: {
         en: {
@@ -162,8 +178,12 @@ export function mapParser2QuestionsToMock(
 export async function syncPublishedTestToRemoteStores(
   testMeta: MockTest,
   mockQuestions: MockQuestion[]
-): Promise<{ rtdbSynced: boolean }> {
+): Promise<{ rtdbSynced: boolean; r2Synced: boolean; d1Synced: boolean }> {
   let rtdbSynced = false;
+  let r2Synced = false;
+  let d1Synced = false;
+
+  // 1. Firebase RTDB mirror
   try {
     if (typeof fetch !== 'undefined') {
       const safeTest = cleanForFirebase(sanitizeTestMetadata(testMeta));
@@ -186,7 +206,112 @@ export async function syncPublishedTestToRemoteStores(
   } catch (err) {
     console.warn('[Parser2Adapter] RTDB publish sync note:', err);
   }
-  return { rtdbSynced };
+
+  // 2. Cloudflare R2 Published Snapshot + Catalog Index (authoritative remote mirror for Workers)
+  try {
+    const { putR2Json, getR2Json } = await import('./parser2R2Storage');
+    const safeTest = sanitizeTestMetadata(testMeta);
+    const snapOk = await putR2Json(`parser2/db/published/${testMeta.id}.json`, {
+      test: safeTest,
+      questions: mockQuestions,
+      updatedAt: new Date().toISOString()
+    });
+    const curIndex = (await getR2Json<{ tests?: MockTest[] }>('parser2/db/mock_tests_index.json')) || {};
+    const existingTests = Array.isArray(curIndex.tests) ? curIndex.tests : [];
+    const nextTests = [safeTest, ...existingTests.filter(t => t && t.id !== safeTest.id)];
+    const idxOk = await putR2Json('parser2/db/mock_tests_index.json', {
+      tests: nextTests,
+      updatedAt: new Date().toISOString()
+    });
+    r2Synced = Boolean(snapOk && idxOk);
+  } catch (err) {
+    console.warn('[Parser2Adapter] R2 publish sync note:', err);
+  }
+
+  // 3. Direct Cloudflare D1 SQL sync when CF API Token is available in env/settings
+  try {
+    let apiToken = process.env.CLOUDFLARE_API_TOKEN || process.env.CF_D1_TOKEN || '';
+    let accountId = process.env.CLOUDFLARE_ACCOUNT_ID || 'd715d090a75efd8790b9a6da1e2f42d4';
+    let d1DatabaseId = process.env.CLOUDFLARE_D1_DATABASE_ID || 'daf5a141-af4a-4db6-b10d-ac3bbab28b72';
+    if (!apiToken && fs.existsSync(DB_FILE_PATH)) {
+      const legacy = JSON.parse(fs.readFileSync(DB_FILE_PATH, 'utf-8'));
+      const cf = legacy?.settings?.cloudflare;
+      if (cf?.apiToken) apiToken = cf.apiToken;
+      if (cf?.accountId) accountId = cf.accountId;
+      if (cf?.d1DatabaseId) d1DatabaseId = cf.d1DatabaseId;
+    }
+
+    if (apiToken && d1DatabaseId && typeof fetch !== 'undefined') {
+      const d1Url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${d1DatabaseId}/query`;
+      const queryD1 = async (sql: string, params: any[] = []) => {
+        const resp = await fetch(d1Url, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sql, params })
+        });
+        return resp.json();
+      };
+
+      const info = await queryD1(`PRAGMA table_info(mock_tests);`);
+      const cols = new Set<string>(
+        (info?.result?.[0]?.results || []).map((c: any) => String(c?.name || '').toLowerCase())
+      );
+
+      const now = new Date().toISOString();
+      const { questions: _, ...cleanMeta } = sanitizeTestMetadata(testMeta);
+      let testOk = false;
+
+      if (cols.has('data')) {
+        const res = await queryD1(
+          `INSERT INTO mock_tests (id, title, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, data=excluded.data, updated_at=excluded.updated_at;`,
+          [cleanMeta.id, cleanMeta.title, JSON.stringify(cleanMeta), now]
+        );
+        testOk = Boolean(res?.success);
+      } else {
+        await queryD1(
+          `CREATE TABLE IF NOT EXISTS mock_tests (id TEXT PRIMARY KEY, title TEXT, data TEXT, updated_at TEXT);`
+        );
+        const res = cols.size === 0
+          ? await queryD1(
+              `INSERT INTO mock_tests (id, title, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, data=excluded.data, updated_at=excluded.updated_at;`,
+              [cleanMeta.id, cleanMeta.title, JSON.stringify(cleanMeta), now]
+            )
+          : await queryD1(
+              `INSERT OR REPLACE INTO mock_tests (id, testNumber, title, subject, totalQuestions, durationMinutes, price, isFree, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+              [
+                cleanMeta.id,
+                cleanMeta.testNumber || '',
+                cleanMeta.title,
+                cleanMeta.subject || 'Combined',
+                cleanMeta.totalQuestions || mockQuestions.length,
+                cleanMeta.durationMinutes || 60,
+                cleanMeta.price || 0,
+                cleanMeta.isFree ? 1 : 0,
+                cleanMeta.createdAt || now
+              ]
+            );
+        testOk = Boolean(res?.success);
+      }
+
+      const qInfo = await queryD1(`PRAGMA table_info(mock_questions);`);
+      const qCols = new Set<string>(
+        (qInfo?.result?.[0]?.results || []).map((c: any) => String(c?.name || '').toLowerCase())
+      );
+      let qOk = false;
+      if (qCols.has('questions') && qCols.has('test_id')) {
+        const qRes = await queryD1(
+          `INSERT INTO mock_questions (test_id, questions, count, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(test_id) DO UPDATE SET questions=excluded.questions, count=excluded.count, updated_at=excluded.updated_at;`,
+          [cleanMeta.id, JSON.stringify(mockQuestions), mockQuestions.length, now]
+        );
+        qOk = Boolean(qRes?.success);
+      }
+      d1Synced = Boolean(testOk && qOk);
+    }
+  } catch (err) {
+    console.warn('[Parser2Adapter] D1 publish sync note:', err);
+  }
+
+  return { rtdbSynced, r2Synced, d1Synced };
 }
 
 export function resolveCategoryNamesForIds(categoryIds: string[]): string[] {

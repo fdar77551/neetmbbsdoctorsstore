@@ -148,6 +148,26 @@ export function isUserAdmin(emailOrUser?: any): boolean {
   return ADMIN_EMAILS.includes(rawEmail.toLowerCase().trim());
 }
 
+export function getAdminRequestHeaders(extraHeaders?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extraHeaders || {}) };
+  try {
+    let email = auth?.currentUser?.email || '';
+    if (!email && typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem('neetmbbs_current_user');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.email === 'string') {
+          email = parsed.email;
+        }
+      }
+    }
+    if (email && email.trim()) {
+      headers['x-user-email'] = email.trim().toLowerCase();
+    }
+  } catch {}
+  return headers;
+}
+
 export {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
