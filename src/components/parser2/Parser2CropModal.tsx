@@ -24,14 +24,21 @@ import {
   LayoutGrid,
   Sparkles
 } from 'lucide-react';
-import { Parser2CropType, Parser2Figure, Parser2Question } from '../../services/parser2/types';
+import {
+  Parser2CropType,
+  Parser2Figure,
+  Parser2ImagePlacement,
+  Parser2Question
+} from '../../services/parser2/types';
 import { getAdminRequestHeaders } from '../../lib/firebase';
+import { PLACEMENT_OPTIONS } from './Parser2ImageManager';
 
 interface Parser2CropModalProps {
   jobId: string;
   question: Parser2Question;
   totalPages?: number;
   targetOption?: 'A' | 'B' | 'C' | 'D';
+  initialPlacement?: Parser2ImagePlacement;
   pageImageUrl?: string;
   onClose: () => void;
   onSuccess: (updatedFigureUrl: string, updatedQuestion?: Parser2Question) => void;
@@ -65,6 +72,7 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
   question,
   totalPages: propTotalPages,
   targetOption,
+  initialPlacement,
   pageImageUrl,
   onClose,
   onSuccess,
@@ -88,11 +96,20 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
     if (question.subject === 'Chemistry') return 'chemical_structure';
     return 'diagram';
   });
+  const [targetPlacement, setTargetPlacement] = useState<Parser2ImagePlacement>(() => {
+    if (initialPlacement) return initialPlacement;
+    if (targetOption) return `option_${targetOption}` as Parser2ImagePlacement;
+    return 'after_question';
+  });
+  const [cropCaption, setCropCaption] = useState<string>('');
+  const [tableRow, setTableRow] = useState<number>(0);
+  const [tableCol, setTableCol] = useState<number>(0);
   const [cropMode, setCropMode] = useState<'replace' | 'add'>(() =>
     !targetOption && (question.figures?.length || 0) > 0 ? 'add' : 'replace'
   );
+  const [editorMode, setEditorMode] = useState<'crop' | 'view'>('crop');
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('draw');
-  const [fitMode, setFitMode] = useState<FitMode>('fit-width');
+  const [fitMode, setFitMode] = useState<FitMode>('fit-page');
   const [zoomScale, setZoomScale] = useState<number>(1);
   const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number }>({ width: 1200, height: 1700 });
@@ -100,11 +117,17 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
   const [imageLoadedTick, setImageLoadedTick] = useState<number>(0);
   const [imageError, setImageError] = useState<boolean>(false);
   const [showMobilePreview, setShowMobilePreview] = useState<boolean>(false);
+  const [draftBoxesByPage, setDraftBoxesByPage] = useState<
+    Record<number, { ymin: number; xmin: number; ymax: number; xmax: number }>
+  >({});
 
   const [isDragging, setIsDragging] = useState(false);
   const [dragHandle, setDragHandle] = useState<DragHandleType | null>(null);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [drawOriginNorm, setDrawOriginNorm] = useState<{ x: number; y: number } | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
+  const panOriginRef = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
+  const pinchStartRef = useRef<{ dist: number; scale: number } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAutoLocating, setIsAutoLocating] = useState(false);
   const [busyFigureId, setBusyFigureId] = useState<string | null>(null);
@@ -134,13 +157,47 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
     setPageInput(String(activePage));
   }, [activePage]);
 
-  const navigateToPage = (nextPage: number) => {
+  const navigateToPage = useCallback((nextPage: number) => {
     const clamped = Math.max(1, Math.min(totalPages, Math.round(nextPage)));
     if (clamped !== activePage) {
+      // Save current page's unsaved crop box so cross-page inspection never loses draft selections
+      setDraftBoxesByPage(prev => ({ ...prev, [activePage]: cropBox }));
       setImageError(false);
       setActivePage(clamped);
+      const savedDraft = draftBoxesByPage[clamped];
+      if (savedDraft) {
+        setCropBox(savedDraft);
+      } else {
+        const existingOnPage = (localQuestion.figures || []).find(f => f.pageNumber === clamped && f.boundingBox);
+        if (existingOnPage?.boundingBox) {
+          const [ymin, xmin, ymax, xmax] = existingOnPage.boundingBox;
+          setCropBox({ ymin, xmin, ymax, xmax });
+        } else {
+          setCropBox({ ymin: 180, xmin: 100, ymax: 560, xmax: 900 });
+        }
+      }
     }
-  };
+  }, [activePage, cropBox, draftBoxesByPage, localQuestion.figures, totalPages]);
+
+  // Keyboard shortcuts: Left/Right arrows navigate pages, Escape closes modal
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        navigateToPage(activePage - 1);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        navigateToPage(activePage + 1);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activePage, navigateToPage, onClose]);
 
   // Track viewport size cleanly with ResizeObserver
   useEffect(() => {
@@ -182,7 +239,7 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
 
   const applyZoomStep = (delta: number) => {
     setFitMode('manual');
-    setZoomScale(prev => Math.max(0.5, Math.min(3.5, Number((prev + delta).toFixed(2)))));
+    setZoomScale(prev => Math.max(0.4, Math.min(3.5, Number((prev + delta).toFixed(2)))));
   };
 
   const applyFitMode = (mode: FitMode) => {
@@ -190,6 +247,48 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
     setZoomScale(1);
     if (containerRef.current) {
       containerRef.current.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+    }
+  };
+
+  // Desktop Ctrl/Meta/Alt + Mouse Wheel Zoom
+  const handleViewportWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.15 : -0.15;
+      applyZoomStep(delta);
+    }
+  };
+
+  // Mobile 2-finger Pinch-to-Zoom
+  const handleViewportTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 10) {
+        pinchStartRef.current = { dist, scale: fitMode === 'manual' ? zoomScale : 1 };
+        setIsDragging(false);
+        setDragHandle(null);
+      }
+    }
+  };
+
+  const handleViewportTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2 && pinchStartRef.current) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const ratio = dist / pinchStartRef.current.dist;
+      const nextScale = Math.max(0.4, Math.min(3.5, Number((pinchStartRef.current.scale * ratio).toFixed(2))));
+      setFitMode('manual');
+      setZoomScale(nextScale);
+    }
+  };
+
+  const handleViewportTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length < 2) {
+      pinchStartRef.current = null;
     }
   };
 
@@ -251,6 +350,22 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
   };
 
   const handleCanvasPointerDown = (e: React.PointerEvent) => {
+    if (pinchStartRef.current) return;
+    if (interactionMode === 'pan') {
+      const container = containerRef.current;
+      if (!container) return;
+      setIsPanning(true);
+      panOriginRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        scrollLeft: container.scrollLeft,
+        scrollTop: container.scrollTop
+      };
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {}
+      return;
+    }
     if (interactionMode !== 'draw' || !imageRef.current) return;
     const pt = getNormPoint(e.clientX, e.clientY);
     if (!pt) return;
@@ -271,6 +386,14 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
+    if (pinchStartRef.current) return;
+    if (interactionMode === 'pan' && isPanning && panOriginRef.current && containerRef.current) {
+      const dx = e.clientX - panOriginRef.current.x;
+      const dy = e.clientY - panOriginRef.current.y;
+      containerRef.current.scrollLeft = panOriginRef.current.scrollLeft - dx;
+      containerRef.current.scrollTop = panOriginRef.current.scrollTop - dy;
+      return;
+    }
     if (interactionMode !== 'draw' || !isDragging || !dragHandle || !imageRef.current) return;
     e.preventDefault();
 
@@ -350,6 +473,8 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
       }
     } catch {}
     setIsDragging(false);
+    setIsPanning(false);
+    panOriginRef.current = null;
     setDragHandle(null);
     setDragStart(null);
     setDrawOriginNorm(null);
@@ -373,7 +498,13 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
   };
 
   const effectiveTargetOption =
-    targetOption || (/^option_([A-D])$/.exec(cropType)?.[1] as 'A' | 'B' | 'C' | 'D' | undefined);
+    targetOption ||
+    (/^option_([A-D])$/.exec(targetPlacement)?.[1] as 'A' | 'B' | 'C' | 'D' | undefined) ||
+    (/^option_([A-D])$/.exec(cropType)?.[1] as 'A' | 'B' | 'C' | 'D' | undefined);
+
+  const effectivePlacement: Parser2ImagePlacement = effectiveTargetOption
+    ? (`option_${effectiveTargetOption}` as Parser2ImagePlacement)
+    : targetPlacement;
 
   const handleSaveCrop = async (closeAfterSave: boolean) => {
     setIsSubmitting(true);
@@ -393,9 +524,13 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
             Math.round(cropBox.xmax)
           ],
           targetOption: effectiveTargetOption,
-          cropMode: effectiveTargetOption ? 'replace' : cropMode,
+          cropMode,
           figureType: cropType,
-          cropType
+          cropType,
+          placement: effectivePlacement,
+          tableRow: effectivePlacement === 'table_cell' ? tableRow : undefined,
+          tableCol: effectivePlacement === 'table_cell' ? tableCol : undefined,
+          caption: cropCaption.trim() || undefined
         })
       });
 
@@ -420,7 +555,7 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
         onSuccess(data.figure.figureUrl, data.question);
       } else {
         setNotice(data.message || `Saved crop from Page ${activePage} (${cropType.replace(/_/g, ' ')}). Jump to any page to add more.`);
-        if (!effectiveTargetOption) setCropMode('add');
+        setCropMode('add');
       }
     } catch (err: any) {
       setError(err.message || 'Network error while saving crop.');
@@ -516,6 +651,33 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
     }
   };
 
+  const handleReassignFigure = async (figureId: string, nextPlacement: Parser2ImagePlacement) => {
+    setBusyFigureId(figureId);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/parser2/jobs/${jobId}/questions/${localQuestion.id}/figures/${figureId}/reassign`,
+        {
+          method: 'PUT',
+          headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ placement: nextPlacement })
+        }
+      );
+      const data = await res.json();
+      if (data.success && data.question) {
+        setLocalQuestion(data.question);
+        onQuestionUpdated?.(data.question);
+        setNotice(data.message || `Reassigned crop to ${nextPlacement.replace(/_/g, ' ')}.`);
+      } else {
+        setError(data.error || 'Failed to reassign crop destination.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Network error reassigning crop.');
+    } finally {
+      setBusyFigureId(null);
+    }
+  };
+
   // Source page chips (all pages question spans + attached figures' pages)
   const quickPages = Array.from(
     new Set<number>([
@@ -604,10 +766,11 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
             onClick={() => navigateToPage(activePage - 1)}
             disabled={activePage <= 1}
             aria-label="Previous PDF page"
-            className="min-h-[34px] min-w-[32px] flex items-center justify-center bg-slate-800 hover:bg-slate-700 disabled:opacity-35 rounded-lg border border-slate-700 text-slate-100 cursor-pointer"
-            title="Previous page"
+            className="min-h-[34px] px-2 flex items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-35 rounded-lg border border-slate-700 text-xs font-bold text-slate-100 cursor-pointer"
+            title="Previous page (Left Arrow)"
           >
             <ChevronLeft className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Previous Page</span>
           </button>
 
           <form
@@ -618,6 +781,7 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
             }}
             className="flex items-center gap-1 mx-0.5"
           >
+            <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">Page</span>
             <input
               type="number"
               min={1}
@@ -627,7 +791,7 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
               aria-label="Jump to page number"
               className="w-12 h-[34px] px-1.5 text-center bg-slate-950 border border-slate-700 rounded-lg text-xs font-bold text-white tabular-nums outline-none focus:border-blue-500"
             />
-            <span className="text-xs font-bold text-slate-400 tabular-nums whitespace-nowrap">/ {totalPages}</span>
+            <span className="text-xs font-bold text-slate-400 tabular-nums whitespace-nowrap">of {totalPages}</span>
             <button
               type="submit"
               className="h-[34px] px-2 rounded-lg bg-slate-800 hover:bg-blue-600 border border-slate-700 text-[11px] font-bold text-slate-200 hover:text-white cursor-pointer"
@@ -641,9 +805,10 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
             onClick={() => navigateToPage(activePage + 1)}
             disabled={activePage >= totalPages}
             aria-label="Next PDF page"
-            className="min-h-[34px] min-w-[32px] flex items-center justify-center bg-slate-800 hover:bg-slate-700 disabled:opacity-35 rounded-lg border border-slate-700 text-slate-100 cursor-pointer"
-            title="Next page"
+            className="min-h-[34px] px-2 flex items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-35 rounded-lg border border-slate-700 text-xs font-bold text-slate-100 cursor-pointer"
+            title="Next page (Right Arrow)"
           >
+            <span className="hidden sm:inline">Next Page</span>
             <ChevronRight className="w-3.5 h-3.5" />
           </button>
           <button
@@ -712,30 +877,62 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
         </div>
       )}
 
-      {/* Control Toolbar Row 2: Interaction Mode, Zoom, 15 Crop Types & Attach Mode */}
+      {/* Control Toolbar Row 2: Mode 1/2 Switch, Interaction Mode, Zoom, Placement & Attach Mode */}
       <div className="shrink-0 bg-slate-900/90 border-b border-slate-800 px-3 sm:px-5 py-1.5 flex items-center justify-between gap-2 overflow-x-auto scrollbar-none">
         <div className="flex items-center gap-1.5 shrink-0">
-          {/* Interaction Mode Toggle */}
+          {/* Explicit Mode 1 (Original PDF Page) vs Mode 2 (Crop Editor) Toggle */}
           <div className="flex rounded-lg border border-slate-700 bg-slate-950 overflow-hidden shrink-0">
             <button
               type="button"
-              onClick={() => setInteractionMode('draw')}
+              onClick={() => {
+                setEditorMode('view');
+                setInteractionMode('pan');
+              }}
               className={`min-h-[36px] px-2.5 text-xs font-bold cursor-pointer flex items-center gap-1 whitespace-nowrap ${
-                interactionMode === 'draw' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800'
+                editorMode === 'view' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-800'
               }`}
+              title="Mode 1: Inspect the clean original PDF page freely without crop box overlay"
             >
-              <MousePointerClick className="w-3.5 h-3.5" /> Draw / Resize Box
+              <Eye className="w-3.5 h-3.5" /> Original Page
             </button>
             <button
               type="button"
-              onClick={() => setInteractionMode('pan')}
+              onClick={() => {
+                setEditorMode('crop');
+                setInteractionMode('draw');
+              }}
               className={`min-h-[36px] px-2.5 text-xs font-bold cursor-pointer flex items-center gap-1 whitespace-nowrap ${
-                interactionMode === 'pan' ? 'bg-amber-500 text-slate-950' : 'text-slate-300 hover:bg-slate-800'
+                editorMode === 'crop' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800'
               }`}
+              title="Mode 2: Draw, move, and resize crop boxes anywhere on the page"
             >
-              <Hand className="w-3.5 h-3.5" /> Pan / Scroll Page
+              <Crop className="w-3.5 h-3.5" /> Crop Editor
             </button>
           </div>
+
+          {/* Interaction Mode Toggle (when in Crop Editor mode) */}
+          {editorMode === 'crop' && (
+            <div className="flex rounded-lg border border-slate-700 bg-slate-950 overflow-hidden shrink-0">
+              <button
+                type="button"
+                onClick={() => setInteractionMode('draw')}
+                className={`min-h-[36px] px-2.5 text-xs font-bold cursor-pointer flex items-center gap-1 whitespace-nowrap ${
+                  interactionMode === 'draw' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <MousePointerClick className="w-3.5 h-3.5" /> Draw / Resize
+              </button>
+              <button
+                type="button"
+                onClick={() => setInteractionMode('pan')}
+                className={`min-h-[36px] px-2.5 text-xs font-bold cursor-pointer flex items-center gap-1 whitespace-nowrap ${
+                  interactionMode === 'pan' ? 'bg-amber-500 text-slate-950' : 'text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <Hand className="w-3.5 h-3.5" /> Pan / Scroll
+              </button>
+            </div>
+          )}
 
           <button
             type="button"
@@ -781,14 +978,34 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => applyFitMode('fit-width')}
+            onClick={() => applyFitMode('fit-page')}
             className="min-h-[36px] px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 text-xs font-bold whitespace-nowrap cursor-pointer"
+            title="Reset zoom to full Fit Page view"
           >
             Reset Zoom
           </button>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          <select
+            value={effectivePlacement}
+            onChange={e => {
+              const nextP = e.target.value as Parser2ImagePlacement;
+              setTargetPlacement(nextP);
+              const optM = /^option_([A-D])$/.exec(nextP);
+              if (optM) setCropType(`option_${optM[1]}` as Parser2CropType);
+            }}
+            aria-label="Target placement"
+            title="Where to attach this cropped image in the question"
+            className="min-h-[36px] px-2.5 bg-indigo-950 border border-indigo-700 rounded-lg text-xs font-bold text-indigo-100 outline-none max-w-[200px]"
+          >
+            {PLACEMENT_OPTIONS.map(p => (
+              <option key={p.value} value={p.value}>
+                Attach: {p.label}
+              </option>
+            ))}
+          </select>
+
           <select
             value={cropType}
             onChange={e => setCropType(e.target.value as Parser2CropType)}
@@ -802,28 +1019,59 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
             ))}
           </select>
 
-          {!effectiveTargetOption && (
-            <div className="flex rounded-lg border border-slate-700 bg-slate-800 overflow-hidden shrink-0">
-              <button
-                type="button"
-                onClick={() => setCropMode('replace')}
-                className={`min-h-[36px] px-2.5 text-xs font-bold cursor-pointer whitespace-nowrap ${
-                  cropMode === 'replace' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700'
-                }`}
-              >
-                Replace Primary
-              </button>
-              <button
-                type="button"
-                onClick={() => setCropMode('add')}
-                className={`min-h-[36px] px-2.5 text-xs font-bold cursor-pointer flex items-center gap-1 whitespace-nowrap ${
-                  cropMode === 'add' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-700'
-                }`}
-              >
-                <Plus className="w-3.5 h-3.5" /> Add Extra
-              </button>
+          <input
+            type="text"
+            value={cropCaption}
+            onChange={e => setCropCaption(e.target.value)}
+            placeholder="Optional caption..."
+            className="min-h-[36px] w-32 sm:w-40 px-2.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-slate-100 placeholder-slate-500 outline-none focus:border-blue-500"
+          />
+
+          {effectivePlacement === 'table_cell' && (
+            <div className="flex items-center gap-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-[11px] font-bold text-slate-200 shrink-0">
+              <span>R</span>
+              <input
+                type="number"
+                min={0}
+                value={tableRow}
+                onChange={e => setTableRow(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                aria-label="Table row index"
+                className="w-10 px-1 py-0.5 bg-slate-900 border border-slate-700 rounded text-center text-white"
+              />
+              <span>C</span>
+              <input
+                type="number"
+                min={0}
+                value={tableCol}
+                onChange={e => setTableCol(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                aria-label="Table column index"
+                className="w-10 px-1 py-0.5 bg-slate-900 border border-slate-700 rounded text-center text-white"
+              />
             </div>
           )}
+
+          <div className="flex rounded-lg border border-slate-700 bg-slate-800 overflow-hidden shrink-0">
+            <button
+              type="button"
+              onClick={() => setCropMode('replace')}
+              className={`min-h-[36px] px-2.5 text-xs font-bold cursor-pointer whitespace-nowrap ${
+                cropMode === 'replace' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700'
+              }`}
+              title={effectiveTargetOption ? `Replace Option ${effectiveTargetOption} image` : 'Replace primary figure'}
+            >
+              {effectiveTargetOption ? 'Replace Opt' : 'Replace Primary'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setCropMode('add')}
+              className={`min-h-[36px] px-2.5 text-xs font-bold cursor-pointer flex items-center gap-1 whitespace-nowrap ${
+                cropMode === 'add' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-700'
+              }`}
+              title="Add an extra image attachment without removing existing images"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Extra
+            </button>
+          </div>
         </div>
       </div>
 
@@ -851,11 +1099,15 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden relative">
         <div
           ref={containerRef}
-          className="flex-1 overflow-auto p-3 sm:p-5 bg-slate-950 select-none"
+          className="flex-1 overflow-auto p-3 pb-24 sm:p-5 sm:pb-12 bg-slate-950 select-none"
           style={{
             touchAction: interactionMode === 'pan' ? 'pan-x pan-y' : 'pan-x pan-y',
             WebkitOverflowScrolling: 'touch'
           }}
+          onWheel={handleViewportWheel}
+          onTouchStart={handleViewportTouchStart}
+          onTouchMove={handleViewportTouchMove}
+          onTouchEnd={handleViewportTouchEnd}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
@@ -878,12 +1130,12 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
           ) : (
             <div
               className={`relative mx-auto border border-slate-700 bg-white shadow-2xl ${
-                interactionMode === 'draw' ? 'cursor-crosshair' : 'cursor-grab'
+                editorMode === 'crop' && interactionMode === 'draw' ? 'cursor-crosshair' : 'cursor-grab'
               }`}
               style={{
                 width: `${renderedWidth}px`,
                 height: `${renderedHeight}px`,
-                touchAction: interactionMode === 'draw' ? 'none' : 'pan-x pan-y'
+                touchAction: editorMode === 'crop' && interactionMode === 'draw' ? 'none' : 'pan-x pan-y'
               }}
               onPointerDown={handleCanvasPointerDown}
             >
@@ -905,7 +1157,8 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
                 draggable={false}
               />
 
-              {/* Interactive Crop Box */}
+              {/* Interactive Crop Box (hidden cleanly in Mode 1 Original Page Viewer) */}
+              {editorMode === 'crop' && (
               <div
                 className={`absolute border-2 border-blue-500 bg-blue-500/20 shadow-xl ring-2 ring-white/80 ${
                   interactionMode === 'draw' ? 'cursor-move' : 'pointer-events-none opacity-75'
@@ -974,6 +1227,7 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
                   {effectiveTargetOption ? `Option ${effectiveTargetOption}` : cropType.replace(/_/g, ' ')} · Pg {activePage}
                 </div>
               </div>
+              )}
             </div>
           )}
         </div>
@@ -1053,7 +1307,7 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           {!isPrimary && (
                             <button
                               type="button"
@@ -1064,6 +1318,26 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
                               <Star className="w-2.5 h-2.5" /> Set Primary
                             </button>
                           )}
+                          <select
+                            aria-label="Reassign crop destination"
+                            disabled={isBusy}
+                            defaultValue=""
+                            onChange={e => {
+                              const val = e.target.value as Parser2ImagePlacement;
+                              if (val) {
+                                handleReassignFigure(fig.id, val);
+                                e.target.value = '';
+                              }
+                            }}
+                            className="bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-[9.5px] font-bold text-indigo-300 outline-none max-w-[96px]"
+                          >
+                            <option value="">Move to...</option>
+                            {PLACEMENT_OPTIONS.map(p => (
+                              <option key={p.value} value={p.value}>
+                                {p.label}
+                              </option>
+                            ))}
+                          </select>
                           <button
                             type="button"
                             disabled={isBusy}
@@ -1088,17 +1362,31 @@ export const Parser2CropModal: React.FC<Parser2CropModalProps> = ({
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
-            onClick={() => setCropBox({ ymin: 200, xmin: 100, ymax: 600, xmax: 900 })}
+            onClick={() => {
+              const matchingFig = (localQuestion.figures || []).find(f => f.pageNumber === activePage && f.boundingBox);
+              if (matchingFig?.boundingBox) {
+                const [ymin, xmin, ymax, xmax] = matchingFig.boundingBox;
+                setCropBox({ ymin, xmin, ymax, xmax });
+              } else if (effectiveTargetOption) {
+                setCropBox({ ymin: 350, xmin: 60, ymax: 520, xmax: 460 });
+              } else {
+                setCropBox({ ymin: 200, xmin: 100, ymax: 600, xmax: 900 });
+              }
+              setNotice('Selection reset.');
+            }}
             className="min-h-[40px] px-3 text-xs font-bold text-slate-200 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
           >
-            <RotateCcw className="w-3.5 h-3.5 text-slate-400" /> Reset Box
+            <RotateCcw className="w-3.5 h-3.5 text-slate-400" /> Reset Selection
           </button>
           <button
             type="button"
-            onClick={() => setCropBox({ ymin: 80, xmin: 40, ymax: 920, xmax: 960 })}
+            onClick={() => {
+              setCropBox({ ymin: 0, xmin: 0, ymax: 1000, xmax: 1000 });
+              setNotice('Selected full page bounds (0–1000).');
+            }}
             className="min-h-[40px] px-3 text-xs font-bold text-slate-200 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
           >
-            <Maximize2 className="w-3.5 h-3.5 text-slate-400" /> Full Page
+            <Maximize2 className="w-3.5 h-3.5 text-slate-400" /> Full Page Crop
           </button>
           <button
             type="button"

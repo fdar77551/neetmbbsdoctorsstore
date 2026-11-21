@@ -3,6 +3,7 @@
 
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { Parser2AnswerKeyEntry, Parser2Question } from './types';
+import { apiRateLimiter } from './apiRateLimiter.js';
 
 export interface AnswerKeyMatchResult {
   matchedCount: number;
@@ -66,39 +67,48 @@ Return JSON array of { questionNumber, rawAnswer, answer }.`;
     let lastErr: any = null;
 
     for (const model of models) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(new Error('Answer key OCR deadline guard (40000ms)')), 40000);
       try {
-        response = await ai.models.generateContent({
-          model,
-          contents: {
-            parts: [
-              { inlineData: { mimeType: detectedMime, data: cleanBase64 } },
-              { text: prompt }
-            ]
-          },
-          config: {
-            abortSignal: controller.signal,
-            ...(model.startsWith('gemini-4-') ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : {}),
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  questionNumber: { type: Type.INTEGER },
-                  rawAnswer: { type: Type.STRING },
-                  answer: { type: Type.STRING, description: 'A, B, C, or D' }
+        response = await apiRateLimiter.schedule(
+          'gemini',
+          async () => {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(new Error('Answer key OCR deadline guard (40000ms)')), 40000);
+            try {
+              return await ai.models.generateContent({
+                model,
+                contents: {
+                  parts: [
+                    { inlineData: { mimeType: detectedMime, data: cleanBase64 } },
+                    { text: prompt }
+                  ]
                 },
-                required: ['questionNumber', 'answer']
-              }
+                config: {
+                  abortSignal: controller.signal,
+                  ...(model.startsWith('gemini-4-') ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : {}),
+                  responseMimeType: 'application/json',
+                  responseSchema: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        questionNumber: { type: Type.INTEGER },
+                        rawAnswer: { type: Type.STRING },
+                        answer: { type: Type.STRING, description: 'A, B, C, or D' },
+                        explanation: { type: Type.STRING }
+                      },
+                      required: ['questionNumber', 'answer']
+                    }
+                  }
+                }
+              });
+            } finally {
+              clearTimeout(timer);
             }
-          }
-        });
-        clearTimeout(timer);
+          },
+          { label: `Answer key image OCR [${model}]` }
+        );
         break;
       } catch (err: any) {
-        clearTimeout(timer);
         lastErr = err;
       }
     }
@@ -107,7 +117,7 @@ Return JSON array of { questionNumber, rawAnswer, answer }.`;
       throw lastErr || new Error('Failed to parse answer key image.');
     }
 
-    const parsed: Array<{ questionNumber: number; rawAnswer?: string; answer: string }> =
+    const parsed: Array<{ questionNumber: number; rawAnswer?: string; answer: string; explanation?: string }> =
       JSON.parse((response.text ?? '[]').trim());
 
     const map: Record<number, Parser2AnswerKeyEntry> = {};
@@ -119,6 +129,7 @@ Return JSON array of { questionNumber, rawAnswer, answer }.`;
           questionNumber: item.questionNumber,
           rawAnswer: item.rawAnswer || item.answer,
           verifiedAnswer: normalized,
+          explanation: item.explanation ? String(item.explanation).trim() : undefined,
           sourceType: 'image_upload',
           matchedAt: now
         };
@@ -352,57 +363,144 @@ Return JSON array of { questionNumber, rawAnswer, answer }.`;
    * Parse answer key from raw text or pasted string
    * Handles formats:
    * 1. "1. (2) 2. (3) 3. (1) ..."
-   * 2. "1: B, 2: C, 3: A ..."
-   * 3. Table columns: "Q No. Ans \n 1 A \n 2 B ..."
-   * 4. Devanagari numerals: "1. (२) 2. (३) ..."
+   * 2. "1-A, 2-C, 3-D" / "1: B, 2: C, 3: A ..."
+   * 3. "Q1. A", "Q.2 - B", "Q3) (C)"
+   * 4. Multi-column tabular rows: "1 A  26 B  51 C" and Markdown tables "| 1 | A | 26 | B |"
+   * 5. Keys with inline explanations: "1. (A) By Newton's second law F = ma"
+   * 6. Devanagari numerals: "1. (२) 2. (३) ..."
+   * Duplicate question numbers with conflicting answers in the same sheet are flagged with low confidence (45).
    */
   public parseAnswerKeyText(text: string, sourceType: Parser2AnswerKeyEntry['sourceType'] = 'text_paste'): Record<number, Parser2AnswerKeyEntry> {
     const results: Record<number, Parser2AnswerKeyEntry> = {};
     if (!text || !text.trim()) return results;
 
-    const clean = text.replace(/[\r\n]+/g, ' ');
-
-    // Pattern 1: Question followed by option in parentheses or colon or dot
-    const regex = /\b(\d{1,3})\s*[\.:\-\>\)]+\s*[\(\[]?([1-4A-Da-d१-४])[\)\]]?\b/g;
-    let match;
-
-    while ((match = regex.exec(clean)) !== null) {
-      const qNum = parseInt(match[1], 10);
-      const rawOpt = match[2];
-
+    const now = new Date().toISOString();
+    const recordEntry = (qNum: number, rawOpt: string, explanation?: string) => {
       const verified = this.normalizeOptionLabel(rawOpt);
-      if (verified && qNum >= 1 && qNum <= 250) {
-        results[qNum] = {
-          questionNumber: qNum,
-          rawAnswer: rawOpt,
-          verifiedAnswer: verified,
-          sourceType,
-          matchedAt: new Date().toISOString()
-        };
+      if (!verified || qNum < 1 || qNum > 250) return;
+      const existing = results[qNum];
+      if (existing && existing.verifiedAnswer !== verified) {
+        // Conflicting duplicate in same source — flag for review rather than silently guessing
+        existing.confidence = 45;
+        existing.rawAnswer = `${existing.rawAnswer} (conflict: ${rawOpt})`;
+        return;
       }
-    }
+      results[qNum] = {
+        questionNumber: qNum,
+        rawAnswer: rawOpt,
+        verifiedAnswer: verified,
+        explanation: explanation && explanation.trim().length > 2 ? explanation.trim() : existing?.explanation,
+        confidence: existing?.confidence ?? 96,
+        sourceType,
+        matchedAt: now
+      };
+    };
 
-    // Pattern 2: Tabular line by line "1  A", "2  (1)", "Q1 B"
-    if (Object.keys(results).length === 0) {
-      const lines = text.split(/\r?\n/);
-      for (const line of lines) {
-        const lineMatch = line.trim().match(/^(?:Q\.?\s*)?(\d{1,3})\s*[:\-|\t ]+\s*[\(\[]?([1-4A-Da-d१-४])[\)\]]?$/i);
-        if (lineMatch) {
-          const qNum = parseInt(lineMatch[1], 10);
-          const verified = this.normalizeOptionLabel(lineMatch[2]);
-          if (verified && qNum >= 1 && qNum <= 250) {
-            results[qNum] = {
-              questionNumber: qNum,
-              rawAnswer: lineMatch[2],
-              verifiedAnswer: verified,
-              sourceType,
-              matchedAt: new Date().toISOString()
-            };
+    // Pass 1: Line-by-line parsing for single-row with optional explanation, Markdown tables, and multi-column grids
+    const lines = text.split(/\r?\n/);
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      // Skip pure markdown separator rows like |---|---|
+      if (/^\|?[\s:\-|]+\|?$/.test(line)) continue;
+
+      // Markdown / pipe table row with one or more pairs: "| 1 | A | 26 | B |"
+      if (line.includes('|')) {
+        const cells = line
+          .split('|')
+          .map(c => c.trim())
+          .filter(Boolean);
+        for (let i = 0; i + 1 < cells.length; i += 2) {
+          const qMatch = cells[i].match(/^(?:Q\.?\s*)?(\d{1,3})\.?$/i);
+          const aMatch = cells[i + 1].match(/^[\(\[]?([1-4A-Da-d१-४])[\)\]]?$/);
+          if (qMatch && aMatch) {
+            recordEntry(parseInt(qMatch[1], 10), aMatch[1]);
           }
+        }
+        continue;
+      }
+
+      // Single-line "Q1. (A) Explanation text..." or "1. B - Explanation text..."
+      const expLineMatch = line.match(
+        /^(?:Q\.?\s*)?(\d{1,3})\s*(?:[\.:\-\>\)]+|\s+)\s*(?:(?:Ans(?:wer)?|Key)\s*[:\-]?\s*)?[\(\[]?([1-4A-Da-d१-४])[\)\]]?(?:\s*(?:[-–—:\|]|\b(?:because|since|as|by|explanation|sol(?:ution)?)\b)\s*(.+))?$/i
+      );
+      if (expLineMatch) {
+        const qNum = parseInt(expLineMatch[1], 10);
+        const rawOpt = expLineMatch[2];
+        const maybeExp = expLineMatch[3];
+        // Make sure trailing text isn't another pair like "2-C, 3-D"
+        if (!maybeExp || !/^\s*(?:Q\.?\s*)?\d{1,3}\s*[\.:\-\>\)\s]+[\(\[]?[1-4A-Da-d१-४]/i.test(maybeExp)) {
+          recordEntry(qNum, rawOpt, maybeExp);
+          continue;
+        }
+      }
+
+      // Multi-column tabular line: "1 A   26 B   51 C" or "Q1. A  Q2. B"
+      const multiPairRegex = /(?:^|[\s,;]+)(?:Q\.?\s*)?(\d{1,3})\s*(?:[\.:\-\>\)]+|\s{1,4})\s*[\(\[]?([1-4A-Da-d१-४])[\)\]]?(?=$|[\s,;]+)/gi;
+      let pairMatch;
+      let lineMatches = 0;
+      const linePairs: Array<[number, string]> = [];
+      while ((pairMatch = multiPairRegex.exec(line)) !== null) {
+        lineMatches++;
+        linePairs.push([parseInt(pairMatch[1], 10), pairMatch[2]]);
+      }
+      if (lineMatches >= 2) {
+        for (const [qNum, rawOpt] of linePairs) {
+          recordEntry(qNum, rawOpt);
         }
       }
     }
 
+    // Pass 2: Inline / comma-separated / continuous stream patterns ("1-A, 2-C, 3-D", "Q1. A Q2. B", "1. (2) 2. (3)")
+    if (Object.keys(results).length < 2) {
+      const clean = text.replace(/[\r\n]+/g, ' ');
+      const regex = /(?:^|[\s,;|])(?:Q\.?\s*)?(\d{1,3})\s*[\.:\-\>\)]+\s*(?:(?:Ans(?:wer)?)\s*[:\-]?\s*)?[\(\[]?([1-4A-Da-d१-४])[\)\]]?(?=$|[\s,;|])/gi;
+      let match;
+      while ((match = regex.exec(clean)) !== null) {
+        const qNum = parseInt(match[1], 10);
+        recordEntry(qNum, match[2]);
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Extract inline answer keys printed immediately after individual questions on a page
+   * e.g. "Q.12 ... (4) 10 m/s  Ans. (2)" or "12. ... Answer: (B)"
+   */
+  public extractInlineAnswersFromPageText(
+    pageText: string,
+    sourcePage?: number
+  ): Record<number, Parser2AnswerKeyEntry> {
+    const results: Record<number, Parser2AnswerKeyEntry> = {};
+    if (!pageText || !/(?:ans(?:wer)?|correct\s*option|उत्तर)\s*[:.\-\s]*[\(\[]?[1-4A-Da-d१-४]/i.test(pageText)) {
+      return results;
+    }
+
+    const now = new Date().toISOString();
+    // Split roughly on question starts to bind each inline "Ans: (X)" to its preceding question number
+    const blocks = pageText.split(/(?=(?:^|\n)\s*(?:Q\.?\s*\d{1,3}(?:\s*[\.\):]|\s+)|\d{1,3}\s*[\.\)]))/im);
+    for (const block of blocks) {
+      const qStart = block.match(/^\s*(?:Q\.?\s*(\d{1,3})(?:\s*[\.\):]|\s+)|(\d{1,3})\s*[\.\)])/i);
+      if (!qStart) continue;
+      const qNum = parseInt(qStart[1] || qStart[2], 10);
+      if (qNum < 1 || qNum > 250) continue;
+      const ansMatch = block.match(/(?:ans(?:wer)?|correct\s*(?:option|answer)|उत्तर)\s*[:.\-]?\s*[\(\[]?([1-4A-Da-d१-४])[\)\]]?/i);
+      if (!ansMatch) continue;
+      const verified = this.normalizeOptionLabel(ansMatch[1]);
+      if (verified) {
+        results[qNum] = {
+          questionNumber: qNum,
+          rawAnswer: ansMatch[1],
+          verifiedAnswer: verified,
+          sourceType: 'pdf_page',
+          sourcePage,
+          confidence: 92,
+          matchedAt: now
+        };
+      }
+    }
     return results;
   }
 

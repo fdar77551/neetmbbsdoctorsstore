@@ -14,12 +14,21 @@ import {
   Wand2,
   AlertTriangle,
   FileSearch,
-  Table as TableIcon
+  Table as TableIcon,
+  RefreshCw,
+  Upload,
+  XCircle
 } from 'lucide-react';
-import { Parser2Question, isPlaceholderOption } from '../../services/parser2/types';
+import { Parser2ImagePlacement, Parser2Question, isPlaceholderOption } from '../../services/parser2/types';
 import { cleanQuestionTextForMatchTable, hasSuspiciousMathNotation } from '../../lib/mockTestData';
 import { isQuestionTextTruncated } from '../../services/parser2/layoutEngine';
 import { MathRenderer } from '../common/MathRenderer';
+import {
+  QuestionStemWithAttachments,
+  QuestionAttachmentStrip,
+  RichMatchTableView,
+  RichStructuredTableView
+} from '../common/QuestionMediaBlocks';
 
 interface Parser2QuestionCardProps {
   question: Parser2Question;
@@ -28,8 +37,16 @@ interface Parser2QuestionCardProps {
   onRecrop: (q: Parser2Question, targetOption?: 'A' | 'B' | 'C' | 'D') => void;
   onDelete: (questionId: string) => void;
   onMarkVerified: (questionId: string) => void;
+  onReject?: (questionId: string) => void;
   onRemoveFigure?: (questionId: string) => void;
+  onRemoveOptionFigure?: (questionId: string, optionLabel: 'A' | 'B' | 'C' | 'D') => Promise<void> | void;
   onAutoRecrop?: (questionId: string, targetOption?: 'A' | 'B' | 'C' | 'D') => Promise<void> | void;
+  onReExtract?: (questionId: string, mode: 'options' | 'question' | 'both') => Promise<void> | void;
+  onQuickUploadImage?: (
+    questionId: string,
+    file: File,
+    opts?: { placement?: Parser2ImagePlacement; targetOption?: 'A' | 'B' | 'C' | 'D' }
+  ) => Promise<void> | void;
 }
 
 export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
@@ -39,13 +56,24 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
   onRecrop,
   onDelete,
   onMarkVerified,
+  onReject,
   onRemoveFigure,
-  onAutoRecrop
+  onRemoveOptionFigure,
+  onAutoRecrop,
+  onReExtract,
+  onQuickUploadImage
 }) => {
   const [showExplanation, setShowExplanation] = useState(false);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [isAutoLocating, setIsAutoLocating] = useState(false);
+  const [reExtractingMode, setReExtractingMode] = useState<'options' | 'question' | null>(null);
+  const [isUploadingQuickImg, setIsUploadingQuickImg] = useState(false);
+  const [quickUploadTarget, setQuickUploadTarget] = useState<{
+    placement?: Parser2ImagePlacement;
+    targetOption?: 'A' | 'B' | 'C' | 'D';
+  }>({ placement: 'after_question' });
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const quickUploadInputRef = React.useRef<HTMLInputElement>(null);
 
   const validOptionsCount = (question.options || []).filter(o => {
     const optImg = o.imageUrl || question.optionFigures?.[o.label];
@@ -87,7 +115,41 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
     }
   };
 
+  const handleReExtractClick = async (mode: 'options' | 'question') => {
+    if (!onReExtract || reExtractingMode) return;
+    setReExtractingMode(mode);
+    try {
+      await onReExtract(question.id, mode);
+    } finally {
+      setReExtractingMode(null);
+    }
+  };
+
+  const triggerQuickUpload = (opts?: { placement?: Parser2ImagePlacement; targetOption?: 'A' | 'B' | 'C' | 'D' }) => {
+    setQuickUploadTarget(opts || { placement: 'after_question' });
+    setTimeout(() => quickUploadInputRef.current?.click(), 0);
+  };
+
+  const handleQuickFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !onQuickUploadImage) return;
+    setIsUploadingQuickImg(true);
+    try {
+      await onQuickUploadImage(question.id, file, quickUploadTarget);
+    } finally {
+      setIsUploadingQuickImg(false);
+    }
+  };
+
   const getStatusBadge = () => {
+    if (question.verificationStatus === 'failed') {
+      return (
+        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-900 bg-rose-100 border border-rose-300 px-2.5 py-0.5 rounded-full">
+          <XCircle className="w-3 h-3 text-rose-700" /> Rejected / Failed
+        </span>
+      );
+    }
     if (hasIncompleteOptions || question.verificationStatus === 'options_incomplete') {
       return (
         <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-800 bg-rose-100/90 border border-rose-300 px-2.5 py-0.5 rounded-full">
@@ -149,6 +211,17 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
   };
 
   const needsTableCheck = isMissingTable || hasMatchRows || hasStructuredRows;
+  const totalAttachedImagesCount = (() => {
+    const urls = new Set<string>();
+    if (question.figureUrl) urls.add(question.figureUrl);
+    for (const f of question.figures || []) if (f.figureUrl) urls.add(f.figureUrl);
+    for (const a of question.imageAttachments || []) if (a.url) urls.add(a.url);
+    for (const o of question.options || []) {
+      const u = o.imageUrl || question.optionFigures?.[o.label];
+      if (u) urls.add(u);
+    }
+    return urls.size;
+  })();
 
   return (
     <div className={`p-3 sm:p-4 rounded-2xl border transition-all shadow-xs ${
@@ -242,6 +315,11 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
         <span className={`px-1.5 py-0.5 rounded border ${!question.correctAnswer ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
           Ans: {question.correctAnswer || 'Missing'}
         </span>
+        {totalAttachedImagesCount > 0 && (
+          <span className="px-1.5 py-0.5 rounded border bg-sky-50 text-sky-700 border-sky-200">
+            Images: {totalAttachedImagesCount}
+          </span>
+        )}
       </div>
 
       {/* Review Notes Warning if flagged */}
@@ -259,11 +337,13 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
         </div>
       )}
 
-      {/* Question Statement */}
-      <div className="text-xs sm:text-sm text-slate-900 font-medium leading-relaxed mb-3 font-sans">
-        <MathRenderer
+      {/* Question Statement + before_question / between_paragraphs / assertion_reason attachments */}
+      <div className="mb-3">
+        <QuestionStemWithAttachments
           text={cleanQuestionTextForMatchTable(question.questionText, question.matchTable)}
-          className="inline-block w-full"
+          attachments={question.imageAttachments}
+          onZoom={url => setZoomedImage(url)}
+          textClassName="text-xs sm:text-sm text-slate-900 font-medium leading-relaxed font-sans"
         />
       </div>
 
@@ -331,68 +411,43 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
         </div>
       )}
 
-      {/* Match The Column Table */}
+      {/* Additional after_question imageAttachments not already shown as primary figureUrl */}
+      <QuestionAttachmentStrip
+        attachments={(question.imageAttachments || []).filter(
+          a => a.placement === 'after_question' && a.url !== question.figureUrl
+        )}
+        placements={['after_question']}
+        onZoom={url => setZoomedImage(url)}
+      />
+
+      {/* Match The Column Table (with cell/column images & border toggle) */}
       {question.matchTable && question.matchTable.rows && question.matchTable.rows.length > 0 && (
-        <div className="my-3 overflow-hidden rounded-xl border border-slate-200 bg-white text-xs">
-          <div className="bg-slate-50 px-3 py-1.5 font-bold text-slate-700 flex items-center gap-1.5 border-b border-slate-200">
-            <Columns className="w-3.5 h-3.5 text-blue-600" /> Match the Column
-          </div>
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50/50 text-slate-600 font-bold text-[11px]">
-                <th className="px-3 py-1.5 w-1/2">{question.matchTable.columnAHeader || 'Column I'}</th>
-                <th className="px-3 py-1.5 w-1/2">{question.matchTable.columnBHeader || 'Column II'}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {question.matchTable.rows.map((row, rIdx) => (
-                <tr key={rIdx} className="hover:bg-slate-50/50">
-                  <td className="px-3 py-1.5 font-medium text-slate-800">
-                    <span className="font-bold text-blue-600 mr-1.5">({row.colAKey})</span>
-                    <MathRenderer as="span" text={row.colAText} className="inline" />
-                  </td>
-                  <td className="px-3 py-1.5 font-medium text-slate-800">
-                    <span className="font-bold text-indigo-600 mr-1.5">({row.colBKey})</span>
-                    <MathRenderer as="span" text={row.colBText} className="inline" />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <RichMatchTableView
+          matchTable={question.matchTable}
+          attachments={question.imageAttachments}
+          defaultCol1="Column I"
+          defaultCol2="Column II"
+          onZoom={url => setZoomedImage(url)}
+          titleHeader={
+            <div className="bg-slate-50 px-3 py-1.5 font-bold text-slate-700 flex items-center gap-1.5 border-b border-slate-200 text-xs">
+              <Columns className="w-3.5 h-3.5 text-blue-600" /> Match the Column
+            </div>
+          }
+        />
       )}
 
-      {/* Structured Data Table (only render when no canonical matchTable exists) */}
-      {!hasMatchRows && question.structuredTable && question.structuredTable.rows && question.structuredTable.rows.length > 0 && (
-        <div className="my-3 overflow-x-auto rounded-xl border border-slate-200 bg-white text-xs">
-          <div className="bg-slate-50 px-3 py-1.5 font-bold text-slate-700 flex items-center gap-1.5 border-b border-slate-200">
-            <TableIcon className="w-3.5 h-3.5 text-indigo-600" /> Data Table
-          </div>
-          <table className="w-full text-left border-collapse">
-            {question.structuredTable.headers && question.structuredTable.headers.length > 0 && (
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/50 text-slate-600 font-bold text-[11px]">
-                  {question.structuredTable.headers.map((hdr, hIdx) => (
-                    <th key={hIdx} className="px-3 py-1.5">
-                      <MathRenderer as="span" text={hdr} className="inline" />
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-            )}
-            <tbody className="divide-y divide-slate-100">
-              {question.structuredTable.rows.map((row, rIdx) => (
-                <tr key={rIdx} className="hover:bg-slate-50/50">
-                  {row.map((cell, cIdx) => (
-                    <td key={cIdx} className="px-3 py-1.5 font-medium text-slate-800">
-                      <MathRenderer as="span" text={cell} className="inline" />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {/* Structured Data Table (with rowSpan/colSpan merged cells & cell images) */}
+      {question.structuredTable && question.structuredTable.rows && question.structuredTable.rows.length > 0 && (
+        <RichStructuredTableView
+          table={question.structuredTable}
+          attachments={question.imageAttachments}
+          onZoom={url => setZoomedImage(url)}
+          titleHeader={
+            <div className="bg-slate-50 px-3 py-1.5 font-bold text-slate-700 flex items-center gap-1.5 border-b border-slate-200 text-xs">
+              <TableIcon className="w-3.5 h-3.5 text-indigo-600" /> Data Table
+            </div>
+          }
+        />
       )}
 
       {/* Options Grid */}
@@ -400,9 +455,13 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
         {(question.options || []).map((opt) => {
           const isCorrect = question.correctAnswer === opt.label;
           const optImage = opt.imageUrl || question.optionFigures?.[opt.label];
+          const extraOptImages = (question.imageAttachments || []).filter(
+            a => a.placement === `option_${opt.label}` && a.url && a.url !== optImage
+          );
+          const hasAnyOptImage = Boolean(optImage || extraOptImages.length > 0);
           const rawOptText = (opt.value || opt.text || '').trim();
           const isFigurePlaceholderTag = /^\[Figure\s+[A-D]\]$/i.test(rawOptText);
-          const isPlaceholder = !optImage && (!rawOptText || isPlaceholderOption(rawOptText) || isFigurePlaceholderTag);
+          const isPlaceholder = !hasAnyOptImage && (!rawOptText || isPlaceholderOption(rawOptText) || isFigurePlaceholderTag);
 
           return (
             <div
@@ -427,15 +486,27 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
                 {isPlaceholder ? (
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-rose-800 italic font-semibold">
-                      (Missing — click Edit or Crop Option)
+                      (Missing — click Edit, Upload, or Crop Option)
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => onRecrop(question, opt.label)}
-                      className="text-[10px] font-bold text-blue-600 hover:underline shrink-0 cursor-pointer"
-                    >
-                      Crop Opt
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {onQuickUploadImage && (
+                        <button
+                          type="button"
+                          onClick={() => triggerQuickUpload({ placement: `option_${opt.label}` as Parser2ImagePlacement, targetOption: opt.label })}
+                          className="text-[10px] font-bold text-teal-700 hover:underline cursor-pointer"
+                          title={`Upload JPG/PNG/WebP image for Option ${opt.label}`}
+                        >
+                          Upload
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onRecrop(question, opt.label)}
+                        className="text-[10px] font-bold text-blue-600 hover:underline cursor-pointer"
+                      >
+                        Crop Opt
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <>
@@ -444,22 +515,55 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
                         <MathRenderer text={rawOptText} className="inline" />
                       </div>
                     )}
-                    {optImage && (
-                      <div className="mt-1 flex items-center gap-2">
-                        <img
-                          src={optImage}
-                          alt={`Option ${opt.label} diagram`}
-                          className="max-h-24 object-contain rounded border border-slate-200 bg-white p-1 cursor-pointer"
-                          onClick={() => setZoomedImage(optImage)}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => onRecrop(question, opt.label)}
-                          className="text-[10px] font-bold text-amber-600 hover:underline shrink-0 cursor-pointer"
-                          title={`Recrop Option ${opt.label}`}
-                        >
-                          Recrop
-                        </button>
+                    {hasAnyOptImage && (
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        {optImage && (
+                          <img
+                            src={optImage}
+                            alt={`Option ${opt.label} diagram`}
+                            className="max-h-24 object-contain rounded border border-slate-200 bg-white p-1 cursor-pointer"
+                            onClick={() => setZoomedImage(optImage)}
+                          />
+                        )}
+                        {extraOptImages.map(extra => (
+                          <img
+                            key={extra.id}
+                            src={extra.url}
+                            alt={extra.alt || `Option ${opt.label} extra diagram`}
+                            className="max-h-24 object-contain rounded border border-slate-200 bg-white p-1 cursor-pointer"
+                            onClick={() => setZoomedImage(extra.url)}
+                          />
+                        ))}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => onRecrop(question, opt.label)}
+                            className="text-[10px] font-bold text-amber-600 hover:underline cursor-pointer"
+                            title={`Recrop or add image to Option ${opt.label}`}
+                          >
+                            Recrop
+                          </button>
+                          {onQuickUploadImage && (
+                            <button
+                              type="button"
+                              onClick={() => triggerQuickUpload({ placement: `option_${opt.label}` as Parser2ImagePlacement, targetOption: opt.label })}
+                              className="text-[10px] font-bold text-teal-700 hover:underline cursor-pointer"
+                              title={`Upload image into Option ${opt.label}`}
+                            >
+                              Upload
+                            </button>
+                          )}
+                          {onRemoveOptionFigure && (
+                            <button
+                              type="button"
+                              onClick={() => onRemoveOptionFigure(question.id, opt.label)}
+                              className="text-[10px] font-bold text-rose-600 hover:underline cursor-pointer"
+                              title={`Remove image from Option ${opt.label}`}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )}
                   </>
@@ -475,7 +579,11 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
       </div>
 
       {/* Explanation Toggle */}
-      {question.explanation && (
+      {(question.explanation ||
+        question.explanationImageUrl ||
+        (question.imageAttachments || []).some(
+          a => a.placement === 'explanation' || a.placement === 'answer_key_explanation'
+        )) && (
         <div className="mt-2 pt-2 border-t border-slate-100">
           <button
             type="button"
@@ -487,9 +595,26 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
           </button>
 
           {showExplanation && (
-            <div className="mt-2 p-3 bg-blue-50/50 border border-blue-100 rounded-xl text-xs text-slate-800 leading-relaxed">
-              <span className="font-bold text-blue-900 block mb-1">Solution / Explanation:</span>
-              <MathRenderer text={question.explanation} className="inline-block w-full" />
+            <div className="mt-2 p-3 bg-blue-50/50 border border-blue-100 rounded-xl text-xs text-slate-800 leading-relaxed space-y-2">
+              <span className="font-bold text-blue-900 block">Solution / Explanation:</span>
+              {question.explanation && (
+                <MathRenderer text={question.explanation} className="inline-block w-full" />
+              )}
+              {question.explanationImageUrl &&
+                !(question.imageAttachments || []).some(a => a.url === question.explanationImageUrl) && (
+                  <img
+                    src={question.explanationImageUrl}
+                    alt={`Explanation for Q${question.questionNumber}`}
+                    onClick={() => setZoomedImage(question.explanationImageUrl || null)}
+                    className="max-h-48 object-contain rounded-lg border border-blue-200 bg-white p-1 cursor-zoom-in"
+                  />
+                )}
+              <QuestionAttachmentStrip
+                attachments={question.imageAttachments}
+                placements={['explanation', 'answer_key_explanation']}
+                onZoom={url => setZoomedImage(url)}
+                compact
+              />
             </div>
           )}
         </div>
@@ -522,6 +647,53 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
             </button>
           )}
 
+          {onReExtract && (
+            <>
+              <button
+                type="button"
+                onClick={() => handleReExtractClick('options')}
+                disabled={Boolean(reExtractingMode)}
+                className="text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 disabled:opacity-50 border border-blue-200 px-2.5 py-1 rounded-lg transition cursor-pointer flex items-center gap-1"
+                title="Re-extract all 4 options from the original PDF page"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${reExtractingMode === 'options' ? 'animate-spin' : ''}`} />
+                {reExtractingMode === 'options' ? 'Extracting Opts...' : 'Re-extract Options'}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleReExtractClick('question')}
+                disabled={Boolean(reExtractingMode)}
+                className="text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 border border-slate-200 px-2.5 py-1 rounded-lg transition cursor-pointer flex items-center gap-1"
+                title="Re-extract complete question statement from original PDF page"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${reExtractingMode === 'question' ? 'animate-spin' : ''}`} />
+                {reExtractingMode === 'question' ? 'Extracting Q...' : 'Re-extract Question'}
+              </button>
+            </>
+          )}
+
+          {onQuickUploadImage && (
+            <>
+              <input
+                ref={quickUploadInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp"
+                className="hidden"
+                onChange={handleQuickFileChange}
+              />
+              <button
+                type="button"
+                onClick={() => triggerQuickUpload({ placement: 'after_question' })}
+                disabled={isUploadingQuickImg}
+                className="text-[11px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 disabled:opacity-50 border border-teal-200 px-2.5 py-1 rounded-lg transition cursor-pointer flex items-center gap-1"
+                title="Upload custom JPG/PNG/WebP image directly to this question"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                {isUploadingQuickImg ? 'Uploading...' : 'Upload Image'}
+              </button>
+            </>
+          )}
+
           <button
             type="button"
             onClick={() => onRecrop(question)}
@@ -541,6 +713,16 @@ export const Parser2QuestionCard: React.FC<Parser2QuestionCardProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 ml-auto">
+          {onReject && question.verificationStatus !== 'failed' && (
+            <button
+              type="button"
+              onClick={() => onReject(question.id)}
+              className="text-[11px] font-bold text-amber-700 hover:text-white bg-amber-50 hover:bg-amber-600 border border-amber-200 px-2 py-1 rounded-lg transition cursor-pointer flex items-center gap-1"
+              title="Reject / flag question as failed so it is excluded from auto-publishing"
+            >
+              <XCircle className="w-3.5 h-3.5" /> Reject
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onEdit(question)}

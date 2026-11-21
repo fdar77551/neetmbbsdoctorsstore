@@ -129,10 +129,46 @@ export const Parser2PublishModal: React.FC<Parser2PublishModalProps> = ({
   const canCleanPublish = validationReport ? validationReport.canPublish : true;
 
   const totalQuestionsCount = questions ? questions.length : job.totalQuestions;
+  const savedQuestionsCount = totalQuestionsCount;
+  const detectedQuestionsCount =
+    validationReport?.reconciliation?.extractedQuestions ??
+    job.questionsDetected ??
+    totalQuestionsCount;
+  const expectedQuestionsCount =
+    validationReport?.reconciliation?.expectedQuestions ??
+    job.expectedQuestionsManual ??
+    null;
   const completeQuestionsCount = questions
     ? questions.filter(q => q.verificationStatus === 'verified' && !q.reviewRequired).length
     : validationReport?.reconciliation?.validQuestions ?? job.verifiedQuestionsCount ?? 0;
   const incompleteQuestionsCount = Math.max(0, totalQuestionsCount - completeQuestionsCount);
+  const missingQuestionsCount =
+    expectedQuestionsCount != null
+      ? Math.max(0, expectedQuestionsCount - savedQuestionsCount)
+      : validationReport?.reconciliation?.missingQuestions ?? 0;
+  const duplicateNumbers = (() => {
+    if (!questions) return [];
+    const seen = new Set<number>();
+    const dupes = new Set<number>();
+    for (const q of questions) {
+      if (seen.has(q.questionNumber)) dupes.add(q.questionNumber);
+      seen.add(q.questionNumber);
+    }
+    return Array.from(dupes).sort((a, b) => a - b);
+  })();
+  const duplicateCount = duplicateNumbers.length || validationReport?.reconciliation?.duplicateCount || 0;
+  const figuresAttachedCount = questions
+    ? questions.filter(
+        q =>
+          Boolean(q.figureUrl) ||
+          (q.figures && q.figures.length > 0) ||
+          (q.optionFigures && Object.keys(q.optionFigures).length > 0) ||
+          (q.imageAttachments && q.imageAttachments.length > 0)
+      ).length
+    : job.totalFigures ?? 0;
+  const answerKeysMatchedCount = questions
+    ? questions.filter(q => Boolean(q.correctAnswer && q.answerStatus !== 'answer_missing')).length
+    : Math.max(0, totalQuestionsCount - (validationReport?.reconciliation?.missingAnswerCount ?? 0));
   const missingAnswersCount = questions
     ? questions.filter(q => !q.correctAnswer || q.answerStatus === 'answer_missing').length
     : validationReport?.reconciliation?.missingAnswerCount ?? 0;
@@ -145,6 +181,8 @@ export const Parser2PublishModal: React.FC<Parser2PublishModalProps> = ({
   const missingFiguresCount = questions
     ? questions.filter(q => q.verificationStatus === 'missing_figure' || q.verificationStatus === 'figure_mismatch').length
     : 0;
+
+  const hasHardBlocker = savedQuestionsCount === 0 || duplicateCount > 0;
 
   useEffect(() => {
     fetchTestCategoriesFromServer().then(setCategories).catch(() => {});
@@ -390,33 +428,68 @@ export const Parser2PublishModal: React.FC<Parser2PublishModalProps> = ({
           </div>
         ) : (
         <form onSubmit={handlePublish} className="flex-1 overflow-y-auto p-5 space-y-4">
-          {/* Pre-Publish Audit Summary Card */}
+          {/* Pre-Publish Full Reconciliation Matrix (Module 8) */}
           <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/80 space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-black uppercase tracking-wider text-slate-700">
-                Pre-Publish Verification Audit
+                Pre-Publish Reconciliation Report
               </span>
               <span className="text-[11px] font-bold text-slate-600">
                 {subject} · Max Marks: {(excludeIncomplete ? completeQuestionsCount : totalQuestionsCount) * correctMarks} · {durationMinutes} mins
               </span>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 text-xs tabular-nums">
+            {hasHardBlocker && (
+              <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-300 text-rose-900 text-xs font-bold flex items-start gap-2">
+                <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  {savedQuestionsCount === 0
+                    ? 'Publishing Blocked: 0 questions are saved in the database for this job.'
+                    : `Publishing Blocked: Duplicate question number(s) detected (${duplicateNumbers.map(n => `Q${n}`).join(', ')}). Remove or renumber duplicates before publishing.`}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-3 sm:grid-cols-3 gap-2 text-xs tabular-nums">
               <div className="p-2 bg-white rounded-lg border border-slate-200">
-                <div className="text-[10px] font-bold text-slate-500 uppercase">Total Extracted</div>
-                <div className="text-base font-black text-slate-900">{totalQuestionsCount}</div>
+                <div className="text-[10px] font-bold text-slate-500 uppercase">Expected</div>
+                <div className="text-base font-black text-slate-900">{expectedQuestionsCount ?? 'Auto'}</div>
+              </div>
+              <div className="p-2 bg-white rounded-lg border border-slate-200">
+                <div className="text-[10px] font-bold text-slate-500 uppercase">Detected</div>
+                <div className="text-base font-black text-blue-700">{detectedQuestionsCount}</div>
               </div>
               <div className="p-2 bg-emerald-50/70 rounded-lg border border-emerald-200">
-                <div className="text-[10px] font-bold text-emerald-700 uppercase">Verified Complete</div>
+                <div className="text-[10px] font-bold text-emerald-700 uppercase">Validated</div>
                 <div className="text-base font-black text-emerald-800">{completeQuestionsCount}</div>
+              </div>
+              <div className={`p-2 rounded-lg border ${savedQuestionsCount === 0 ? 'bg-rose-50 border-rose-300' : 'bg-white border-slate-200'}`}>
+                <div className="text-[10px] font-bold text-slate-500 uppercase">Saved in DB</div>
+                <div className={`text-base font-black ${savedQuestionsCount === 0 ? 'text-rose-700' : 'text-indigo-700'}`}>{savedQuestionsCount}</div>
+              </div>
+              <div className={`p-2 rounded-lg border ${missingQuestionsCount > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-200'}`}>
+                <div className="text-[10px] font-bold text-slate-500 uppercase">Missing</div>
+                <div className={`text-base font-black ${missingQuestionsCount > 0 ? 'text-amber-800' : 'text-slate-900'}`}>{missingQuestionsCount}</div>
+              </div>
+              <div className={`p-2 rounded-lg border ${duplicateCount > 0 ? 'bg-rose-50 border-rose-300' : 'bg-white border-slate-200'}`}>
+                <div className={`text-[10px] font-bold uppercase ${duplicateCount > 0 ? 'text-rose-700' : 'text-slate-500'}`}>Duplicates</div>
+                <div className={`text-base font-black ${duplicateCount > 0 ? 'text-rose-800' : 'text-slate-900'}`}>{duplicateCount}</div>
               </div>
               <div className={`p-2 rounded-lg border ${incompleteQuestionsCount > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-200'}`}>
                 <div className={`text-[10px] font-bold uppercase ${incompleteQuestionsCount > 0 ? 'text-amber-700' : 'text-slate-500'}`}>
-                  Incomplete / Review
+                  Needs Review
                 </div>
                 <div className={`text-base font-black ${incompleteQuestionsCount > 0 ? 'text-amber-800' : 'text-slate-900'}`}>
                   {incompleteQuestionsCount}
                 </div>
+              </div>
+              <div className="p-2 bg-white rounded-lg border border-slate-200">
+                <div className="text-[10px] font-bold text-slate-500 uppercase">Figures Attached</div>
+                <div className="text-base font-black text-indigo-700">{figuresAttachedCount}</div>
+              </div>
+              <div className="p-2 bg-white rounded-lg border border-slate-200">
+                <div className="text-[10px] font-bold text-slate-500 uppercase">Answer Keys</div>
+                <div className="text-base font-black text-emerald-700">{answerKeysMatchedCount}/{savedQuestionsCount}</div>
               </div>
             </div>
 
@@ -1026,7 +1099,12 @@ export const Parser2PublishModal: React.FC<Parser2PublishModalProps> = ({
 
             <button
               type="submit"
-              disabled={isSubmitting || isUploadingThumb || (!canCleanPublish && !forcePublish && !(excludeIncomplete && completeQuestionsCount > 0))}
+              disabled={
+                hasHardBlocker ||
+                isSubmitting ||
+                isUploadingThumb ||
+                (!canCleanPublish && !forcePublish && !(excludeIncomplete && completeQuestionsCount > 0))
+              }
               className="min-h-[42px] px-6 py-2.5 text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-xl transition shadow-xs cursor-pointer flex items-center gap-1.5"
             >
               <Send className="w-4 h-4" />

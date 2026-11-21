@@ -7,11 +7,36 @@ import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { Parser2Question, Parser2Subject } from './types';
 import { parser2LayoutEngine } from './layoutEngine';
 import { answerKeyService } from './answerKeyService';
+import {
+  apiRateLimiter,
+  classifyApiError,
+  extractStatusCode,
+  RetryNotice,
+  StructuredApiError
+} from './apiRateLimiter.js';
+
+export interface GeminiCallOptions {
+  allowModelFallback?: boolean;
+  maxRetries?: number;
+  signal?: AbortSignal;
+  onRetry?: (notice: RetryNotice) => void;
+  label?: string;
+}
+
+export interface GeminiExecutionMeta {
+  providerUsed: 'gemini';
+  modelUsed: string;
+  preferredModel: string;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
+  responseTimeMs?: number;
+  summary?: string;
+}
 
 export interface AnswerKeyPageDetectionResult {
   isAnswerKeyPage: boolean;
   pageLayout?: 'two_column_english' | 'single_column' | 'grid';
-  entries: Array<{ questionNumber: number; answer: 'A' | 'B' | 'C' | 'D'; rawAnswer?: string }>;
+  entries: Array<{ questionNumber: number; answer: 'A' | 'B' | 'C' | 'D'; rawAnswer?: string; explanation?: string }>;
 }
 
 export interface GeminiVerificationResult {
@@ -45,6 +70,9 @@ export interface GeminiVerificationResult {
   reviewRequired: boolean;
   reviewNotes?: string;
   correctionsSummary?: string;
+  modelUsed?: string;
+  fallbackUsed?: boolean;
+  fallbackReason?: string;
 }
 
 export interface VisualCropCheckResult {
@@ -83,13 +111,93 @@ export interface TargetedRecoveryResult {
   notes?: string;
 }
 
+/**
+ * Normalizes any printed MCQ option label ("1", "(1)", "1.", "a", "(a)", "A", "i", etc.)
+ * into canonical 'A' | 'B' | 'C' | 'D'. Uses positional fallback only when raw label is absent/ambiguous.
+ */
+export function normalizeOptionLabel(
+  rawLabel: unknown,
+  fallbackIndex?: number
+): 'A' | 'B' | 'C' | 'D' | null {
+  const cleaned = String(rawLabel ?? '')
+    .trim()
+    .replace(/^option\s*/i, '')
+    .replace(/^[\(\[\s]+|[\)\]\.\:\-\s]+$/g, '')
+    .toUpperCase();
+
+  if (cleaned === 'A' || cleaned === '1' || cleaned === 'I') return 'A';
+  if (cleaned === 'B' || cleaned === '2' || cleaned === 'II') return 'B';
+  if (cleaned === 'C' || cleaned === '3' || cleaned === 'III') return 'C';
+  if (cleaned === 'D' || cleaned === '4' || cleaned === 'IV') return 'D';
+
+  const digitMatch = cleaned.match(/^([1-4])$/);
+  if (digitMatch) {
+    return (['A', 'B', 'C', 'D'] as const)[parseInt(digitMatch[1], 10) - 1];
+  }
+  const alphaMatch = cleaned.match(/^([A-D])$/);
+  if (alphaMatch) {
+    return alphaMatch[1] as 'A' | 'B' | 'C' | 'D';
+  }
+
+  if (typeof fallbackIndex === 'number' && fallbackIndex >= 0 && fallbackIndex < 4) {
+    return (['A', 'B', 'C', 'D'] as const)[fallbackIndex];
+  }
+  return null;
+}
+
+export function normalizeVerifiedOptionsList(
+  rawOptions: any
+): Array<{ label: 'A' | 'B' | 'C' | 'D'; value: string }> {
+  if (!Array.isArray(rawOptions) || rawOptions.length === 0) {
+    return [];
+  }
+  const byLabel = new Map<'A' | 'B' | 'C' | 'D', string>();
+  rawOptions.forEach((opt: any, idx: number) => {
+    if (opt == null) return;
+    if (typeof opt === 'string') {
+      const lbl = normalizeOptionLabel(undefined, idx);
+      if (lbl && !byLabel.has(lbl)) byLabel.set(lbl, opt.trim());
+      return;
+    }
+    const lbl = normalizeOptionLabel(opt.label ?? opt.key ?? opt.option, idx);
+    const val = String(opt.value ?? opt.text ?? '').trim();
+    if (!lbl) return;
+    const prev = byLabel.get(lbl) || '';
+    if (!prev || val.length > prev.length) {
+      byLabel.set(lbl, val);
+    }
+  });
+  return (['A', 'B', 'C', 'D'] as const)
+    .filter(lbl => byLabel.has(lbl))
+    .map(lbl => ({ label: lbl, value: byLabel.get(lbl) || '' }));
+}
+
+export function normalizeOptionBoundingBoxesMap(
+  rawBoxes: any
+): GeminiVerificationResult['optionBoundingBoxes'] {
+  if (!rawBoxes || typeof rawBoxes !== 'object') return undefined;
+  const out: NonNullable<GeminiVerificationResult['optionBoundingBoxes']> = {};
+  for (const [k, v] of Object.entries(rawBoxes)) {
+    const lbl = normalizeOptionLabel(k);
+    if (lbl && Array.isArray(v) && v.length === 4) {
+      out[lbl] = v.map(Number) as [number, number, number, number];
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export class GeminiVerificationService {
   private ai: GoogleGenAI | null = null;
   private defaultModel = 'gemini-4-hydrogen';
   private modelCooldownUntil = new Map<string, number>();
+  private lastMetaByKey = new Map<string, GeminiExecutionMeta>();
 
   constructor() {
     this.ensureClient();
+  }
+
+  public getLastExecutionMeta(key: string): GeminiExecutionMeta | undefined {
+    return this.lastMetaByKey.get(key);
   }
 
   private ensureClient(): GoogleGenAI | null {
@@ -113,14 +221,20 @@ export class GeminiVerificationService {
     return Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 10);
   }
 
-  private resolveModelCandidates(preferredModel?: string): string[] {
+  private resolveModelCandidates(preferredModel?: string, allowModelFallback: boolean = true): string[] {
     const raw = (preferredModel || this.defaultModel).trim();
     const normalized = raw === 'gemini-3.8-flash' ? 'gemini-4-hydrogen' : raw;
-    const baseCandidates = Array.from(new Set([normalized, 'gemini-4-hydrogen', 'gemini-3.1-flash-lite'].filter(Boolean)));
+    if (!allowModelFallback) {
+      return [normalized || this.defaultModel];
+    }
+    const baseCandidates = Array.from(
+      new Set([normalized, 'gemini-4-hydrogen', 'gemini-3.1-flash-lite', 'gemini-2.5-flash'].filter(Boolean))
+    );
     const now = Date.now();
     const healthy = baseCandidates.filter(m => (this.modelCooldownUntil.get(m) || 0) <= now);
     const cooling = baseCandidates.filter(m => (this.modelCooldownUntil.get(m) || 0) > now);
-    return [...healthy, ...cooling];
+    // If healthy candidates remain, only try healthy ones so quota-exhausted models aren't retried needlessly
+    return healthy.length > 0 ? healthy : cooling;
   }
 
   private buildThinkingConfig(model: string): { thinkingConfig?: { thinkingLevel: ThinkingLevel } } {
@@ -128,7 +242,7 @@ export class GeminiVerificationService {
       return {};
     }
     if (model.startsWith('gemini-4-') || model.startsWith('gemini-3')) {
-      return { thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL } };
+      return { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } };
     }
     return {};
   }
@@ -175,6 +289,18 @@ export class GeminiVerificationService {
     );
   }
 
+  private normalizeVerificationItem(item: any): GeminiVerificationResult {
+    const normalizedOpts = normalizeVerifiedOptionsList(item?.verifiedOptions);
+    const normalizedOptBoxes = normalizeOptionBoundingBoxesMap(item?.optionBoundingBoxes);
+    return {
+      ...item,
+      questionNumber: Number(item?.questionNumber) || 0,
+      verifiedQuestionText: String(item?.verifiedQuestionText || '').trim(),
+      verifiedOptions: normalizedOpts,
+      optionBoundingBoxes: normalizedOptBoxes
+    };
+  }
+
   private parseJsonArraySafe(rawText: string | undefined): GeminiVerificationResult[] {
     let cleaned = (rawText ?? '[]').trim();
     if (cleaned.startsWith('```')) {
@@ -182,7 +308,7 @@ export class GeminiVerificationService {
     }
     try {
       const parsed = JSON.parse(cleaned);
-      return Array.isArray(parsed) ? parsed : [];
+      return Array.isArray(parsed) ? parsed.map(item => this.normalizeVerificationItem(item)) : [];
     } catch (parseErr) {
       // Rescue truncated trailing array item from stream cutoffs if earlier complete objects exist
       const lastObjEnd = cleaned.lastIndexOf('},');
@@ -190,7 +316,7 @@ export class GeminiVerificationService {
         try {
           const salvaged = JSON.parse(cleaned.slice(0, lastObjEnd + 1) + ']');
           if (Array.isArray(salvaged) && salvaged.length > 0) {
-            return salvaged;
+            return salvaged.map(item => this.normalizeVerificationItem(item));
           }
         } catch {}
       }
@@ -202,36 +328,135 @@ export class GeminiVerificationService {
     ai: GoogleGenAI;
     preferredModel?: string;
     timeoutMs: number;
+    allowModelFallback?: boolean;
+    maxRetries?: number;
+    signal?: AbortSignal;
+    label?: string;
+    metaKey?: string;
+    onRetry?: (notice: RetryNotice) => void;
     executeAttempt: (model: string, attemptIdx: number, abortSignal: AbortSignal) => Promise<T>;
-  }): Promise<T> {
-    const models = this.resolveModelCandidates(params.preferredModel);
+  }): Promise<{ value: T; meta: GeminiExecutionMeta }> {
+    const normalizedPreferred = ((params.preferredModel || this.defaultModel).trim() === 'gemini-3.8-flash'
+      ? 'gemini-4-hydrogen'
+      : (params.preferredModel || this.defaultModel).trim()) || this.defaultModel;
+    const allowFallback = params.allowModelFallback !== false;
+    const models = this.resolveModelCandidates(normalizedPreferred, allowFallback);
     let lastError: any = null;
+    let fallbackReason: string | undefined;
 
     for (let i = 0; i < models.length; i++) {
+      if (params.signal?.aborted) {
+        throw new Error(`${params.label || 'Gemini request'} aborted`);
+      }
       const model = models[i];
-      const controller = new AbortController();
-      const attemptTimeout = model === 'gemini-4-hydrogen' && i === 0 ? Math.min(params.timeoutMs, 20000) : Math.max(params.timeoutMs, 34000);
-      const timer = setTimeout(() => controller.abort(new Error(`Client deadline guard (${attemptTimeout}ms)`)), attemptTimeout);
+      const attemptTimeout =
+        model === 'gemini-4-hydrogen' && i === 0
+          ? Math.min(Math.max(params.timeoutMs, 35000), 48000)
+          : Math.max(params.timeoutMs, 40000);
+      const tStart = Date.now();
+
       try {
-        const result = await params.executeAttempt(model, i, controller.signal);
-        clearTimeout(timer);
+        const hasFallbackCandidate = allowFallback && i + 1 < models.length;
+        const modelMaxRetries = hasFallbackCandidate
+          ? Math.min(params.maxRetries ?? 1, 1)
+          : params.maxRetries;
+
+        const result = await apiRateLimiter.schedule(
+          'gemini',
+          async () => {
+            const controller = new AbortController();
+            const onExternalAbort = () => controller.abort(new Error('Job paused or aborted'));
+            if (params.signal) {
+              if (params.signal.aborted) {
+                throw new Error('Job paused or aborted');
+              }
+              params.signal.addEventListener('abort', onExternalAbort, { once: true });
+            }
+
+            let hardTimer: ReturnType<typeof setTimeout> | null = null;
+            const softTimer = setTimeout(
+              () => controller.abort(new Error(`Client deadline guard (${attemptTimeout}ms)`)),
+              attemptTimeout
+            );
+
+            // Hard Promise.race safety net in case underlying HTTP fetch ignores AbortSignal
+            const hardDeadlinePromise = new Promise<never>((_resolve, reject) => {
+              hardTimer = setTimeout(() => {
+                controller.abort(new Error(`Hard deadline timeout (${attemptTimeout + 3000}ms)`));
+                reject(
+                  new StructuredApiError(
+                    `Gemini request timed out after ${Math.round((attemptTimeout + 3000) / 1000)}s [${model}]`,
+                    { status: 504, category: 'transient', provider: 'gemini' }
+                  )
+                );
+              }, attemptTimeout + 3000);
+            });
+
+            try {
+              return await Promise.race([
+                params.executeAttempt(model, i, controller.signal),
+                hardDeadlinePromise
+              ]);
+            } finally {
+              clearTimeout(softTimer);
+              if (hardTimer) clearTimeout(hardTimer);
+              params.signal?.removeEventListener('abort', onExternalAbort);
+            }
+          },
+          {
+            label: params.label ? `${params.label} [${model}]` : `Gemini [${model}]`,
+            maxRetries: modelMaxRetries,
+            signal: params.signal,
+            onRetry: params.onRetry
+          }
+        );
+
+        const elapsedMs = Date.now() - tStart;
         this.modelCooldownUntil.delete(model);
-        return result;
+        const meta: GeminiExecutionMeta = {
+          providerUsed: 'gemini',
+          modelUsed: model,
+          preferredModel: normalizedPreferred,
+          fallbackUsed: model !== normalizedPreferred,
+          fallbackReason: model !== normalizedPreferred ? (fallbackReason || `Switched from ${normalizedPreferred} to ${model}`) : undefined,
+          responseTimeMs: elapsedMs,
+          summary: `HTTP 200 OK (${model}, ${elapsedMs}ms)`
+        };
+        if (params.metaKey) {
+          this.lastMetaByKey.set(params.metaKey, meta);
+        }
+        return { value: result, meta };
       } catch (err: any) {
-        clearTimeout(timer);
-        lastError = err;
-        const msg = String(err?.message || err || '');
-        if (!this.isRetriableError(err)) {
+        if (params.signal?.aborted) {
           throw err;
         }
-        // Cool down timed-out or rate-limited model for 10 min so subsequent pages route straight to fast healthy fallback
-        if (i === 0 && models.length > 1) {
-          this.modelCooldownUntil.set(model, Date.now() + 600_000);
-          console.log(`[GeminiVerification] Cooling down ${model} for 10m (${this.summarizeGeminiError(err)}); promoting ${models[1]}.`);
+        lastError = err;
+        const category = classifyApiError(err);
+        const status = extractStatusCode(err);
+        const summary = this.summarizeGeminiError(err);
+        fallbackReason = `${model} failed (${summary})`;
+
+        // Permanent errors other than 404 model-not-found must stop immediately (never mask invalid key/argument)
+        if (category === 'permanent' && status !== 404) {
+          throw err;
         }
-        if (i + 1 < models.length && !(msg.includes('404') || msg.includes('NOT_FOUND'))) {
-          await new Promise(r => setTimeout(r, 250));
+
+        // If another fallback model is explicitly permitted, cool down THIS model and switch immediately
+        if (allowFallback && i + 1 < models.length) {
+          if (status === 404 || category === 'quota_exhausted') {
+            this.modelCooldownUntil.set(model, Date.now() + 900_000); // 15 min cooldown for exhausted/missing model
+          } else if (category === 'rate_limit') {
+            this.modelCooldownUntil.set(model, Date.now() + 90_000);
+          } else if (status === 503 || status === 504 || category === 'transient') {
+            this.modelCooldownUntil.set(model, Date.now() + 60_000); // 60s cooldown for overloaded/timed-out primary model
+          }
+          console.log(
+            `[GeminiVerification] ${params.label || 'request'}: switching ${model} -> ${models[i + 1]} (${category}).`
+          );
+          continue;
         }
+
+        throw err;
       }
     }
 
@@ -262,7 +487,8 @@ export class GeminiVerificationService {
     pageImageBuffer: Buffer,
     ocrMarkdown: string,
     subject: Parser2Subject,
-    modelName: string = this.defaultModel
+    modelName: string = this.defaultModel,
+    callOptions?: GeminiCallOptions
   ): Promise<GeminiVerificationResult[]> {
     // 0. Quick Cover Page / General Instructions Detection
     if (this.isCoverPage(ocrMarkdown)) {
@@ -297,13 +523,15 @@ PAGE LAYOUT DETECTION:
 
 STRICT VERIFICATION GUIDELINES:
 1. OPTION EXTRACTION (ZERO TOLERANCE ON MISSING OR PLACEHOLDER OPTIONS):
-   - NEVER output placeholder or refusal strings like "Insufficient data in snippet", "Not visible in snippet", "Cannot be determined", "Option (A)", "Option B", "[Missing Option Text]", or "(Empty)". If an option is genuinely cut off onto the next page, output "" (empty string) for that option instead of any explanatory placeholder!
+   - NEET papers frequently print options as "(1) ... (2) ... (3) ... (4) ..." or "(a) ... (b) ... (c) ... (d) ..." or "(A) ... (B) ... (C) ... (D) ...".
+   - YOU MUST ALWAYS map the 4 options to canonical labels: "A" (for 1/a/A), "B" (for 2/b/B), "C" (for 3/c/C), "D" (for 4/d/D)! NEVER return label "1", "2", "3", "4" — always convert them to "A", "B", "C", "D"!
+   - Extract ALL 4 option values completely and faithfully — including authentic exam choices like "Nothing can be said due to insufficient data", "Cannot be determined", "None of these", short numeric/unit answers ("25 N", "4 N", "0", "30°"), mathematical fractions ("FL/x", "F(L - x)/L", "g/3", "2g/3", "(m₂ - m₁)g/(m₁ + m₂)"), roots ("√3", "a/√2"), and full sentences!
+   - NEVER output AI refusal strings like "Insufficient data in snippet", "Not visible in snippet", "Option (A)", "[Missing Option Text]", or "(Empty)". If an option is genuinely cut off onto the next page, output "" (empty string).
    - Detect options arranged horizontally "(1) ... (2) ... (3) ... (4) ...", vertically, or in 2x2 grids.
    - An option MUST NEVER repeat the question stem!
    - Preserve statement combinations verbatim: e.g. "(A) and (E) only", "(D) only".
-   - If options are purely graphical drawings (benzene/aromatic/cyclic rings, isomers, circuit sketches, graphs — e.g. "Anti aromatic molecule is"):
-     * Set "optionBoundingBoxes" with TIGHT, STRICTLY NON-OVERLAPPING coordinates [ymin, xmin, ymax, xmax] (0..1000 scale) enclosing ONLY each drawing A, B, C, D.
-     * EXCLUDE option numbers "(1)", "(2)", "(3)", "(4)" and EXCLUDE neighboring options!
+   - STRICT OPTION IMAGE RULE: ONLY populate "optionBoundingBoxes" when the options themselves are genuine 2D DRAWN FIGURES (free-body force/vector diagrams, box-on-floor/pulley sketches, X-Y graphs, circuits, ray diagrams, benzene/aromatic/cyclic rings, isomers). NEVER populate "optionBoundingBoxes" for printed text, numbers, words, units, or mathematical fractions!
+   - When the 4 options ARE drawn diagrams/sketches/vectors/graphs/rings (no text answer choices, e.g. "is given best by" followed by 4 small force diagrams): YOU MUST set "optionBoundingBoxes" with TIGHT, STRICTLY NON-OVERLAPPING coordinates [ymin, xmin, ymax, xmax] (0..1000 scale) using keys "A", "B", "C", "D" enclosing ONLY each drawing, EXCLUDING option numbers "(1)-(4)" and EXCLUDING neighboring text!
 
 2. CHEMISTRY SIMPLE FORMULAS VS COMPLEX STRUCTURES (CRITICAL DISTINCTION):
    - Classify "chemistryContentType":
@@ -312,23 +540,25 @@ STRICT VERIFICATION GUIDELINES:
      * "complex_structures": Cyclic rings, benzene/aromatic rings, fused bicyclic systems, chair/boat conformations, stereochemical wedges/dashes, or structural reaction schemes that cannot be written linearly.
        -> For "complex_structures": Provide tight non-overlapping "optionBoundingBoxes" (or "diagramBoundingBox" if in stem) and set "isChemistryStructure": true.
 
-3. STRICT DIAGRAM & GRAPH BOUNDING BOXES (NEVER CROP PRINTED TEXT!):
-   - Look visually around and inside EVERY question block for diagrams, apparatus (e.g. venturimeter, pulley, pipes, ray optics, circuits, logic gates), and X-Y graphs (e.g. solar cell V-I characteristic curve, P-V curves, plots with points A and B).
+3. STRICT DIAGRAM & GRAPH BOUNDING BOXES (NEVER CROP PRINTED TEXT AND NEVER SUBSTITUTE A TABLE FOR A GRAPH!):
+   - Look visually around and inside EVERY question block for diagrams, apparatus (e.g. venturimeter, pulley, blocks on incline, pipes, ray optics, circuits, logic gates), and X-Y graphs (e.g. velocity-time graph, displacement-time graph, force-time graph, solar cell V-I characteristic curve, P-V curves).
    - If ANY scientific diagram, graph, or complex chemical drawing exists near or inside the question:
      * Set "hasDiagram": true and set "figureType" ("diagram" | "graph" | "chemical_structure" | "table").
      * Provide "diagramBoundingBox": [ymin, xmin, ymax, xmax] on 0..1000 normalized scale.
      * Tightly enclose ONLY the artwork/graph axes/curves/labels. NEVER include printed question text sentences above or option lines (1)-(4) below!
-     * NEVER crop printed plain-text questions (e.g. adiabatic gas exponent gamma = 5/3, gamma = 7/5 text questions) as a diagram! If a question is pure text with no artwork, "hasDiagram" MUST be false and "diagramBoundingBox" MUST be omitted!
+     * NEVER replace a graph or diagram with a synthetic "structuredTableData" table of numbers or option values!
+     * NEVER crop printed plain-text questions as a diagram! If a question is pure text with no artwork, "hasDiagram" MUST be false and "diagramBoundingBox" MUST be omitted!
    - Column boundary rule: If "pageLayout" is "two_column_bilingual", English diagrams MUST stay in left column (xmax <= 490). In "single_column" or "two_column_english", use the exact diagram column coordinates.
 
 4. COMPLETE QUESTION STEM, VECTORS, MATH SYMBOLS, LISTS & TABLES PRECISION:
    - Never start mid-sentence or stop mid-sentence; capture the ENTIRE stem from start through all wrapped lines (e.g. "...taken as fundamental units, then dimensions of gravitational constant are").
+   - SCIENTIFIC NOTATION, SUPERSCRIPTS & SUBSCRIPTS ARE CRITICAL: NEVER flatten exponents or subscripts! Always write '10⁻³' or '10^-3' (NEVER '103'), '10⁶' (NEVER '106'), 'm s⁻²', 'x² + y²', 'H₂SO₄', 'SO₄²⁻', 'Fe³⁺', 'μ₀', 'ε₀', 'v₀', 'a₁'.
    - Preserve chemistry reaction arrows (→, ⇌, Δ), charges (+, −), subscripts/superscripts, fractions, roots (√), Greek letters (Δ, λ, ω, θ, σ, μ₀, ε₀), dimensions ("[M⁻³ L⁻² T⁻² A⁻⁴]"), and inverse trig ("tan⁻¹(...)").
    - NEVER leave raw "$" LaTeX delimiters or raw commands like "\\frac", "\\hat", "\\vec", "i_cap", "j_cap", or "k_cap"! Convert vectors and symbols directly to clean Unicode: "î", "ĵ", "k̂", "F⃗", "3î + 4ĵ", "×", "±", "≤", "≥", "√".
-   - NEVER put MCQ choices "(A)..(D)" or "(1)..(4)" into "structuredTableData"! All 4 options MUST ALWAYS be in "verifiedOptions" even when arranged in a 2x2 grid or table.
-   - NEVER convert a visual drawing (Vernier calipers, screw gauge, scale ticks, pulley, circuit, ray diagram, graph) into a descriptive "structuredTableData" summary! Set "hasDiagram": true and provide a tight "diagramBoundingBox" around ONLY the illustration instead.
+   - ZERO OPTION-TO-TABLE CONVERSION: NEVER put MCQ choices "(A)..(D)" or "(1)..(4)" (whether sentences OR values like "Option | Value: (1) 25 N, (2) 50 N...") into "structuredTableData"! All 4 options MUST ONLY go in "verifiedOptions", and "structuredTableData" MUST be omitted unless the question stem itself contains a genuine multi-column data table!
+   - NEVER convert a visual drawing (velocity-time graph, Vernier calipers, screw gauge, pulley, circuit, ray diagram) into a descriptive "structuredTableData" summary! Set "hasDiagram": true and provide a tight "diagramBoundingBox" around ONLY the illustration instead.
    - For Match-the-Column / List I vs List II questions: keep ONLY the introductory instruction in "verifiedQuestionText" and YOU MUST populate structured "matchTableData" with ALL rows from List I / Column I and List II / Column II (including Roman numerals i, ii, iii, iv). When "matchTableData" is populated, DO NOT also emit a duplicate "structuredTableData" with the same List I/Column I rows!
-   - For non-match stem data tables: populate "structuredTableData" with exact column "headers" and all data "rows". If a complex table cannot be transcribed cleanly, also provide "diagramBoundingBox" with "figureType": "table" as visual fallback.
+   - For genuine non-match stem data tables ONLY: populate "structuredTableData" with exact column "headers" and all data "rows". If a complex table cannot be transcribed cleanly, also provide "diagramBoundingBox" with "figureType": "table" as visual fallback.
 
 OCR Markdown Context:
 """
@@ -339,10 +569,16 @@ ${(ocrMarkdown || '').slice(0, 8000)}
       const primaryPayload = await this.preparePageImagePayload(pageImageBuffer, 1550, 84);
       let compactPayload: { data: string; mimeType: string } | null = null;
 
-      return await this.runWithDeadlineAndFallback({
+      const { value: rawResults, meta } = await this.runWithDeadlineAndFallback({
         ai,
         preferredModel: modelName,
-        timeoutMs: 22000,
+        timeoutMs: 32000,
+        allowModelFallback: callOptions?.allowModelFallback,
+        maxRetries: callOptions?.maxRetries,
+        signal: callOptions?.signal,
+        onRetry: callOptions?.onRetry,
+        label: callOptions?.label || `Page ${pageNumber} full-page extraction`,
+        metaKey: `page-${pageNumber}`,
         executeAttempt: async (currentModel, attemptIdx, abortSignal) => {
           const payload =
             attemptIdx === 0
@@ -461,9 +697,37 @@ ${(ocrMarkdown || '').slice(0, 8000)}
           return results;
         }
       });
+
+      return rawResults.map(item => ({
+        ...item,
+        modelUsed: meta.modelUsed,
+        fallbackUsed: meta.fallbackUsed,
+        fallbackReason: meta.fallbackReason
+      }));
     } catch (e: any) {
-      console.log(`[GeminiVerification] Page ${pageNumber}: Gemini verification deferred (${this.summarizeGeminiError(e)}). Continuing with OCR extraction fallback.`);
-      return this.fallbackParseOcrMarkdown(ocrMarkdown, subject, pageNumber);
+      const summary = this.summarizeGeminiError(e);
+      const category = classifyApiError(e);
+      const status = extractStatusCode(e);
+      const strippedOcr = (ocrMarkdown || '').replace(/@neetmbbsdoctors/gi, '').replace(/^Page\s+\d+\s*$/gim, '').trim();
+      if (strippedOcr.length >= 200) {
+        const fallbackResults = this.fallbackParseOcrMarkdown(ocrMarkdown, subject, pageNumber);
+        if (fallbackResults.length > 0) {
+          console.log(`[GeminiVerification] Page ${pageNumber}: Gemini deferred (${summary}); recovered ${fallbackResults.length} Qs from OCR fallback.`);
+          return fallbackResults.map(r => ({
+            ...r,
+            modelUsed: 'ocr-deterministic-fallback',
+            fallbackUsed: true,
+            fallbackReason: `Gemini failed (${summary}); parsed local OCR text`
+          }));
+        }
+      }
+      console.error(`[GeminiVerification] Page ${pageNumber}: Gemini visual extraction failed (${summary}) with no usable OCR fallback.`);
+      throw new StructuredApiError(`Gemini visual extraction failed on Page ${pageNumber}: ${summary}`, {
+        status,
+        category,
+        provider: 'gemini',
+        cause: e
+      });
     }
   }
 
@@ -485,7 +749,8 @@ ${(ocrMarkdown || '').slice(0, 8000)}
       tailText?: string;
       missingOptions?: boolean;
       danglingAnchorOnly?: boolean;
-    }
+    },
+    callOptions?: GeminiCallOptions
   ): Promise<GeminiVerificationResult[]> {
     const prevPageLastQuestionNumber =
       typeof prevPageTailContext === 'number'
@@ -560,7 +825,7 @@ ${(ocrMarkdown || '').slice(0, 8000)}
         continuationQNum?: number,
         compactOnly: boolean = false,
         tailSnippet?: string
-      ): Promise<GeminiVerificationResult[]> => {
+      ): Promise<{ items: GeminiVerificationResult[]; meta: GeminiExecutionMeta }> => {
         const contHint = continuationQNum
           ? `CONTINUATION HINT: Any unnumbered options (e.g. (1)/(A)..(4)/(D)), equations, remaining stem text, or List-I/List-II table at the VERY TOP of this ${side} column ABOVE the first printed question number belong to Question ${continuationQNum} from the previous ${side === 'LEFT' ? `page${tailSnippet ? ` (whose bottom snippet was: "${tailSnippet.slice(0, 160)}")` : ''}` : 'LEFT column'} — emit an item with questionNumber: ${continuationQNum} containing those continuing stem/options/table!`
           : `1. If a question is partially split across columns or pages, still extract whatever stem/table/options belong to it with its exact questionNumber.`;
@@ -569,11 +834,16 @@ Extract EVERY question and continuation visible in this ${side} column STRICTLY 
 RULES:
 1. ${contHint}
 2. NEVER omit a printed question number in this column — extract EVERY question visible from top to bottom (including questions with incomplete/wrapping options or tables) and read COMPLETE stems across all wrapped lines (never truncate mid-sentence).
-3. NEVER output refusal strings like "Insufficient data in snippet", "Not provided", or "[Empty]" as option text! If an option is missing/cut off onto the next column or page, output "" (empty string). ALWAYS place all visible choices (A..D / 1..4) into "verifiedOptions" even in 2x2 grids — NEVER put choices into "structuredTableData".
-4. Preserve ALL superscripts, exponents (e.g. 10⁻³, M⁻¹ L³ T⁻², p⁻³, x^(1/2)), subscripts, square roots (√), Greek symbols (Δ, λ, θ, ε₀, μ₀, σ), significant figures (0.00204), vectors (î, ĵ, k̂, F⃗), and inverse trig (tan⁻¹) cleanly in Unicode. NEVER leave raw LaTeX like $...$ or \\frac.
+3. OPTIONS EXTRACTION (CRITICAL — MAP (1)/(2)/(3)/(4) -> A/B/C/D, ZERO OPTION-TO-TABLE CONVERSION):
+   - ALWAYS map printed option markers (1)/(a)/(A) -> label "A", (2)/(b)/(B) -> label "B", (3)/(c)/(C) -> label "C", (4)/(d)/(D) -> label "D"! NEVER output labels "1", "2", "3", "4" — ALWAYS use "A", "B", "C", "D".
+   - Extract EVERY option's full text verbatim — including genuine exam choices like "Nothing can be said due to insufficient data", "Cannot be determined", "None of these", numbers, units ("4 N", "25 N", "30°"), and fractions ("FL/x", "F(L - x)/L", "g/3").
+   - NEVER output AI refusal strings like "Insufficient data in snippet", "Not provided", or "[Empty]" as option text! If an option is genuinely cut off onto the next column or page, output "" (empty string).
+   - STRICT NO-TABLE-FOR-OPTIONS RULE: NEVER place the 4 answer choices (1)-(4) or (A)-(D) into "structuredTableData" (neither as a 1-column statement list nor as an "Option | Value" table)! Answer choices belong ONLY in "verifiedOptions".
+   - VISUAL OPTIONS RULE: NEVER populate "optionBoundingBoxes" for printed text, numbers, units, or fractions! HOWEVER, if the 4 options themselves ARE drawn 2D diagrams, free-body force vector sketches (e.g. box on floor reaction force diagrams), X-Y graphs, circuits, or cyclic chemical structures (with no text answers), YOU MUST populate tight non-overlapping "optionBoundingBoxes": { "A": [...], "B": [...], "C": [...], "D": [...] }!
+4. STRICT SCIENTIFIC ACCURACY (Physics/Chemistry/Biology/Math): Preserve ALL superscripts, exponents (e.g. 10⁻³ NEVER "103", 10⁶ NEVER "106", M⁻¹ L³ T⁻², p⁻³, x^(1/2)), subscripts (H₂SO₄, CO₂, ε₀, μ₀, v₀), fractions (a/b), square roots (√), vectors (î, ĵ, k̂, F⃗), Greek symbols (Δ, λ, θ, ω, π, σ, Ω), chemical reaction arrows (→, ⇌, ⟶), IUPAC names, and significant figures (0.00204) cleanly in Unicode. NEVER flatten exponents or leave raw LaTeX like $...$ or \\frac.
 5. Match-the-Column / List-I vs List-II questions MUST populate "matchTableData" completely with all rows (and MUST NOT duplicate the same rows into "structuredTableData"). Only genuine non-match stem data tables go into "structuredTableData".
-6. Detect ANY visual diagram, Vernier caliper / micrometer / screw gauge / pulley / circuit / graph in this column, set "hasDiagram": true, and return TIGHT "diagramBoundingBox": [ymin, xmin, ymax, xmax] (0..1000 scale relative to this column image) around ONLY the artwork/scale/graph. NEVER turn a Vernier scale or apparatus drawing into a fake text "structuredTableData"!
-7. If this column is ONLY an Answer Key list (e.g. "Q1 (A) Q2 (B)..."), return [].
+6. Detect ANY visual diagram, velocity-time / displacement-time / force-time / V-I graph, Vernier caliper, pulley, block-and-pulley, inclined plane, circuit, or chemical ring structure in this column, set "hasDiagram": true, and return TIGHT "diagramBoundingBox": [ymin, xmin, ymax, xmax] (0..1000 scale relative to this column image) around ONLY the artwork/graph. NEVER crop plain text words or options into "diagramBoundingBox", and NEVER substitute a fake "structuredTableData" table for a graph or apparatus drawing!
+7. If this column is ONLY an Answer Key list (e.g. "Q1 (A) Q2 (B)..." or "1. (1) 2. (3)..."), return [].
 
 OCR context:
 """
@@ -583,10 +853,16 @@ ${(ocrMarkdown || '').slice(0, 3500)}
         const payload = await this.preparePageImagePayload(colBuf, compactOnly ? 960 : 1150, compactOnly ? 78 : 86);
         let compactColPayload: { data: string; mimeType: string } | null = compactOnly ? payload : null;
 
-        return this.runWithDeadlineAndFallback({
+        const { value, meta } = await this.runWithDeadlineAndFallback({
           ai,
           preferredModel: compactOnly ? 'gemini-3.1-flash-lite' : modelName,
           timeoutMs: 38000,
+          allowModelFallback: callOptions?.allowModelFallback,
+          maxRetries: callOptions?.maxRetries,
+          signal: callOptions?.signal,
+          onRetry: callOptions?.onRetry,
+          label: `Page ${pageNumber} ${side} column`,
+          metaKey: `page-${pageNumber}`,
           executeAttempt: async (currentModel, attemptIdx, abortSignal) => {
             const p = attemptIdx === 0 && !compactOnly ? payload : (compactColPayload ??= await this.preparePageImagePayload(colBuf, 920, 78));
             const resp = await ai.models.generateContent({
@@ -674,34 +950,81 @@ ${(ocrMarkdown || '').slice(0, 3500)}
             return this.parseJsonArraySafe(resp.text);
           }
         });
+        return {
+          items: value.map(item => ({
+            ...item,
+            modelUsed: meta.modelUsed,
+            fallbackUsed: meta.fallbackUsed,
+            fallbackReason: meta.fallbackReason
+          })),
+          meta
+        };
       };
 
-      // Extract LEFT column then RIGHT column sequentially so columns never compete on quota/timeout,
-      // pass LEFT's last questionNumber as continuation hint for RIGHT, and automatically retry any column
-      // that transiently fails or returns empty while the adjacent column has questions.
-      let leftRaw = await extractCol(leftBuf, 'LEFT', prevPageLastQuestionNumber, false, prevPageTailNote?.tailText).catch((err) => {
-        console.warn(`[GeminiVerification] Page ${pageNumber} LEFT column error (${this.summarizeGeminiError(err)}); retrying compact.`);
-        return [] as GeminiVerificationResult[];
-      });
-      if (leftRaw.length === 0) {
-        await new Promise(r => setTimeout(r, 400));
-        leftRaw = await extractCol(leftBuf, 'LEFT', prevPageLastQuestionNumber, true, prevPageTailNote?.tailText).catch((err) => {
-          console.warn(`[GeminiVerification] Page ${pageNumber} LEFT retry failed: ${this.summarizeGeminiError(err)}`);
-          return [] as GeminiVerificationResult[];
-        });
+      // Extract LEFT column then RIGHT column strictly sequentially via the rate-limited queue.
+      // CRITICAL: Never fire redundant compact bursts after a 429 rate-limit error — ApiRateLimiter
+      // has already performed full Retry-After + exponential backoff retries!
+      let leftErr: any = null;
+      let rightErr: any = null;
+      let leftRaw: GeminiVerificationResult[] = [];
+      let rightRaw: GeminiVerificationResult[] = [];
+
+      try {
+        const res = await extractCol(leftBuf, 'LEFT', prevPageLastQuestionNumber, false, prevPageTailNote?.tailText);
+        leftRaw = res.items;
+      } catch (err) {
+        leftErr = err;
+        const cat = classifyApiError(err);
+        if (cat === 'rate_limit' || cat === 'quota_exhausted' || cat === 'permanent') {
+          throw new StructuredApiError(
+            `Gemini two-column extraction failed on Page ${pageNumber} (LEFT=${this.summarizeGeminiError(err)})`,
+            { status: extractStatusCode(err), category: cat, provider: 'gemini', cause: err }
+          );
+        }
+        console.log(`[GeminiVerification] Page ${pageNumber} LEFT column transient notice (${this.summarizeGeminiError(err)}).`);
       }
 
       const leftMaxQ = leftRaw.reduce((max, item) => Math.max(max, Number(item?.questionNumber) || 0), prevPageLastQuestionNumber || 0);
-      let rightRaw = await extractCol(rightBuf, 'RIGHT', leftMaxQ > 0 ? leftMaxQ : undefined).catch((err) => {
-        console.warn(`[GeminiVerification] Page ${pageNumber} RIGHT column error (${this.summarizeGeminiError(err)}); retrying compact.`);
-        return [] as GeminiVerificationResult[];
-      });
-      if (rightRaw.length === 0 && leftRaw.length > 0) {
-        await new Promise(r => setTimeout(r, 400));
-        rightRaw = await extractCol(rightBuf, 'RIGHT', leftMaxQ > 0 ? leftMaxQ : undefined, true).catch((err) => {
-          console.warn(`[GeminiVerification] Page ${pageNumber} RIGHT retry failed: ${this.summarizeGeminiError(err)}`);
-          return [] as GeminiVerificationResult[];
+      try {
+        const res = await extractCol(rightBuf, 'RIGHT', leftMaxQ > 0 ? leftMaxQ : undefined, false);
+        rightRaw = res.items;
+      } catch (err) {
+        rightErr = err;
+        const cat = classifyApiError(err);
+        if ((cat === 'rate_limit' || cat === 'quota_exhausted') && leftRaw.length === 0) {
+          throw new StructuredApiError(
+            `Gemini two-column extraction failed on Page ${pageNumber} (RIGHT=${this.summarizeGeminiError(err)})`,
+            { status: extractStatusCode(err), category: cat, provider: 'gemini', cause: err }
+          );
+        }
+        console.log(`[GeminiVerification] Page ${pageNumber} RIGHT column notice (${this.summarizeGeminiError(err)}).`);
+      }
+
+      // Never silently swallow total two-column API failures and pretend the page had 0 questions!
+      if (leftRaw.length === 0 && rightRaw.length === 0 && (leftErr || rightErr)) {
+        const primaryErr = leftErr || rightErr;
+        const detail = [
+          leftErr ? `LEFT=${this.summarizeGeminiError(leftErr)}` : null,
+          rightErr ? `RIGHT=${this.summarizeGeminiError(rightErr)}` : null
+        ].filter(Boolean).join(', ');
+        throw new StructuredApiError(`Gemini two-column extraction failed on Page ${pageNumber} (${detail})`, {
+          status: extractStatusCode(primaryErr),
+          category: classifyApiError(primaryErr),
+          provider: 'gemini',
+          cause: primaryErr
         });
+      }
+
+      // If ONE column failed due to rate limit/quota/timeout while the other succeeded, also throw so partial page is retried cleanly
+      if ((leftErr && leftRaw.length === 0) || (rightErr && rightRaw.length === 0)) {
+        const colErr = leftErr || rightErr;
+        const cat = classifyApiError(colErr);
+        if (cat === 'rate_limit' || cat === 'quota_exhausted') {
+          throw new StructuredApiError(
+            `Gemini two-column partial rate-limit on Page ${pageNumber} (${leftErr ? 'LEFT' : 'RIGHT'}=${this.summarizeGeminiError(colErr)})`,
+            { status: extractStatusCode(colErr) || 429, category: cat, provider: 'gemini', cause: colErr }
+          );
+        }
       }
 
       const leftProjected = leftRaw.map(r => projectResult(r, 0, leftColEndRatio));
@@ -716,9 +1039,11 @@ ${(ocrMarkdown || '').slice(0, 3500)}
           byQ.set(item.questionNumber, item);
         } else {
           // Stitch stem, options, matchTable, structuredTable, diagramBoundingBox across Column 1 -> Column 2 split
+          const eNorm = normalizeVerifiedOptionsList(existing.verifiedOptions);
+          const nNorm = normalizeVerifiedOptionsList(item.verifiedOptions);
           const mergedOptions = (['A', 'B', 'C', 'D'] as const).map(lbl => {
-            const eOpt = existing.verifiedOptions?.find(o => o.label === lbl);
-            const nOpt = item.verifiedOptions?.find(o => o.label === lbl);
+            const eOpt = eNorm.find(o => o.label === lbl);
+            const nOpt = nNorm.find(o => o.label === lbl);
             const eVal = (eOpt?.value || '').trim();
             const nVal = (nOpt?.value || '').trim();
             return { label: lbl, value: nVal.length > eVal.length ? nVal : eVal };
@@ -750,8 +1075,8 @@ ${(ocrMarkdown || '').slice(0, 3500)}
 
       return Array.from(byQ.values()).sort((a, b) => a.questionNumber - b.questionNumber);
     } catch (err: any) {
-      console.warn(`[GeminiVerification] Two-column split pass fallback on Page ${pageNumber}:`, this.summarizeGeminiError(err));
-      return [];
+      console.error(`[GeminiVerification] Two-column split pass error on Page ${pageNumber}:`, this.summarizeGeminiError(err));
+      throw err;
     }
   }
 
@@ -801,10 +1126,11 @@ RULES:
 
     try {
       const primaryPayload = await this.preparePageImagePayload(pageImageBuffer, 1450, 86);
-      const parsed = await this.runWithDeadlineAndFallback({
+      const { value: parsed } = await this.runWithDeadlineAndFallback({
         ai,
         preferredModel: modelName,
-        timeoutMs: 18000,
+        timeoutMs: 22000,
+        label: `Page ${pageNumber} answer-key scan`,
         executeAttempt: async (currentModel, attemptIdx, abortSignal) => {
           const payload =
             attemptIdx === 0
@@ -835,7 +1161,8 @@ RULES:
                       properties: {
                         questionNumber: { type: Type.INTEGER },
                         rawAnswer: { type: Type.STRING },
-                        answer: { type: Type.STRING, description: 'A, B, C, or D' }
+                        answer: { type: Type.STRING, description: 'A, B, C, or D' },
+                        explanation: { type: Type.STRING }
                       },
                       required: ['questionNumber', 'answer']
                     }
@@ -858,7 +1185,8 @@ RULES:
           validEntries.push({
             questionNumber: e.questionNumber,
             answer: norm,
-            rawAnswer: e.rawAnswer || e.answer
+            rawAnswer: e.rawAnswer || e.answer,
+            explanation: e.explanation ? String(e.explanation).trim() : undefined
           });
         }
       }
@@ -906,10 +1234,11 @@ Verify strictly:
 2. Does it show a genuine scientific figure — including physics apparatus/diagrams, Vernier calipers, micrometer screw gauges, ruler scales with tick marks/numbers, circuits, ray diagrams, X-Y graphs/plots/curves, 2D chemical bond-line/ring structures, or data tables? If YES, set "isGenuineScientificFigure": true and "isTextOnlyOrQuestionText": false!
 3. Does the figure contextually match the question stem above (not an unrelated adjacent question's diagram)?`;
 
-      const response = await this.runWithDeadlineAndFallback({
+      const { value: response } = await this.runWithDeadlineAndFallback({
         ai,
         preferredModel: modelName || 'gemini-3.1-flash-lite',
-        timeoutMs: 14000,
+        timeoutMs: 16000,
+        label: 'Figure crop validation',
         executeAttempt: async (currentModel, _idx, abortSignal) =>
           ai.models.generateContent({
             model: currentModel,
@@ -989,10 +1318,13 @@ ${params.missingOptions ? '- MISSING OR VISUAL OPTIONS: Inspect below Question '
 ${params.truncatedText ? '- INCOMPLETE QUESTION STEM: Re-read the full stem of Question ' + params.questionNumber + ' from the image from start to finish.' : ''}
 
 RULES:
+- ALWAYS map printed option markers (1)/(a)/(A) -> "A", (2)/(b)/(B) -> "B", (3)/(c)/(C) -> "C", (4)/(d)/(D) -> "D" in "recoveredOptions"!
+- Extract all text, authentic choices (including "Nothing can be said due to insufficient data", "Cannot be determined", "None of these"), numbers, units, and mathematical fractions cleanly (e.g. "4 N", "25 N", "FL/x", "F(L - x)/L", "g/3", "30°") into "recoveredOptions".
+- NEVER put MCQ choices (1)-(4) or (A)-(D) into "recoveredStructuredTableData" and NEVER substitute a table for a velocity-time graph or diagram!
+- NEVER populate "recoveredOptionBoundingBoxes" for printed text, numbers, words, units, or mathematical fractions! HOWEVER, if the 4 options themselves are drawn 2D diagrams, free-body force sketches, graphs, circuits, or cyclic chemical structures (with no text choices), YOU MUST return 4 tight non-overlapping "recoveredOptionBoundingBoxes" (A, B, C, D)!
 - NEVER include Question ${params.questionNumber - 1} or Question ${params.questionNumber + 1} text or options in any bounding box!
 - NEVER include Hindi column content (x > 500) if pageLayout is two_column_bilingual!
-- EXCLUDE "(1)", "(2)", "(3)", "(4)" markers from option bounding boxes when possible and ensure zero overlap between A, B, C, D boxes!
-- If all 4 options can be cleanly expressed as text (e.g. linear chemical formulas like CH3-C(Cl)=CH2), return them in "recoveredOptions" and leave "recoveredOptionBoundingBoxes" empty.`;
+- EXCLUDE "(1)", "(2)", "(3)", "(4)" markers from option bounding boxes when possible and ensure zero overlap between A, B, C, D boxes!`;
 
     let primaryStd: { data: string; mimeType: string } | null = null;
     let primaryCompact: { data: string; mimeType: string } | null = null;
@@ -1000,10 +1332,11 @@ RULES:
     let nextCompact: { data: string; mimeType: string } | null = null;
 
     try {
-      const response = await this.runWithDeadlineAndFallback({
+      const { value: response } = await this.runWithDeadlineAndFallback({
         ai,
         preferredModel: params.modelName,
-        timeoutMs: 18000,
+        timeoutMs: 35000,
+        label: `Q${params.questionNumber} targeted recovery`,
         executeAttempt: async (currentModel, attemptIdx, abortSignal) => {
           const useCompact = attemptIdx > 0;
           const pImg = useCompact
@@ -1102,6 +1435,12 @@ RULES:
       });
 
       const parsed: TargetedRecoveryResult = JSON.parse((response.text ?? '{}').trim());
+      if (parsed.recoveredOptions) {
+        parsed.recoveredOptions = normalizeVerifiedOptionsList(parsed.recoveredOptions);
+      }
+      if (parsed.recoveredOptionBoundingBoxes) {
+        parsed.recoveredOptionBoundingBoxes = normalizeOptionBoundingBoxesMap(parsed.recoveredOptionBoundingBoxes);
+      }
       return parsed;
     } catch (err: any) {
       console.log(`[GeminiVerification] Targeted recovery deferred for Q${params.questionNumber} (${this.summarizeGeminiError(err)}); keeping existing extraction.`);
@@ -1197,10 +1536,11 @@ Instructions: ${fieldInstructionMap[params.targetField] || 'Extract the exact te
 NEVER invent or guess text that is not visible in the image.`;
 
     try {
-      const response = await this.runWithDeadlineAndFallback({
+      const { value: response } = await this.runWithDeadlineAndFallback({
         ai,
         preferredModel: params.modelName,
         timeoutMs: 32000,
+        label: `Region OCR (${params.targetField})`,
         executeAttempt: async (currentModel, _idx, abortSignal) =>
           ai.models.generateContent({
             model: currentModel,
@@ -1276,13 +1616,12 @@ NEVER invent or guess text that is not visible in the image.`;
   }
 
   private isCoverPage(text: string): boolean {
-    if (!text) return false;
+    if (!text || text.trim().length < 260) return false;
     const lower = text.toLowerCase();
     const hasCoverKeywords = (
       lower.includes('instructions to candidate') || 
       lower.includes('instructions for candidate') ||
-      lower.includes('test booklet code') ||
-      (lower.includes('duration:') && lower.includes('max marks:')) ||
+      (lower.includes('general instructions') && lower.includes('test booklet')) ||
       lower.includes('read the following instructions carefully')
     );
     // Check if it has actual option choices like "(1) 400J" or "(A)"
@@ -1318,18 +1657,21 @@ NEVER invent or guess text that is not visible in the image.`;
   /**
    * Test Gemini connectivity
    */
-  public async testConnection(modelName: string = this.defaultModel): Promise<{ success: boolean; model?: string; error?: string }> {
+  public async testConnection(modelName: string = this.defaultModel): Promise<{ success: boolean; model?: string; fallbackUsed?: boolean; fallbackReason?: string; error?: string }> {
     try {
       const ai = this.ensureClient();
       if (!ai) {
         return { success: false, error: 'GEMINI_API_KEY is not configured in server environment.' };
       }
 
-      const resolvedModel = this.resolveModelCandidates(modelName)[0];
-      await this.runWithDeadlineAndFallback({
+      const resolvedModel = this.resolveModelCandidates(modelName, false)[0];
+      const { meta } = await this.runWithDeadlineAndFallback({
         ai,
         preferredModel: resolvedModel,
         timeoutMs: 15000,
+        allowModelFallback: true,
+        maxRetries: 1,
+        label: 'Gemini connection test',
         executeAttempt: async (currentModel, _idx, abortSignal) =>
           ai.models.generateContent({
             model: currentModel,
@@ -1341,7 +1683,12 @@ NEVER invent or guess text that is not visible in the image.`;
           })
       });
 
-      return { success: true, model: resolvedModel };
+      return {
+        success: true,
+        model: meta.modelUsed,
+        fallbackUsed: meta.fallbackUsed,
+        fallbackReason: meta.fallbackReason
+      };
     } catch (e: any) {
       return { success: false, error: this.summarizeGeminiError(e) };
     }

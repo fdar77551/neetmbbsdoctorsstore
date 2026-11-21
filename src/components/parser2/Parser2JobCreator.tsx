@@ -23,10 +23,12 @@ export const Parser2JobCreator: React.FC<Parser2JobCreatorProps> = ({
   const [testName, setTestName] = useState('');
   const [subject, setSubject] = useState<Parser2Subject>('Combined');
   const [chapter, setChapter] = useState('');
-  const [questionRange, setQuestionRange] = useState('1-180');
-  const [ocrEngine, setOcrEngine] = useState<Parser2OcrEngine>('mistral');
+  const [questionRange, setQuestionRange] = useState('');
+  const [ocrEngine, setOcrEngine] = useState<Parser2OcrEngine>('gemini');
   const [geminiModel, setGeminiModel] = useState('gemini-4-hydrogen');
   const [enableGeminiVerification, setEnableGeminiVerification] = useState(true);
+  const [autoScanAnswerKey, setAutoScanAnswerKey] = useState(true);
+  const [allowProviderFallback, setAllowProviderFallback] = useState(true);
 
   const [questionPdfFile, setQuestionPdfFile] = useState<File | null>(null);
   const [solutionPdfFile, setSolutionPdfFile] = useState<File | null>(null);
@@ -61,6 +63,8 @@ export const Parser2JobCreator: React.FC<Parser2JobCreatorProps> = ({
       formData.append('ocrEngine', ocrEngine);
       formData.append('geminiModel', geminiModel);
       formData.append('enableGeminiVerification', String(enableGeminiVerification));
+      formData.append('autoScanAnswerKey', String(autoScanAnswerKey));
+      formData.append('allowProviderFallback', String(allowProviderFallback));
       formData.append('questionPdf', questionPdfFile);
 
       if (solutionPdfFile) {
@@ -177,13 +181,15 @@ export const Parser2JobCreator: React.FC<Parser2JobCreatorProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">Question Range</label>
+              <label className="text-xs font-bold text-slate-700 block mb-1">
+                Expected Question Range <span className="text-slate-400 font-normal">(Optional — Auto-detect)</span>
+              </label>
               <input
                 type="text"
                 value={questionRange}
                 onChange={e => setQuestionRange(e.target.value)}
                 className="w-full bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-hidden placeholder-slate-400"
-                placeholder="e.g. 1-180 or 1-45"
+                placeholder="Auto-detect from PDF (or e.g. 1-45, 1-180)"
               />
             </div>
           </div>
@@ -280,7 +286,7 @@ export const Parser2JobCreator: React.FC<Parser2JobCreatorProps> = ({
 
             <div>
               <label className="text-xs font-bold text-slate-700 block mb-1">
-                Answer Key Image / Text File (Optional)
+                Answer Key PDF / Image / TXT (Optional)
               </label>
               <div
                 onClick={() => akFileInputRef.current?.click()}
@@ -293,7 +299,7 @@ export const Parser2JobCreator: React.FC<Parser2JobCreatorProps> = ({
                 <input
                   ref={akFileInputRef}
                   type="file"
-                  accept="image/*,.txt"
+                  accept=".pdf,application/pdf,image/*,.txt"
                   className="hidden"
                   onChange={e => {
                     if (e.target.files && e.target.files[0]) {
@@ -318,7 +324,7 @@ export const Parser2JobCreator: React.FC<Parser2JobCreatorProps> = ({
                 ) : (
                   <div className="text-xs font-semibold text-slate-500 flex items-center gap-1.5">
                     <Key className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span>Upload Answer Key Screenshot / TXT</span>
+                    <span>Upload Answer Key PDF / Image / TXT</span>
                   </div>
                 )}
               </div>
@@ -347,20 +353,20 @@ export const Parser2JobCreator: React.FC<Parser2JobCreatorProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">OCR Engine</label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">Primary Extraction Provider</label>
                 <select
                   value={ocrEngine}
                   onChange={e => setOcrEngine(e.target.value as Parser2OcrEngine)}
                   className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-hidden"
                 >
-                  <option value="mistral">Mistral OCR API (Recommended)</option>
-                  <option value="gemini">Gemini Multimodal Direct</option>
-                  <option value="hybrid">Hybrid (Mistral OCR + Gemini Dual-Pass)</option>
+                  <option value="gemini">Gemini Vision Direct (Recommended)</option>
+                  <option value="hybrid">Hybrid (Mistral OCR + Gemini Verification)</option>
+                  <option value="mistral">Mistral OCR Only</option>
                 </select>
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Gemini Verification Model</label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">Gemini Model</label>
                 <select
                   value={geminiModel}
                   onChange={e => setGeminiModel(e.target.value)}
@@ -373,15 +379,37 @@ export const Parser2JobCreator: React.FC<Parser2JobCreatorProps> = ({
               </div>
             </div>
 
-            <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer pt-1">
-              <input
-                type="checkbox"
-                checked={enableGeminiVerification}
-                onChange={e => setEnableGeminiVerification(e.target.checked)}
-                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
-              />
-              <span>Enable Gemini multimodal verification to inspect formulas, superscripts, and chemistry structures</span>
-            </label>
+            <div className="space-y-1.5 pt-1">
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enableGeminiVerification}
+                  onChange={e => setEnableGeminiVerification(e.target.checked)}
+                  className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                />
+                <span>Enable Gemini multimodal verification for formulas, symbols &amp; structures</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoScanAnswerKey}
+                  onChange={e => setAutoScanAnswerKey(e.target.checked)}
+                  className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                />
+                <span>Auto-scan entire PDF for inline or end-of-document Answer Keys</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={allowProviderFallback}
+                  onChange={e => setAllowProviderFallback(e.target.checked)}
+                  className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                />
+                <span>Allow explicit logged fallback on provider/model rate limits (never silent)</span>
+              </label>
+            </div>
           </div>
 
           {/* Upload Progress Bar */}

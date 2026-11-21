@@ -35,12 +35,136 @@ export interface OptionBoxesValidationResult {
 export class FigureExtractionService {
   private pageRenderCacheDir = path.resolve(process.cwd(), '.temp_render', 'cache');
 
+  private gsFontmapDir = path.resolve(process.cwd(), '.temp_render', 'gs_fonts');
+
   private ensureDir(dir: string) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   }
 
   /**
-   * Render a specific PDF page to high-DPI PNG image using Ghostscript (with disk cache)
+   * Build a Ghostscript Fontmap mapping Base-14 & Windows/Office PDF fonts
+   * (TimesNewRomanPSMT, ArialMT, NimbusRoman-Regular, etc.) to installed TrueType fonts.
+   * Prevents Ghostscript from aborting PDF page content streams with blank pages when
+   * URW Nimbus fonts are absent in Linux containers.
+   */
+  private ensureGhostscriptFontmap(): string | null {
+    try {
+      this.ensureDir(this.gsFontmapDir);
+      const fontmapPath = path.join(this.gsFontmapDir, 'Fontmap');
+
+      const pickFirstExisting = (candidates: string[]): string | null => {
+        for (const p of candidates) {
+          if (fs.existsSync(p)) return p;
+        }
+        return null;
+      };
+
+      const serifReg = pickFirstExisting([
+        '/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf'
+      ]);
+      const serifBold = pickFirstExisting([
+        '/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf',
+        serifReg || ''
+      ]);
+      const serifItalic = pickFirstExisting([
+        '/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf',
+        serifReg || ''
+      ]);
+      const serifBoldItalic = pickFirstExisting([
+        '/usr/share/fonts/truetype/liberation/LiberationSerif-BoldItalic.ttf',
+        serifBold || ''
+      ]);
+
+      const sansReg = pickFirstExisting([
+        '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+      ]);
+      const sansBold = pickFirstExisting([
+        '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+        sansReg || ''
+      ]);
+      const sansItalic = pickFirstExisting([
+        '/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf',
+        sansReg || ''
+      ]);
+      const sansBoldItalic = pickFirstExisting([
+        '/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf',
+        sansBold || ''
+      ]);
+
+      const monoReg = pickFirstExisting([
+        '/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf'
+      ]);
+      const monoBold = pickFirstExisting([
+        '/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf',
+        monoReg || ''
+      ]);
+      const symbolFont = pickFirstExisting([
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        sansReg || ''
+      ]);
+
+      const lines: string[] = [];
+      const addMap = (names: string[], fontPath: string | null) => {
+        if (!fontPath) return;
+        for (const name of names) {
+          lines.push(`/${name} (${fontPath}) ;`);
+        }
+      };
+
+      addMap([
+        'Times-Roman', 'TimesNewRoman', 'TimesNewRomanPSMT', 'TimesNewRomanMT',
+        'NimbusRoman-Regular', 'NimbusRomNo9L-Regu', 'Cambria', 'Georgia', 'Century'
+      ], serifReg);
+      addMap([
+        'Times-Bold', 'TimesNewRoman-Bold', 'TimesNewRomanPS-BoldMT',
+        'NimbusRoman-Bold', 'NimbusRomNo9L-Medi', 'Cambria-Bold', 'Georgia-Bold'
+      ], serifBold);
+      addMap([
+        'Times-Italic', 'TimesNewRoman-Italic', 'TimesNewRomanPS-ItalicMT',
+        'NimbusRoman-Italic', 'NimbusRomNo9L-ReguItal', 'Cambria-Italic'
+      ], serifItalic);
+      addMap([
+        'Times-BoldItalic', 'TimesNewRoman-BoldItalic', 'TimesNewRomanPS-BoldItalicMT',
+        'NimbusRoman-BoldItalic', 'NimbusRomNo9L-MediItal'
+      ], serifBoldItalic);
+
+      addMap([
+        'Helvetica', 'Arial', 'ArialMT', 'Calibri', 'Verdana', 'Tahoma',
+        'NimbusSans-Regular', 'NimbusSanL-Regu'
+      ], sansReg);
+      addMap([
+        'Helvetica-Bold', 'Arial-Bold', 'Arial-BoldMT', 'Calibri-Bold', 'Verdana-Bold',
+        'NimbusSans-Bold', 'NimbusSanL-Bold'
+      ], sansBold);
+      addMap([
+        'Helvetica-Oblique', 'Arial-Italic', 'Arial-ItalicMT', 'Calibri-Italic',
+        'NimbusSans-Italic', 'NimbusSanL-ReguItal'
+      ], sansItalic);
+      addMap([
+        'Helvetica-BoldOblique', 'Arial-BoldItalic', 'Arial-BoldItalicMT', 'Calibri-BoldItalic',
+        'NimbusSans-BoldItalic', 'NimbusSanL-BoldItal'
+      ], sansBoldItalic);
+
+      addMap(['Courier', 'CourierNew', 'CourierNewPSMT', 'NimbusMonoPS-Regular', 'NimbusMonL-Regu'], monoReg);
+      addMap(['Courier-Bold', 'CourierNew-Bold', 'CourierNewPS-BoldMT', 'NimbusMonoPS-Bold'], monoBold);
+      addMap(['Symbol', 'SymbolMT', 'StandardSymbolsPS', 'StandardSymL', 'ZapfDingbats'], symbolFont);
+
+      if (lines.length === 0) return null;
+      fs.writeFileSync(fontmapPath, lines.join('\n') + '\n', 'utf8');
+      return this.gsFontmapDir;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Render a specific PDF page to high-DPI PNG image using Ghostscript (with disk cache & Fontmap)
    */
   public async renderPdfPageToPng(
     pdfPathOrBuffer: string | Buffer,
@@ -59,7 +183,8 @@ export class FigureExtractionService {
       pdfHash = crypto.createHash('md5').update(pdfPathOrBuffer.subarray(0, Math.min(65536, pdfPathOrBuffer.length))).update(String(pdfPathOrBuffer.length)).digest('hex').slice(0, 12);
     }
 
-    const cachedPngPath = pdfHash ? path.join(this.pageRenderCacheDir, `${pdfHash}_p${pageNumber}_d${dpi}.png`) : '';
+    // Cache version v2_fonts ensures stale blank-font renders from older GS runs are never reused
+    const cachedPngPath = pdfHash ? path.join(this.pageRenderCacheDir, `${pdfHash}_p${pageNumber}_d${dpi}_v2fonts.png`) : '';
     if (cachedPngPath && fs.existsSync(cachedPngPath)) {
       try {
         const cached = fs.readFileSync(cachedPngPath);
@@ -79,11 +204,17 @@ export class FigureExtractionService {
     }
 
     const outputPngPath = path.join(tempDir, `page_${pageNumber}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}.png`);
+    const fontmapDir = this.ensureGhostscriptFontmap();
+    const fontIncludeFlag = fontmapDir ? `-I"${fontmapDir}" ` : '';
 
     try {
-      // Use Ghostscript for crisp anti-aliased text, vector lines, and mathematical symbols
-      const gsCmd = `gs -dSAFER -dBATCH -dNOPAUSE -sDEVICE=png16m -r${dpi} -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dFirstPage=${pageNumber} -dLastPage=${pageNumber} -sOutputFile="${outputPngPath}" "${pdfFilePath}"`;
-      await execAsync(gsCmd);
+      // Use Ghostscript with explicit Liberation/DejaVu Fontmap for crisp anti-aliased text, vector lines, and math
+      const gsCmd = `gs -dSAFER -dBATCH -dNOPAUSE ${fontIncludeFlag}-sDEVICE=png16m -r${dpi} -dTextAlphaBits=4 -dGraphicsAlphaBits=4 -dFirstPage=${pageNumber} -dLastPage=${pageNumber} -sOutputFile="${outputPngPath}" "${pdfFilePath}"`;
+      const { stdout, stderr } = await execAsync(gsCmd, { maxBuffer: 10 * 1024 * 1024 });
+      const combinedLogs = `${stdout || ''}\n${stderr || ''}`;
+      if (/Error reading a content stream|Unable to substitute for font/i.test(combinedLogs)) {
+        console.warn(`[FigureExtraction] Ghostscript font/content-stream warning on page ${pageNumber}: ${combinedLogs.slice(0, 400)}`);
+      }
 
       if (fs.existsSync(outputPngPath)) {
         const imageBuffer = fs.readFileSync(outputPngPath);

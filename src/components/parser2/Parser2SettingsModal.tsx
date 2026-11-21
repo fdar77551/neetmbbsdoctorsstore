@@ -12,11 +12,21 @@ export const Parser2SettingsModal: React.FC<Parser2SettingsModalProps> = ({
   onSaved
 }) => {
   const [settings, setSettings] = useState<Parser2Settings>({
+    defaultProvider: 'gemini',
     mistralOcrEnabled: true,
+    mistralModel: 'mistral-ocr-latest',
     geminiVerificationEnabled: true,
     geminiModel: 'gemini-4-hydrogen',
+    allowProviderFallback: true,
+    fallbackProvider: 'gemini',
+    autoScanAnswerKey: true,
     ocrBatchSize: 4,
-    retryCount: 3,
+    retryCount: 4,
+    maxApiRetries: 5,
+    geminiMaxConcurrency: 1,
+    geminiCooldownMs: 1500,
+    mistralMaxConcurrency: 1,
+    mistralCooldownMs: 1000,
     pageLimit: 100,
     maxFileSizeMb: 50,
     figureDpi: 180,
@@ -196,16 +206,17 @@ export const Parser2SettingsModal: React.FC<Parser2SettingsModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-bold text-slate-700 block mb-1">
-                OCR Batch Size (Pages)
+                Default Extraction Provider
               </label>
-              <input
-                type="number"
-                min={1}
-                max={10}
-                value={settings.ocrBatchSize}
-                onChange={(e) => setSettings({ ...settings, ocrBatchSize: parseInt(e.target.value, 10) || 4 })}
+              <select
+                value={settings.defaultProvider || 'gemini'}
+                onChange={(e) => setSettings({ ...settings, defaultProvider: e.target.value as any })}
                 className="w-full bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-hidden"
-              />
+              >
+                <option value="gemini">Gemini Vision Direct (Recommended)</option>
+                <option value="hybrid">Hybrid (Mistral OCR + Gemini)</option>
+                <option value="mistral">Mistral OCR Only</option>
+              </select>
             </div>
 
             <div>
@@ -222,6 +233,93 @@ export const Parser2SettingsModal: React.FC<Parser2SettingsModalProps> = ({
                 <option value={200}>200 DPI (High Clarity)</option>
                 <option value={300}>300 DPI (Ultra Sharp)</option>
               </select>
+            </div>
+          </div>
+
+          {/* API Rate-Limit & Request Queue Management */}
+          <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-3">
+            <span className="text-xs font-black text-slate-900 uppercase tracking-wider block">
+              API Rate-Limit Queue &amp; Recovery Policy
+            </span>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Max API Retries (429/5xx)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={settings.maxApiRetries ?? settings.retryCount ?? 5}
+                  onChange={(e) => {
+                    const v = Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 5));
+                    setSettings({ ...settings, maxApiRetries: v, retryCount: v });
+                  }}
+                  className="w-full bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Gemini Concurrency
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={4}
+                  value={settings.geminiMaxConcurrency ?? 1}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      geminiMaxConcurrency: Math.max(1, Math.min(4, parseInt(e.target.value, 10) || 1))
+                    })
+                  }
+                  className="w-full bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Gemini Cooldown (ms)
+                </label>
+                <input
+                  type="number"
+                  min={250}
+                  max={15000}
+                  step={250}
+                  value={settings.geminiCooldownMs ?? 1500}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      geminiCooldownMs: Math.max(250, Math.min(15000, parseInt(e.target.value, 10) || 1500))
+                    })
+                  }
+                  className="w-full bg-white text-slate-900 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-hidden"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5 pt-1">
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.allowProviderFallback !== false}
+                  onChange={(e) => setSettings({ ...settings, allowProviderFallback: e.target.checked })}
+                  className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                />
+                <span>Allow explicit logged fallback model/provider on rate limits or unavailability</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.autoScanAnswerKey !== false}
+                  onChange={(e) => setSettings({ ...settings, autoScanAnswerKey: e.target.checked })}
+                  className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                />
+                <span>Scan entire PDF automatically for inline or end-of-PDF Answer Keys</span>
+              </label>
             </div>
           </div>
 

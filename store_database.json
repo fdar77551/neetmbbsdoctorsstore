@@ -32774,9 +32774,1490 @@
         "hasFigure": false,
         "testId": "cbt-1790870794848"
       }
+    ],
+    "cbt-p2-1795153081113": [
+      {
+        "id": "q-cbt-p2-1795153081113-1",
+        "testId": "cbt-p2-1795153081113",
+        "questionNumber": 1,
+        "subject": "Physics",
+        "chapter": "Physics Section",
+        "questionText": "Identify the velocity-time graph and match the columns.\nSecond paragraph after inline diagram.",
+        "options": [
+          {
+            "label": "A",
+            "value": "Graph A",
+            "type": "text"
+          },
+          {
+            "label": "B",
+            "value": "Graph B",
+            "type": "text_and_image",
+            "imageUrl": "/storage/parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png"
+          },
+          {
+            "label": "C",
+            "value": "Graph C",
+            "type": "text"
+          },
+          {
+            "label": "D",
+            "value": "Graph D",
+            "type": "text"
+          }
+        ],
+        "correctAnswer": "B",
+        "answerStatus": "matched",
+        "explanation": "Acceleration is slope of v-t graph.",
+        "explanationImageUrl": "/storage/parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png",
+        "figures": [],
+        "optionFigures": {
+          "B": "/storage/parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png"
+        },
+        "imageAttachments": [
+          {
+            "id": "att-1",
+            "placement": "between_paragraphs",
+            "imageUrl": "/storage/parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png",
+            "r2Key": "parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png",
+            "caption": "Inline figure",
+            "widthPercent": 80,
+            "alignment": "center",
+            "sourceType": "upload",
+            "order": 0
+          },
+          {
+            "id": "att-2",
+            "placement": "option_B",
+            "imageUrl": "/storage/parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png",
+            "r2Key": "parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png",
+            "caption": "Option B graph",
+            "widthPercent": 75,
+            "alignment": "center",
+            "sourceType": "upload",
+            "order": 1
+          },
+          {
+            "id": "att-3",
+            "placement": "explanation",
+            "imageUrl": "/storage/parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png",
+            "r2Key": "parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png",
+            "caption": "Solution diagram",
+            "widthPercent": 85,
+            "alignment": "center",
+            "sourceType": "upload",
+            "order": 2
+          }
+        ],
+        "matchTable": {
+          "column1Header": "List-I",
+          "column2Header": "List-II",
+          "showBorders": true,
+          "rows": [
+            {
+              "leftKey": "(A)",
+              "leftText": "Uniform motion",
+              "leftImageUrl": "/storage/parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png",
+              "rightKey": "(I)",
+              "rightText": "Zero slope",
+              "rightImageUrl": "/storage/parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png"
+            },
+            {
+              "leftKey": "(B)",
+              "leftText": "Uniform accel",
+              "rightKey": "(II)",
+              "rightText": "Constant slope"
+            }
+          ]
+        },
+        "sourcePageNumber": 1,
+        "sourcePageEnd": 1,
+        "sourcePages": [
+          1
+        ],
+        "sourcePageRange": "Import (PASTE)",
+        "pdfPageNumber": 1,
+        "pdfPageRange": "Import (PASTE)",
+        "hasFigure": true,
+        "languages": {
+          "en": {
+            "questionText": "Identify the velocity-time graph and match the columns.\nSecond paragraph after inline diagram.",
+            "options": [
+              {
+                "label": "A",
+                "value": "Graph A",
+                "type": "text"
+              },
+              {
+                "label": "B",
+                "value": "Graph B",
+                "type": "text_and_image",
+                "imageUrl": "/storage/parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png"
+              },
+              {
+                "label": "C",
+                "value": "Graph C",
+                "type": "text"
+              },
+              {
+                "label": "D",
+                "value": "Graph D",
+                "type": "text"
+              }
+            ],
+            "matchTable": {
+              "column1Header": "List-I",
+              "column2Header": "List-II",
+              "showBorders": true,
+              "rows": [
+                {
+                  "leftKey": "(A)",
+                  "leftText": "Uniform motion",
+                  "leftImageUrl": "/storage/parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png",
+                  "rightKey": "(I)",
+                  "rightText": "Zero slope",
+                  "rightImageUrl": "/storage/parser2/jobs/job-1795153067940-mvsk8/figures/media_option_B_1795153074710_dvbh.png"
+                },
+                {
+                  "leftKey": "(B)",
+                  "leftText": "Uniform accel",
+                  "rightKey": "(II)",
+                  "rightText": "Constant slope"
+                }
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "cbt-p2-1795153093331": [
+      {
+        "id": "q-cbt-p2-1795153093331-1",
+        "testId": "cbt-p2-1795153093331",
+        "questionNumber": 1,
+        "subject": "Physics",
+        "chapter": "Physics Section",
+        "questionText": "First Q1",
+        "options": [
+          {
+            "label": "A",
+            "value": "1",
+            "type": "text"
+          },
+          {
+            "label": "B",
+            "value": "2",
+            "type": "text"
+          },
+          {
+            "label": "C",
+            "value": "3",
+            "type": "text"
+          },
+          {
+            "label": "D",
+            "value": "4",
+            "type": "text"
+          }
+        ],
+        "correctAnswer": "A",
+        "answerStatus": "matched",
+        "explanation": "Step-by-step solution verified by NCERTify AI Parser.",
+        "figures": [],
+        "sourcePageNumber": 1,
+        "sourcePageEnd": 1,
+        "sourcePages": [
+          1
+        ],
+        "sourcePageRange": "Import (PASTE)",
+        "pdfPageNumber": 1,
+        "pdfPageRange": "Import (PASTE)",
+        "hasFigure": false,
+        "languages": {
+          "en": {
+            "questionText": "First Q1",
+            "options": [
+              {
+                "label": "A",
+                "value": "1",
+                "type": "text"
+              },
+              {
+                "label": "B",
+                "value": "2",
+                "type": "text"
+              },
+              {
+                "label": "C",
+                "value": "3",
+                "type": "text"
+              },
+              {
+                "label": "D",
+                "value": "4",
+                "type": "text"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "cbt-p2-1795153227433": [
+      {
+        "id": "q-cbt-p2-1795153227433-1",
+        "testId": "cbt-p2-1795153227433",
+        "questionNumber": 1,
+        "subject": "Physics",
+        "chapter": "Physics Section",
+        "questionText": "Identify the velocity-time graph and match the columns.\nSecond paragraph after inline diagram.",
+        "options": [
+          {
+            "label": "A",
+            "value": "Graph A",
+            "type": "text"
+          },
+          {
+            "label": "B",
+            "value": "Graph B",
+            "type": "text_and_image",
+            "imageUrl": "/storage/parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png"
+          },
+          {
+            "label": "C",
+            "value": "Graph C",
+            "type": "text"
+          },
+          {
+            "label": "D",
+            "value": "Graph D",
+            "type": "text"
+          }
+        ],
+        "correctAnswer": "B",
+        "answerStatus": "matched",
+        "explanation": "Acceleration is slope of v-t graph.",
+        "explanationImageUrl": "/storage/parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png",
+        "figures": [],
+        "optionFigures": {
+          "B": "/storage/parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png"
+        },
+        "imageAttachments": [
+          {
+            "id": "att-1",
+            "placement": "between_paragraphs",
+            "imageUrl": "/storage/parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png",
+            "r2Key": "parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png",
+            "caption": "Inline figure",
+            "widthPercent": 80,
+            "alignment": "center",
+            "sourceType": "upload",
+            "order": 0
+          },
+          {
+            "id": "att-2",
+            "placement": "option_B",
+            "imageUrl": "/storage/parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png",
+            "r2Key": "parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png",
+            "caption": "Option B graph",
+            "widthPercent": 75,
+            "alignment": "center",
+            "sourceType": "upload",
+            "order": 1
+          },
+          {
+            "id": "att-3",
+            "placement": "explanation",
+            "imageUrl": "/storage/parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png",
+            "r2Key": "parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png",
+            "caption": "Solution diagram",
+            "widthPercent": 85,
+            "alignment": "center",
+            "sourceType": "upload",
+            "order": 2
+          }
+        ],
+        "matchTable": {
+          "column1Header": "List-I",
+          "column2Header": "List-II",
+          "showBorders": true,
+          "rows": [
+            {
+              "leftKey": "(A)",
+              "leftText": "Uniform motion",
+              "leftImageUrl": "/storage/parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png",
+              "rightKey": "(I)",
+              "rightText": "Zero slope",
+              "rightImageUrl": "/storage/parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png"
+            },
+            {
+              "leftKey": "(B)",
+              "leftText": "Uniform accel",
+              "rightKey": "(II)",
+              "rightText": "Constant slope"
+            }
+          ]
+        },
+        "sourcePageNumber": 1,
+        "sourcePageEnd": 1,
+        "sourcePages": [
+          1
+        ],
+        "sourcePageRange": "Import (PASTE)",
+        "pdfPageNumber": 1,
+        "pdfPageRange": "Import (PASTE)",
+        "hasFigure": true,
+        "languages": {
+          "en": {
+            "questionText": "Identify the velocity-time graph and match the columns.\nSecond paragraph after inline diagram.",
+            "options": [
+              {
+                "label": "A",
+                "value": "Graph A",
+                "type": "text"
+              },
+              {
+                "label": "B",
+                "value": "Graph B",
+                "type": "text_and_image",
+                "imageUrl": "/storage/parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png"
+              },
+              {
+                "label": "C",
+                "value": "Graph C",
+                "type": "text"
+              },
+              {
+                "label": "D",
+                "value": "Graph D",
+                "type": "text"
+              }
+            ],
+            "matchTable": {
+              "column1Header": "List-I",
+              "column2Header": "List-II",
+              "showBorders": true,
+              "rows": [
+                {
+                  "leftKey": "(A)",
+                  "leftText": "Uniform motion",
+                  "leftImageUrl": "/storage/parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png",
+                  "rightKey": "(I)",
+                  "rightText": "Zero slope",
+                  "rightImageUrl": "/storage/parser2/jobs/job-1795153222303-3hwig/figures/media_option_B_1795153225384_l99z.png"
+                },
+                {
+                  "leftKey": "(B)",
+                  "leftText": "Uniform accel",
+                  "rightKey": "(II)",
+                  "rightText": "Constant slope"
+                }
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "cbt-p2-1795153232465": [
+      {
+        "id": "q-cbt-p2-1795153232465-1",
+        "testId": "cbt-p2-1795153232465",
+        "questionNumber": 1,
+        "subject": "Physics",
+        "chapter": "Physics Section",
+        "questionText": "First Q1",
+        "options": [
+          {
+            "label": "A",
+            "value": "1",
+            "type": "text"
+          },
+          {
+            "label": "B",
+            "value": "2",
+            "type": "text"
+          },
+          {
+            "label": "C",
+            "value": "3",
+            "type": "text"
+          },
+          {
+            "label": "D",
+            "value": "4",
+            "type": "text"
+          }
+        ],
+        "correctAnswer": "A",
+        "answerStatus": "matched",
+        "explanation": "Step-by-step solution verified by NCERTify AI Parser.",
+        "figures": [],
+        "sourcePageNumber": 1,
+        "sourcePageEnd": 1,
+        "sourcePages": [
+          1
+        ],
+        "sourcePageRange": "Import (PASTE)",
+        "pdfPageNumber": 1,
+        "pdfPageRange": "Import (PASTE)",
+        "hasFigure": false,
+        "languages": {
+          "en": {
+            "questionText": "First Q1",
+            "options": [
+              {
+                "label": "A",
+                "value": "1",
+                "type": "text"
+              },
+              {
+                "label": "B",
+                "value": "2",
+                "type": "text"
+              },
+              {
+                "label": "C",
+                "value": "3",
+                "type": "text"
+              },
+              {
+                "label": "D",
+                "value": "4",
+                "type": "text"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "cbt-p2-1795153336207": [
+      {
+        "id": "q-cbt-p2-1795153336207-1",
+        "testId": "cbt-p2-1795153336207",
+        "questionNumber": 1,
+        "subject": "Physics",
+        "chapter": "Physics Section",
+        "questionText": "Identify the velocity-time graph and match the columns.\nSecond paragraph after inline diagram.",
+        "options": [
+          {
+            "label": "A",
+            "value": "Graph A",
+            "type": "text"
+          },
+          {
+            "label": "B",
+            "value": "Graph B",
+            "type": "text_and_image",
+            "imageUrl": "/storage/parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png"
+          },
+          {
+            "label": "C",
+            "value": "Graph C",
+            "type": "text"
+          },
+          {
+            "label": "D",
+            "value": "Graph D",
+            "type": "text"
+          }
+        ],
+        "correctAnswer": "B",
+        "answerStatus": "matched",
+        "explanation": "Acceleration is slope of v-t graph.",
+        "explanationImageUrl": "/storage/parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png",
+        "figures": [],
+        "optionFigures": {
+          "B": "/storage/parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png"
+        },
+        "imageAttachments": [
+          {
+            "id": "att-1",
+            "placement": "between_paragraphs",
+            "imageUrl": "/storage/parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png",
+            "r2Key": "parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png",
+            "caption": "Inline figure",
+            "widthPercent": 80,
+            "alignment": "center",
+            "sourceType": "upload",
+            "order": 0
+          },
+          {
+            "id": "att-2",
+            "placement": "option_B",
+            "imageUrl": "/storage/parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png",
+            "r2Key": "parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png",
+            "caption": "Option B graph",
+            "widthPercent": 75,
+            "alignment": "center",
+            "sourceType": "upload",
+            "order": 1
+          },
+          {
+            "id": "att-3",
+            "placement": "explanation",
+            "imageUrl": "/storage/parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png",
+            "r2Key": "parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png",
+            "caption": "Solution diagram",
+            "widthPercent": 85,
+            "alignment": "center",
+            "sourceType": "upload",
+            "order": 2
+          }
+        ],
+        "matchTable": {
+          "column1Header": "List-I",
+          "column2Header": "List-II",
+          "showBorders": true,
+          "rows": [
+            {
+              "leftKey": "(A)",
+              "leftText": "Uniform motion",
+              "leftImageUrl": "/storage/parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png",
+              "rightKey": "(I)",
+              "rightText": "Zero slope",
+              "rightImageUrl": "/storage/parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png"
+            },
+            {
+              "leftKey": "(B)",
+              "leftText": "Uniform accel",
+              "rightKey": "(II)",
+              "rightText": "Constant slope"
+            }
+          ]
+        },
+        "sourcePageNumber": 1,
+        "sourcePageEnd": 1,
+        "sourcePages": [
+          1
+        ],
+        "sourcePageRange": "Import (PASTE)",
+        "pdfPageNumber": 1,
+        "pdfPageRange": "Import (PASTE)",
+        "hasFigure": true,
+        "languages": {
+          "en": {
+            "questionText": "Identify the velocity-time graph and match the columns.\nSecond paragraph after inline diagram.",
+            "options": [
+              {
+                "label": "A",
+                "value": "Graph A",
+                "type": "text"
+              },
+              {
+                "label": "B",
+                "value": "Graph B",
+                "type": "text_and_image",
+                "imageUrl": "/storage/parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png"
+              },
+              {
+                "label": "C",
+                "value": "Graph C",
+                "type": "text"
+              },
+              {
+                "label": "D",
+                "value": "Graph D",
+                "type": "text"
+              }
+            ],
+            "matchTable": {
+              "column1Header": "List-I",
+              "column2Header": "List-II",
+              "showBorders": true,
+              "rows": [
+                {
+                  "leftKey": "(A)",
+                  "leftText": "Uniform motion",
+                  "leftImageUrl": "/storage/parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png",
+                  "rightKey": "(I)",
+                  "rightText": "Zero slope",
+                  "rightImageUrl": "/storage/parser2/jobs/job-1795153331722-p2lj1/figures/media_option_B_1795153334472_0u7e.png"
+                },
+                {
+                  "leftKey": "(B)",
+                  "leftText": "Uniform accel",
+                  "rightKey": "(II)",
+                  "rightText": "Constant slope"
+                }
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "cbt-p2-1795153341659": [
+      {
+        "id": "q-cbt-p2-1795153341659-1",
+        "testId": "cbt-p2-1795153341659",
+        "questionNumber": 1,
+        "subject": "Physics",
+        "chapter": "Physics Section",
+        "questionText": "First Q1",
+        "options": [
+          {
+            "label": "A",
+            "value": "1",
+            "type": "text"
+          },
+          {
+            "label": "B",
+            "value": "2",
+            "type": "text"
+          },
+          {
+            "label": "C",
+            "value": "3",
+            "type": "text"
+          },
+          {
+            "label": "D",
+            "value": "4",
+            "type": "text"
+          }
+        ],
+        "correctAnswer": "A",
+        "answerStatus": "matched",
+        "explanation": "Step-by-step solution verified by NCERTify AI Parser.",
+        "figures": [],
+        "sourcePageNumber": 1,
+        "sourcePageEnd": 1,
+        "sourcePages": [
+          1
+        ],
+        "sourcePageRange": "Import (PASTE)",
+        "pdfPageNumber": 1,
+        "pdfPageRange": "Import (PASTE)",
+        "hasFigure": false,
+        "languages": {
+          "en": {
+            "questionText": "First Q1",
+            "options": [
+              {
+                "label": "A",
+                "value": "1",
+                "type": "text"
+              },
+              {
+                "label": "B",
+                "value": "2",
+                "type": "text"
+              },
+              {
+                "label": "C",
+                "value": "3",
+                "type": "text"
+              },
+              {
+                "label": "D",
+                "value": "4",
+                "type": "text"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "cbt-p2-1795154160542": [
+      {
+        "id": "q-cbt-p2-1795154160542-1",
+        "testId": "cbt-p2-1795154160542",
+        "questionNumber": 1,
+        "subject": "Physics",
+        "chapter": "Physics Section",
+        "questionText": "Velocity-time graph question.\nSecond paragraph.",
+        "options": [
+          {
+            "label": "A",
+            "value": "A",
+            "type": "text"
+          },
+          {
+            "label": "B",
+            "value": "B",
+            "type": "text_and_image",
+            "imageUrl": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png"
+          },
+          {
+            "label": "C",
+            "value": "C",
+            "type": "text"
+          },
+          {
+            "label": "D",
+            "value": "D",
+            "type": "text"
+          }
+        ],
+        "correctAnswer": "B",
+        "answerStatus": "matched",
+        "explanation": "Slope is acceleration.",
+        "explanationImageUrl": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png",
+        "figures": [],
+        "optionFigures": {
+          "B": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png"
+        },
+        "imageAttachments": [
+          {
+            "id": "a1",
+            "placement": "between_paragraphs",
+            "url": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png",
+            "caption": "Inline"
+          },
+          {
+            "id": "a2",
+            "placement": "option_B",
+            "url": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png",
+            "caption": "Opt B"
+          },
+          {
+            "id": "a3",
+            "placement": "explanation",
+            "url": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png",
+            "caption": "Sol"
+          }
+        ],
+        "matchTable": {
+          "column1Header": "List-I",
+          "column2Header": "List-II",
+          "showBorders": true,
+          "rows": [
+            {
+              "leftKey": "(A)",
+              "leftText": "Uniform",
+              "leftImageUrl": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png",
+              "rightKey": "(I)",
+              "rightText": "Zero slope",
+              "rightImageUrl": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png"
+            }
+          ]
+        },
+        "structuredTable": {
+          "headers": [
+            "Qty",
+            "Unit",
+            "Dim"
+          ],
+          "rows": [
+            [
+              "Force",
+              "",
+              "[MLT⁻²]"
+            ]
+          ],
+          "cellMeta": {
+            "0:0": {
+              "colSpan": 2,
+              "imageUrl": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png"
+            },
+            "0:1": {
+              "hidden": true
+            }
+          },
+          "showBorders": true
+        },
+        "sourcePageNumber": 1,
+        "sourcePageEnd": 1,
+        "sourcePages": [
+          1
+        ],
+        "sourcePageRange": "Import (PASTE)",
+        "pdfPageNumber": 1,
+        "pdfPageRange": "Import (PASTE)",
+        "hasFigure": true,
+        "languages": {
+          "en": {
+            "questionText": "Velocity-time graph question.\nSecond paragraph.",
+            "options": [
+              {
+                "label": "A",
+                "value": "A",
+                "type": "text"
+              },
+              {
+                "label": "B",
+                "value": "B",
+                "type": "text_and_image",
+                "imageUrl": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png"
+              },
+              {
+                "label": "C",
+                "value": "C",
+                "type": "text"
+              },
+              {
+                "label": "D",
+                "value": "D",
+                "type": "text"
+              }
+            ],
+            "matchTable": {
+              "column1Header": "List-I",
+              "column2Header": "List-II",
+              "showBorders": true,
+              "rows": [
+                {
+                  "leftKey": "(A)",
+                  "leftText": "Uniform",
+                  "leftImageUrl": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png",
+                  "rightKey": "(I)",
+                  "rightText": "Zero slope",
+                  "rightImageUrl": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png"
+                }
+              ]
+            },
+            "structuredTable": {
+              "headers": [
+                "Qty",
+                "Unit",
+                "Dim"
+              ],
+              "rows": [
+                [
+                  "Force",
+                  "",
+                  "[MLT⁻²]"
+                ]
+              ],
+              "cellMeta": {
+                "0:0": {
+                  "colSpan": 2,
+                  "imageUrl": "/storage/parser2/jobs/job-1795154155728-w4bwk/figures/media_option_B_1795154158486_olgq.png"
+                },
+                "0:1": {
+                  "hidden": true
+                }
+              },
+              "showBorders": true
+            }
+          }
+        }
+      }
+    ],
+    "cbt-p2-1795154245247": [
+      {
+        "id": "q-cbt-p2-1795154245247-1",
+        "testId": "cbt-p2-1795154245247",
+        "questionNumber": 1,
+        "subject": "Physics",
+        "chapter": "Physics Section",
+        "questionText": "Velocity-time graph question.\nSecond paragraph.",
+        "options": [
+          {
+            "label": "A",
+            "value": "A",
+            "type": "text"
+          },
+          {
+            "label": "B",
+            "value": "B",
+            "type": "text_and_image",
+            "imageUrl": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png"
+          },
+          {
+            "label": "C",
+            "value": "C",
+            "type": "text"
+          },
+          {
+            "label": "D",
+            "value": "D",
+            "type": "text"
+          }
+        ],
+        "correctAnswer": "B",
+        "answerStatus": "matched",
+        "explanation": "Slope is acceleration.",
+        "explanationImageUrl": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png",
+        "figures": [],
+        "optionFigures": {
+          "B": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png"
+        },
+        "imageAttachments": [
+          {
+            "id": "a1",
+            "placement": "between_paragraphs",
+            "url": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png",
+            "caption": "Inline"
+          },
+          {
+            "id": "a2",
+            "placement": "option_B",
+            "url": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png",
+            "caption": "Opt B"
+          },
+          {
+            "id": "a3",
+            "placement": "explanation",
+            "url": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png",
+            "caption": "Sol"
+          }
+        ],
+        "matchTable": {
+          "column1Header": "List-I",
+          "column2Header": "List-II",
+          "showBorders": true,
+          "rows": [
+            {
+              "leftKey": "(A)",
+              "leftText": "Uniform",
+              "leftImageUrl": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png",
+              "rightKey": "(I)",
+              "rightText": "Zero slope",
+              "rightImageUrl": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png"
+            }
+          ]
+        },
+        "structuredTable": {
+          "headers": [
+            "Qty",
+            "Unit",
+            "Dim"
+          ],
+          "rows": [
+            [
+              "Force",
+              "",
+              "[MLT⁻²]"
+            ]
+          ],
+          "cellMeta": {
+            "0:0": {
+              "colSpan": 2,
+              "imageUrl": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png"
+            },
+            "0:1": {
+              "hidden": true
+            }
+          },
+          "showBorders": true
+        },
+        "sourcePageNumber": 1,
+        "sourcePageEnd": 1,
+        "sourcePages": [
+          1
+        ],
+        "sourcePageRange": "Import (PASTE)",
+        "pdfPageNumber": 1,
+        "pdfPageRange": "Import (PASTE)",
+        "hasFigure": true,
+        "languages": {
+          "en": {
+            "questionText": "Velocity-time graph question.\nSecond paragraph.",
+            "options": [
+              {
+                "label": "A",
+                "value": "A",
+                "type": "text"
+              },
+              {
+                "label": "B",
+                "value": "B",
+                "type": "text_and_image",
+                "imageUrl": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png"
+              },
+              {
+                "label": "C",
+                "value": "C",
+                "type": "text"
+              },
+              {
+                "label": "D",
+                "value": "D",
+                "type": "text"
+              }
+            ],
+            "matchTable": {
+              "column1Header": "List-I",
+              "column2Header": "List-II",
+              "showBorders": true,
+              "rows": [
+                {
+                  "leftKey": "(A)",
+                  "leftText": "Uniform",
+                  "leftImageUrl": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png",
+                  "rightKey": "(I)",
+                  "rightText": "Zero slope",
+                  "rightImageUrl": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png"
+                }
+              ]
+            },
+            "structuredTable": {
+              "headers": [
+                "Qty",
+                "Unit",
+                "Dim"
+              ],
+              "rows": [
+                [
+                  "Force",
+                  "",
+                  "[MLT⁻²]"
+                ]
+              ],
+              "cellMeta": {
+                "0:0": {
+                  "colSpan": 2,
+                  "imageUrl": "/storage/parser2/jobs/job-1795154240025-z6ok5/figures/media_option_B_1795154243099_uvei.png"
+                },
+                "0:1": {
+                  "hidden": true
+                }
+              },
+              "showBorders": true
+            }
+          }
+        }
+      }
     ]
   },
   "mock_tests": [
+    {
+      "id": "cbt-p2-1795154245247",
+      "testNumber": "Test P2-706",
+      "code": "#P2-48",
+      "title": "__TMP_T9_16__",
+      "shortDescription": "Verified NEET Mock Test (1 Questions)",
+      "fullDescription": "Full official CBT Mock Test parsed and verified by NCERTify AI Parser. Target Year: NEET 2025. Contains complete original figures, step-by-step solutions, and NTA scoring.",
+      "description": "Verified NEET Mock Test (1 Questions)",
+      "folderName": "NCERTify Parser Series",
+      "type": "subject_test",
+      "testTypeCategory": "full_subject",
+      "categoryIds": [
+        "full_subject"
+      ],
+      "isStandalone": false,
+      "visibility": "public",
+      "sourceJobId": "job-1795154240025-z6ok5",
+      "language": "bilingual",
+      "subject": "Physics",
+      "subjects": [
+        "Physics"
+      ],
+      "chapter": "",
+      "difficulty": "Moderate",
+      "totalQuestions": 1,
+      "durationMinutes": 30,
+      "maxMarks": 4,
+      "totalMarks": 4,
+      "correctMarks": 4,
+      "negativeMarks": 1,
+      "isFree": false,
+      "isPaid": true,
+      "isPurchased": true,
+      "price": 0,
+      "originalPrice": 0,
+      "discountedPrice": 0,
+      "status": "published",
+      "instructions": [
+        "+4 marks for every correct response",
+        "-1 mark for every incorrect response",
+        "0 marks for unattempted questions",
+        "Calculators and external aids are prohibited",
+        "Timer begins as soon as you enter the exam interface"
+      ],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "isBilingual": true,
+      "allowMultipleAttempts": true,
+      "attemptLimit": "unlimited",
+      "showLeaderboard": true,
+      "createdAt": "2026-11-20T05:57:25.248Z",
+      "updatedAt": "2026-11-20T05:57:25.248Z",
+      "questionsCount": 1
+    },
+    {
+      "id": "cbt-p2-1795154160542",
+      "testNumber": "Test P2-404",
+      "code": "#P2-74",
+      "title": "__TMP_T9_16__",
+      "shortDescription": "Verified NEET Mock Test (1 Questions)",
+      "fullDescription": "Full official CBT Mock Test parsed and verified by NCERTify AI Parser. Target Year: NEET 2025. Contains complete original figures, step-by-step solutions, and NTA scoring.",
+      "description": "Verified NEET Mock Test (1 Questions)",
+      "folderName": "NCERTify Parser Series",
+      "type": "subject_test",
+      "testTypeCategory": "full_subject",
+      "categoryIds": [
+        "full_subject"
+      ],
+      "isStandalone": false,
+      "visibility": "public",
+      "sourceJobId": "job-1795154155728-w4bwk",
+      "language": "bilingual",
+      "subject": "Physics",
+      "subjects": [
+        "Physics"
+      ],
+      "chapter": "",
+      "difficulty": "Moderate",
+      "totalQuestions": 1,
+      "durationMinutes": 30,
+      "maxMarks": 4,
+      "totalMarks": 4,
+      "correctMarks": 4,
+      "negativeMarks": 1,
+      "isFree": false,
+      "isPaid": true,
+      "isPurchased": true,
+      "price": 0,
+      "originalPrice": 0,
+      "discountedPrice": 0,
+      "status": "published",
+      "instructions": [
+        "+4 marks for every correct response",
+        "-1 mark for every incorrect response",
+        "0 marks for unattempted questions",
+        "Calculators and external aids are prohibited",
+        "Timer begins as soon as you enter the exam interface"
+      ],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "isBilingual": true,
+      "allowMultipleAttempts": true,
+      "attemptLimit": "unlimited",
+      "showLeaderboard": true,
+      "createdAt": "2026-11-20T05:56:00.543Z",
+      "updatedAt": "2026-11-20T05:56:00.543Z",
+      "questionsCount": 1
+    },
+    {
+      "id": "cbt-p2-1795153341659",
+      "testNumber": "Test P2-282",
+      "code": "#P2-27",
+      "title": "__TMP_TEST14_DUP_GATE__",
+      "shortDescription": "Verified NEET Mock Test (1 Questions)",
+      "fullDescription": "Full official CBT Mock Test parsed and verified by NCERTify AI Parser. Target Year: NEET 2025. Contains complete original figures, step-by-step solutions, and NTA scoring.",
+      "description": "Verified NEET Mock Test (1 Questions)",
+      "folderName": "NCERTify Parser Series",
+      "type": "subject_test",
+      "testTypeCategory": "full_subject",
+      "categoryIds": [
+        "full_subject"
+      ],
+      "isStandalone": false,
+      "visibility": "public",
+      "sourceJobId": "job-1795153338862-k94wh",
+      "language": "bilingual",
+      "subject": "Physics",
+      "subjects": [
+        "Physics"
+      ],
+      "chapter": "",
+      "difficulty": "Moderate",
+      "totalQuestions": 1,
+      "durationMinutes": 60,
+      "maxMarks": 4,
+      "totalMarks": 4,
+      "correctMarks": 4,
+      "negativeMarks": 1,
+      "isFree": false,
+      "isPaid": true,
+      "isPurchased": true,
+      "price": 0,
+      "originalPrice": 0,
+      "discountedPrice": 0,
+      "status": "published",
+      "instructions": [
+        "+4 marks for every correct response",
+        "-1 mark for every incorrect response",
+        "0 marks for unattempted questions",
+        "Calculators and external aids are prohibited",
+        "Timer begins as soon as you enter the exam interface"
+      ],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "isBilingual": true,
+      "allowMultipleAttempts": true,
+      "attemptLimit": "unlimited",
+      "showLeaderboard": true,
+      "createdAt": "2026-11-20T05:42:21.659Z",
+      "updatedAt": "2026-11-20T05:42:21.659Z",
+      "questionsCount": 1
+    },
+    {
+      "id": "cbt-p2-1795153336207",
+      "testNumber": "Test P2-390",
+      "code": "#P2-54",
+      "title": "__TMP_TEST9_10_MEDIA_TABLE__",
+      "shortDescription": "Verified NEET Mock Test (1 Questions)",
+      "fullDescription": "Full official CBT Mock Test parsed and verified by NCERTify AI Parser. Target Year: NEET 2025. Contains complete original figures, step-by-step solutions, and NTA scoring.",
+      "description": "Verified NEET Mock Test (1 Questions)",
+      "folderName": "NCERTify Parser Series",
+      "type": "subject_test",
+      "testTypeCategory": "full_subject",
+      "categoryIds": [
+        "full_subject"
+      ],
+      "isStandalone": false,
+      "visibility": "public",
+      "sourceJobId": "job-1795153331722-p2lj1",
+      "language": "bilingual",
+      "subject": "Physics",
+      "subjects": [
+        "Physics"
+      ],
+      "chapter": "",
+      "difficulty": "Moderate",
+      "totalQuestions": 1,
+      "durationMinutes": 30,
+      "maxMarks": 4,
+      "totalMarks": 4,
+      "correctMarks": 4,
+      "negativeMarks": 1,
+      "isFree": false,
+      "isPaid": true,
+      "isPurchased": true,
+      "price": 0,
+      "originalPrice": 0,
+      "discountedPrice": 0,
+      "status": "published",
+      "instructions": [
+        "+4 marks for every correct response",
+        "-1 mark for every incorrect response",
+        "0 marks for unattempted questions",
+        "Calculators and external aids are prohibited",
+        "Timer begins as soon as you enter the exam interface"
+      ],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "isBilingual": true,
+      "allowMultipleAttempts": true,
+      "attemptLimit": "unlimited",
+      "showLeaderboard": true,
+      "createdAt": "2026-11-20T05:42:16.208Z",
+      "updatedAt": "2026-11-20T05:42:16.208Z",
+      "questionsCount": 1
+    },
+    {
+      "id": "cbt-p2-1795153232465",
+      "testNumber": "Test P2-503",
+      "code": "#P2-98",
+      "title": "__TMP_TEST14_DUP_GATE__",
+      "shortDescription": "Verified NEET Mock Test (1 Questions)",
+      "fullDescription": "Full official CBT Mock Test parsed and verified by NCERTify AI Parser. Target Year: NEET 2025. Contains complete original figures, step-by-step solutions, and NTA scoring.",
+      "description": "Verified NEET Mock Test (1 Questions)",
+      "folderName": "NCERTify Parser Series",
+      "type": "subject_test",
+      "testTypeCategory": "full_subject",
+      "categoryIds": [
+        "full_subject"
+      ],
+      "isStandalone": false,
+      "visibility": "public",
+      "sourceJobId": "job-1795153229598-bkkcn",
+      "language": "bilingual",
+      "subject": "Physics",
+      "subjects": [
+        "Physics"
+      ],
+      "chapter": "",
+      "difficulty": "Moderate",
+      "totalQuestions": 1,
+      "durationMinutes": 60,
+      "maxMarks": 4,
+      "totalMarks": 4,
+      "correctMarks": 4,
+      "negativeMarks": 1,
+      "isFree": false,
+      "isPaid": true,
+      "isPurchased": true,
+      "price": 0,
+      "originalPrice": 0,
+      "discountedPrice": 0,
+      "status": "published",
+      "instructions": [
+        "+4 marks for every correct response",
+        "-1 mark for every incorrect response",
+        "0 marks for unattempted questions",
+        "Calculators and external aids are prohibited",
+        "Timer begins as soon as you enter the exam interface"
+      ],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "isBilingual": true,
+      "allowMultipleAttempts": true,
+      "attemptLimit": "unlimited",
+      "showLeaderboard": true,
+      "createdAt": "2026-11-20T05:40:32.465Z",
+      "updatedAt": "2026-11-20T05:40:32.465Z",
+      "questionsCount": 1
+    },
+    {
+      "id": "cbt-p2-1795153227433",
+      "testNumber": "Test P2-937",
+      "code": "#P2-63",
+      "title": "__TMP_TEST9_10_MEDIA_TABLE__",
+      "shortDescription": "Verified NEET Mock Test (1 Questions)",
+      "fullDescription": "Full official CBT Mock Test parsed and verified by NCERTify AI Parser. Target Year: NEET 2025. Contains complete original figures, step-by-step solutions, and NTA scoring.",
+      "description": "Verified NEET Mock Test (1 Questions)",
+      "folderName": "NCERTify Parser Series",
+      "type": "subject_test",
+      "testTypeCategory": "full_subject",
+      "categoryIds": [
+        "full_subject"
+      ],
+      "isStandalone": false,
+      "visibility": "public",
+      "sourceJobId": "job-1795153222303-3hwig",
+      "language": "bilingual",
+      "subject": "Physics",
+      "subjects": [
+        "Physics"
+      ],
+      "chapter": "",
+      "difficulty": "Moderate",
+      "totalQuestions": 1,
+      "durationMinutes": 30,
+      "maxMarks": 4,
+      "totalMarks": 4,
+      "correctMarks": 4,
+      "negativeMarks": 1,
+      "isFree": false,
+      "isPaid": true,
+      "isPurchased": true,
+      "price": 0,
+      "originalPrice": 0,
+      "discountedPrice": 0,
+      "status": "published",
+      "instructions": [
+        "+4 marks for every correct response",
+        "-1 mark for every incorrect response",
+        "0 marks for unattempted questions",
+        "Calculators and external aids are prohibited",
+        "Timer begins as soon as you enter the exam interface"
+      ],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "isBilingual": true,
+      "allowMultipleAttempts": true,
+      "attemptLimit": "unlimited",
+      "showLeaderboard": true,
+      "createdAt": "2026-11-20T05:40:27.434Z",
+      "updatedAt": "2026-11-20T05:40:27.434Z",
+      "questionsCount": 1
+    },
+    {
+      "id": "cbt-p2-1795153093331",
+      "testNumber": "Test P2-659",
+      "code": "#P2-90",
+      "title": "__TMP_TEST14_DUP_GATE__",
+      "shortDescription": "Verified NEET Mock Test (1 Questions)",
+      "fullDescription": "Full official CBT Mock Test parsed and verified by NCERTify AI Parser. Target Year: NEET 2025. Contains complete original figures, step-by-step solutions, and NTA scoring.",
+      "description": "Verified NEET Mock Test (1 Questions)",
+      "folderName": "NCERTify Parser Series",
+      "type": "subject_test",
+      "testTypeCategory": "full_subject",
+      "categoryIds": [
+        "full_subject"
+      ],
+      "isStandalone": false,
+      "visibility": "public",
+      "sourceJobId": "job-1795153086357-rmk9t",
+      "language": "bilingual",
+      "subject": "Physics",
+      "subjects": [
+        "Physics"
+      ],
+      "chapter": "",
+      "difficulty": "Moderate",
+      "totalQuestions": 1,
+      "durationMinutes": 60,
+      "maxMarks": 4,
+      "totalMarks": 4,
+      "correctMarks": 4,
+      "negativeMarks": 1,
+      "isFree": false,
+      "isPaid": true,
+      "isPurchased": true,
+      "price": 0,
+      "originalPrice": 0,
+      "discountedPrice": 0,
+      "status": "published",
+      "instructions": [
+        "+4 marks for every correct response",
+        "-1 mark for every incorrect response",
+        "0 marks for unattempted questions",
+        "Calculators and external aids are prohibited",
+        "Timer begins as soon as you enter the exam interface"
+      ],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "isBilingual": true,
+      "allowMultipleAttempts": true,
+      "attemptLimit": "unlimited",
+      "showLeaderboard": true,
+      "createdAt": "2026-11-20T05:38:13.331Z",
+      "updatedAt": "2026-11-20T05:38:13.331Z",
+      "questionsCount": 1
+    },
+    {
+      "id": "cbt-p2-1795153081113",
+      "testNumber": "Test P2-291",
+      "code": "#P2-24",
+      "title": "__TMP_TEST9_10_MEDIA_TABLE__",
+      "shortDescription": "Verified NEET Mock Test (1 Questions)",
+      "fullDescription": "Full official CBT Mock Test parsed and verified by NCERTify AI Parser. Target Year: NEET 2025. Contains complete original figures, step-by-step solutions, and NTA scoring.",
+      "description": "Verified NEET Mock Test (1 Questions)",
+      "folderName": "NCERTify Parser Series",
+      "type": "subject_test",
+      "testTypeCategory": "full_subject",
+      "categoryIds": [
+        "full_subject"
+      ],
+      "isStandalone": false,
+      "visibility": "public",
+      "sourceJobId": "job-1795153067940-mvsk8",
+      "language": "bilingual",
+      "subject": "Physics",
+      "subjects": [
+        "Physics"
+      ],
+      "chapter": "",
+      "difficulty": "Moderate",
+      "totalQuestions": 1,
+      "durationMinutes": 30,
+      "maxMarks": 4,
+      "totalMarks": 4,
+      "correctMarks": 4,
+      "negativeMarks": 1,
+      "isFree": false,
+      "isPaid": true,
+      "isPurchased": true,
+      "price": 0,
+      "originalPrice": 0,
+      "discountedPrice": 0,
+      "status": "published",
+      "instructions": [
+        "+4 marks for every correct response",
+        "-1 mark for every incorrect response",
+        "0 marks for unattempted questions",
+        "Calculators and external aids are prohibited",
+        "Timer begins as soon as you enter the exam interface"
+      ],
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "isBilingual": true,
+      "allowMultipleAttempts": true,
+      "attemptLimit": "unlimited",
+      "showLeaderboard": true,
+      "createdAt": "2026-11-20T05:38:01.113Z",
+      "updatedAt": "2026-11-20T05:38:01.113Z",
+      "questionsCount": 1
+    },
     {
       "id": "cbt-gold-test-08",
       "title": "NEET UG Major Test-08 (Code 27882 - Gold Standard)",
@@ -33014,6 +34495,64 @@
       "title": "NEET UG Major Test-08 (Code 27882 - Gold Standard) (Copy)",
       "totalQuestions": 180,
       "type": "full_syllabus",
+      "visibility": "public"
+    },
+    {
+      "allowMultipleAttempts": true,
+      "attemptLimit": "unlimited",
+      "categoryIds": [
+        "chapter_wise"
+      ],
+      "chapter": "Units and measurements",
+      "code": "#01",
+      "correctMarks": 4,
+      "createdAt": "2026-11-17T16:09:21.492Z",
+      "description": "Comprehensive NTA NEET-UG standard CBT mock examination with verified explanations and original source figures.",
+      "difficulty": "Moderate",
+      "discountedPrice": 0,
+      "durationMinutes": 60,
+      "folderName": "Brahmastra Major Test Series",
+      "fullDescription": "Comprehensive NTA NEET-UG standard CBT mock examination with verified explanations and original source figures.",
+      "id": "cbt-p2-1794931761491",
+      "instructions": [
+        "+4 marks for every correct response",
+        "-1 mark for every incorrect response",
+        "0 marks for unattempted questions",
+        "Calculators and external aids are strictly prohibited",
+        "Timer begins as soon as you enter the exam"
+      ],
+      "isBilingual": true,
+      "isFree": true,
+      "isPaid": false,
+      "isPurchased": true,
+      "isStandalone": false,
+      "language": "bilingual",
+      "languages": [
+        "en",
+        "hi"
+      ],
+      "maxMarks": 196,
+      "negativeMarks": 1,
+      "originalPrice": 0,
+      "price": 0,
+      "questionsCount": 49,
+      "shortDescription": "NTA Pattern Mock Test with Step-by-Step Solutions",
+      "showLeaderboard": true,
+      "sourceJobId": "job-1794931206260-8nh6x",
+      "status": "published",
+      "subject": "Combined",
+      "subjects": [
+        "Physics",
+        "Chemistry",
+        "Biology"
+      ],
+      "testNumber": "Test 01",
+      "testTypeCategory": "chapter_wise",
+      "title": "Checking pdf",
+      "totalMarks": 196,
+      "totalQuestions": 49,
+      "type": "chapter_test",
+      "updatedAt": "2026-11-17T16:09:21.492Z",
       "visibility": "public"
     }
   ],

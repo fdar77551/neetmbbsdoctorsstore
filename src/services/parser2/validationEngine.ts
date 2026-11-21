@@ -25,21 +25,124 @@ export class ValidationEngine {
   public auditQuestions(
     jobId: string,
     questions: Parser2Question[],
-    expectedTotalQuestions: number = 180
+    expectedTotalQuestions: number | null = null,
+    options?: {
+      savedQuestions?: number;
+      figuresExtracted?: number;
+      expectedSource?: 'auto_detected' | 'manual';
+      rejectedQuestions?: number;
+    }
   ): Parser2ValidationReport {
     const checks: Parser2ValidationCheck[] = [];
     let criticalErrorsCount = 0;
     let warningsCount = 0;
 
-    // Normalize expectedTotalQuestions cleanly (if range was tiny or larger than 0)
-    const expectedCount = Math.max(expectedTotalQuestions || 0, questions.length);
+    const expectedSource: 'auto_detected' | 'manual' =
+      options?.expectedSource || (typeof expectedTotalQuestions === 'number' && expectedTotalQuestions > 0 ? 'manual' : 'auto_detected');
+    const savedCount = options?.savedQuestions ?? questions.length;
+    const rejectedCount = options?.rejectedQuestions ?? 0;
+    const totalFiguresCount =
+      options?.figuresExtracted ??
+      questions.reduce((acc, q) => acc + (q.figures?.length || (q.figureUrl ? 1 : 0)), 0);
 
-    // 1. Missing Questions & Sequence Check
-    const existingQNums = new Set(questions.map(q => q.questionNumber));
+    // 0. Zero-Question Extraction Gate (never report false passed checks, fake 180 expected, or misleading 0% quality score)
+    if (questions.length === 0) {
+      const manualExpected =
+        expectedSource === 'manual' && typeof expectedTotalQuestions === 'number' && expectedTotalQuestions > 0
+          ? expectedTotalQuestions
+          : null;
+
+      const zeroChecks: Parser2ValidationCheck[] = [
+        {
+          id: 'chk-zero-questions',
+          code: 'ZERO_QUESTIONS',
+          title: 'Zero Questions Extracted',
+          severity: 'critical',
+          passed: false,
+          message:
+            manualExpected !== null
+              ? `0 questions were extracted or saved out of ${manualExpected} expected questions. Extraction failed — retry failed pages or inspect API logs.`
+              : `0 questions were extracted or saved across processed pages. Extraction failed — retry failed pages or inspect OCR/API logs.`
+        },
+        {
+          id: 'chk-sequence',
+          code: 'SEQ_GAPS',
+          title: 'Missing Question Numbers',
+          severity: 'critical',
+          passed: false,
+          message:
+            manualExpected !== null
+              ? `All ${manualExpected} expected questions are missing from the database.`
+              : `No question numbers were detected in the extracted output.`
+        }
+      ];
+
+      const zeroBreakdown: Parser2QualityBreakdown = {
+        textExtraction: null,
+        options: null,
+        figures: null,
+        chemistry: null,
+        mathematics: null,
+        answerKey: null
+      };
+
+      const zeroReconciliation: Parser2ReconciliationSummary = {
+        expectedQuestions: manualExpected,
+        expectedQuestionsSource: expectedSource,
+        detectedQuestionNumbers: [],
+        extractedQuestions: 0,
+        validatedQuestions: 0,
+        savedQuestions: savedCount,
+        validQuestions: 0,
+        rejectedQuestions: rejectedCount,
+        reviewRequiredCount: 0,
+        duplicateCount: 0,
+        missingQuestions: manualExpected,
+        missingQuestionNumbers: [],
+        missingAnswerCount: 0,
+        figuresExtracted: totalFiguresCount,
+        answerKeyCoverage: null
+      };
+
+      return {
+        id: `rep-${jobId}-${Date.now()}`,
+        jobId,
+        qualityScore: null,
+        totalChecks: zeroChecks.length,
+        passedChecks: 0,
+        criticalErrorsCount: zeroChecks.length,
+        warningsCount: 0,
+        canPublish: false,
+        checks: zeroChecks,
+        reconciliation: zeroReconciliation,
+        qualityBreakdown: zeroBreakdown,
+        summary: `❌ Extraction Failed: 0 questions extracted/saved${manualExpected !== null ? ` (expected ${manualExpected})` : ''}. Retry failed pages before publishing.`,
+        createdAt: new Date().toISOString()
+      };
+    }
+
+    // 1. Missing Questions & Sequence Check (auto-detected max question number unless manual range was configured)
+    const detectedNumbers = Array.from(new Set(questions.map(q => q.questionNumber).filter(n => n > 0))).sort((a, b) => a - b);
+    const maxDetectedQNum = detectedNumbers.length > 0 ? detectedNumbers[detectedNumbers.length - 1] : questions.length;
+    const minDetectedQNum = detectedNumbers.length > 0 ? detectedNumbers[0] : 1;
+    const autoExpected =
+      minDetectedQNum <= 2 && maxDetectedQNum <= Math.max(questions.length * 2 + 20, 220)
+        ? Math.max(maxDetectedQNum, questions.length)
+        : questions.length;
+    const expectedCount =
+      expectedSource === 'manual' && typeof expectedTotalQuestions === 'number' && expectedTotalQuestions > 0
+        ? Math.max(expectedTotalQuestions, questions.length)
+        : autoExpected;
+
+    const existingQNums = new Set(detectedNumbers);
     const missingNums: number[] = [];
-    for (let i = 1; i <= expectedCount; i++) {
-      if (!existingQNums.has(i)) {
-        missingNums.push(i);
+    const startSeq = expectedSource === 'manual' ? 1 : (minDetectedQNum <= 2 ? 1 : minDetectedQNum);
+    const endSeq = expectedSource === 'manual' ? expectedCount : Math.max(maxDetectedQNum, startSeq + expectedCount - 1);
+    if (endSeq - startSeq <= 300) {
+      for (let i = startSeq; i <= endSeq; i++) {
+        if (!existingQNums.has(i)) {
+          missingNums.push(i);
+        }
       }
     }
 
@@ -504,59 +607,79 @@ export class ValidationEngine {
       });
     }
 
-    // Compute 6-Dimension Quality Breakdown honestly (0..100 each)
+    // Compute 6-Dimension Quality Breakdown honestly (0..100 or null = N/A when insufficient data exists)
     const total = Math.max(questions.length, 1);
     const badTextCount = new Set([...truncatedStemQs, ...allBrokenTables]).size;
     const badOptionCount = new Set([...missingOptQs, ...placeholderOptQs, ...stemDuplicatingQs, ...brokenStatementQs]).size;
 
-    const textExtraction = questions.length === 0 ? 0 : Math.max(0, Math.round(((total - badTextCount) / total) * 100));
-    const optionsScore = questions.length === 0 ? 0 : Math.max(0, Math.round(((total - badOptionCount) / total) * 100));
-    const figuresScore = expectedFigureCount === 0
-      ? 100
-      : Math.max(0, Math.round(((presentFigureCount - mismatchFigureQs.length * 0.5) / expectedFigureCount) * 100));
+    const textExtraction: number | null = Math.max(0, Math.round(((total - badTextCount) / total) * 100));
+    const optionsScore: number | null = Math.max(0, Math.round(((total - badOptionCount) / total) * 100));
+    const figuresScore: number | null = expectedFigureCount === 0
+      ? null
+      : Math.min(100, Math.max(0, Math.round(((presentFigureCount - mismatchFigureQs.length * 0.5) / expectedFigureCount) * 100)));
     const chemTotal = Math.max(chemQuestions.length, 1);
-    const chemistryScore = chemQuestions.length === 0
-      ? 100
+    const chemistryScore: number | null = chemQuestions.length === 0
+      ? null
       : Math.max(0, Math.round(((chemTotal - missingChemStructures.length) / chemTotal) * 100));
-    const mathScore = questions.length === 0 ? 0 : Math.max(0, Math.round(((total - mathCorruptQs.length) / total) * 100));
-    const answerKeyScore = questions.length === 0 ? 0 : Math.max(0, Math.round(((total - missingAnswerQs.length) / total) * 100));
+    const mathScore: number | null = Math.max(0, Math.round(((total - mathCorruptQs.length) / total) * 100));
+    const answerKeyScore: number | null = Math.max(0, Math.round(((total - missingAnswerQs.length) / total) * 100));
 
     const qualityBreakdown: Parser2QualityBreakdown = {
       textExtraction,
       options: optionsScore,
-      figures: Math.min(100, Math.max(0, figuresScore)),
+      figures: figuresScore,
       chemistry: chemistryScore,
       mathematics: mathScore,
       answerKey: answerKeyScore
     };
 
-    // Weighted overall score honoring critical failures and missing answers
-    const weightedQuality = Math.round(
-      qualityBreakdown.textExtraction * 0.22 +
-      qualityBreakdown.options * 0.28 +
-      qualityBreakdown.figures * 0.18 +
-      qualityBreakdown.chemistry * 0.10 +
-      qualityBreakdown.mathematics * 0.10 +
-      qualityBreakdown.answerKey * 0.12
-    );
+    // Weighted overall score normalized strictly across non-null dimensions (never inflated by N/A dimensions)
+    const weightedDimensions: Array<[number | null, number]> = [
+      [qualityBreakdown.textExtraction, 0.22],
+      [qualityBreakdown.options, 0.28],
+      [qualityBreakdown.figures, 0.18],
+      [qualityBreakdown.chemistry, 0.10],
+      [qualityBreakdown.mathematics, 0.10],
+      [qualityBreakdown.answerKey, 0.12]
+    ];
+    const activeWeightSum = weightedDimensions.reduce((sum, [val, w]) => (val === null ? sum : sum + w), 0);
+    const weightedQuality =
+      activeWeightSum > 0
+        ? Math.round(
+            weightedDimensions.reduce((sum, [val, w]) => (val === null ? sum : sum + val * w), 0) / activeWeightSum
+          )
+        : 0;
 
     const passedCount = checks.filter(c => c.passed).length;
     const penalty = criticalErrorsCount * 8;
-    const qualityScore = questions.length === 0 ? 0 : Math.max(0, Math.min(100, weightedQuality - Math.min(35, penalty)));
-    const canPublish = questions.length > 0 && criticalErrorsCount === 0;
+    const qualityScore = Math.max(0, Math.min(100, weightedQuality - Math.min(35, penalty)));
+    const canPublish = questions.length > 0 && savedCount > 0 && criticalErrorsCount === 0;
 
     // Extraction Reconciliation Summary
     const validQuestions = questions.filter(q =>
       q.verificationStatus === 'verified' && !q.reviewRequired
     ).length;
 
+    const targetExpected =
+      expectedSource === 'manual' && typeof expectedTotalQuestions === 'number' && expectedTotalQuestions > 0
+        ? expectedTotalQuestions
+        : expectedCount;
     const reconciliation: Parser2ReconciliationSummary = {
-      expectedQuestions: expectedTotalQuestions || questions.length,
+      expectedQuestions: targetExpected,
+      expectedQuestionsSource: expectedSource,
+      detectedQuestionNumbers: detectedNumbers,
       extractedQuestions: questions.length,
+      validatedQuestions: validQuestions,
+      savedQuestions: savedCount,
       validQuestions,
+      rejectedQuestions: rejectedCount,
       reviewRequiredCount: reviewRequiredQs.length,
       duplicateCount: dupes.length,
-      missingAnswerCount: missingAnswerQs.length
+      missingQuestions: missingNums.length > 0 ? missingNums.length : Math.max(0, targetExpected - existingQNums.size),
+      missingQuestionNumbers: missingNums.slice(0, 50),
+      missingAnswerCount: missingAnswerQs.length,
+      figuresExtracted: totalFiguresCount,
+      answerKeyCoverage: answerKeyScore
     };
 
     const report: Parser2ValidationReport = {
@@ -572,8 +695,8 @@ export class ValidationEngine {
       reconciliation,
       qualityBreakdown,
       summary: canPublish
-        ? `✅ Quality Score ${qualityScore}% (${reconciliation.validQuestions}/${reconciliation.extractedQuestions} valid). Ready to assign & publish.`
-        : `⚠️ Quality Score ${qualityScore}%. ${criticalErrorsCount} critical issue(s) across ${reconciliation.extractedQuestions} questions. Resolve before publishing.`,
+        ? `✅ Quality Score ${qualityScore}% (${reconciliation.validQuestions}/${reconciliation.savedQuestions} valid & saved). Ready to assign & publish.`
+        : `⚠️ Quality Score ${qualityScore}%. ${criticalErrorsCount} critical issue(s) across ${reconciliation.extractedQuestions} extracted (${reconciliation.savedQuestions} saved) questions. Resolve before publishing.`,
       createdAt: new Date().toISOString()
     };
 

@@ -3,21 +3,27 @@
 
 export type Parser2Subject = 'Physics' | 'Chemistry' | 'Biology' | 'Combined';
 
-export type Parser2OcrEngine = 'mistral' | 'gemini' | 'hybrid';
+export type Parser2OcrEngine = 'mistral' | 'gemini' | 'hybrid' | 'local_text' | 'manual_import';
 
 export type Parser2JobStatus = 
   | 'uploaded'
   | 'queued' 
+  | 'starting'
   | 'uploading' 
   | 'extracting'
   | 'processing' 
   | 'ocr_in_progress'
+  | 'ocr_completed'
   | 'question_detection'
   | 'question_extraction'
   | 'structuring'
   | 'figure_extraction'
   | 'validation'
+  | 'validating'
   | 'saving'
+  | 'retry_waiting'
+  | 'stalled'
+  | 'dead_letter'
   | 'review_required'
   | 'verifying' 
   | 'paused' 
@@ -25,7 +31,30 @@ export type Parser2JobStatus =
   | 'failed' 
   | 'published';
 
-export type Parser2PageStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
+export type Parser2PageStatus =
+  | 'pending'
+  | 'starting'
+  | 'processing'
+  | 'ocr_in_progress'
+  | 'ocr_completed'
+  | 'extracting'
+  | 'extracted'
+  | 'validating'
+  | 'validated'
+  | 'saving'
+  | 'saved'
+  | 'page_completed'
+  | 'completed'
+  | 'retry_waiting'
+  | 'retry_required'
+  | 'stalled'
+  | 'failed'
+  | 'dead_letter'
+  | 'skipped';
+
+export function isPageCompletedStatus(status: Parser2PageStatus | string | undefined): boolean {
+  return status === 'completed' || status === 'saved' || status === 'page_completed';
+}
 
 export type Parser2QuestionType = 
   | 'single_mcq' 
@@ -63,21 +92,39 @@ export interface Parser2ComponentValidation {
 }
 
 export interface Parser2ReconciliationSummary {
-  expectedQuestions: number;
+  expectedQuestions: number | null;
+  expectedQuestionsSource?: 'auto_detected' | 'manual';
+  detectedQuestionNumbers?: number[];
   extractedQuestions: number;
+  validatedQuestions?: number;
+  savedQuestions?: number;
   validQuestions: number;
+  rejectedQuestions?: number;
   reviewRequiredCount: number;
   duplicateCount: number;
+  missingQuestions?: number | null;
+  missingQuestionNumbers?: number[];
   missingAnswerCount?: number;
+  figuresExtracted?: number;
+  answerKeyCoverage?: number | null;
 }
 
 export interface Parser2QualityBreakdown {
-  textExtraction: number; // 0..100
-  options: number;        // 0..100
-  figures: number;        // 0..100
-  chemistry: number;      // 0..100
-  mathematics: number;    // 0..100
-  answerKey: number;      // 0..100
+  textExtraction: number | null; // 0..100 or null (N/A)
+  options: number | null;        // 0..100 or null (N/A)
+  figures: number | null;        // 0..100 or null (N/A)
+  chemistry: number | null;      // 0..100 or null (N/A)
+  mathematics: number | null;    // 0..100 or null (N/A)
+  answerKey: number | null;      // 0..100 or null (N/A)
+}
+
+export interface Parser2RateLimitStatus {
+  active: boolean;
+  provider?: string;
+  retryAttempt?: number;
+  maxRetries?: number;
+  nextRetryAt?: string;
+  message?: string;
 }
 
 export interface Parser2Job {
@@ -85,13 +132,29 @@ export interface Parser2Job {
   testName: string;
   subject: Parser2Subject;
   chapter?: string;
-  questionRange?: string; // e.g. "1-180" or "1-45"
+  questionRange?: string; // optional manual range e.g. "1-180" or "1-45"; empty = auto-detect
+  expectedQuestionsManual?: number | null;
+  importSource?: 'pdf' | 'markdown' | 'txt' | 'docx' | 'json' | 'paste';
   ocrEngine: Parser2OcrEngine;
   geminiModel: string; // e.g. "gemini-4-hydrogen"
+  mistralModel?: string; // e.g. "mistral-ocr-latest"
+  allowProviderFallback?: boolean;
+  fallbackProvider?: Parser2OcrEngine | 'none';
+  autoScanAnswerKey?: boolean;
   enableGeminiVerification: boolean;
   status: Parser2JobStatus;
   currentStage?: string;
+  failedStage?: string;
+  rateLimitStatus?: Parser2RateLimitStatus | null;
+  lockOwnerId?: string | null;
+  lockAcquiredAt?: string | null;
+  lockExpiresAt?: string | null;
+  stalledAt?: string | null;
+  stallReason?: string | null;
   totalPages: number;
+  pagesAttempted?: number;
+  ocrCompletedPages?: number;
+  extractedPages?: number;
   completedPages: number;
   failedPages: number;
   totalQuestions: number;
@@ -105,7 +168,7 @@ export interface Parser2Job {
   retryCount?: number;
   manuallyEditedCount?: number;
   hasAnswerKey?: boolean;
-  qualityScore?: number;
+  qualityScore?: number | null;
   reconciliation?: Parser2ReconciliationSummary;
   qualityBreakdown?: Parser2QualityBreakdown;
   publishedTestId?: string;
@@ -121,7 +184,7 @@ export interface Parser2Job {
 export interface Parser2SourceFile {
   id: string;
   jobId: string;
-  fileType: 'question_pdf' | 'solution_pdf' | 'answer_key_pdf' | 'answer_key_image';
+  fileType: 'question_pdf' | 'solution_pdf' | 'answer_key_pdf' | 'answer_key_image' | 'manual_import';
   fileName: string;
   fileSize: number;
   storageKey: string;
@@ -142,9 +205,30 @@ export interface Parser2Page {
   pageImageUrl?: string;
   pageWidth?: number;
   pageHeight?: number;
+  requestStartedAt?: string;
+  responseTimeMs?: number;
   processingTimeMs?: number;
+  ocrStatus?: 'pending' | 'running' | 'in_progress' | 'completed' | 'skipped' | 'failed';
+  extractionStatus?: 'pending' | 'running' | 'in_progress' | 'completed' | 'skipped' | 'retry_waiting' | 'stalled' | 'failed';
   errorMessage?: string;
+  lastApiSummary?: string;
   extractedQuestionNumbers?: number[];
+  questionsDetectedCount?: number;
+  questionsExtractedCount?: number;
+  questionsSavedCount?: number;
+  figuresDetectedCount?: number;
+  figuresSavedCount?: number;
+  questionsReviewCount?: number;
+  providerUsed?: string;
+  modelUsed?: string;
+  fallbackUsed?: boolean;
+  fallbackReason?: string;
+  retryAttempts?: number;
+  deadLettered?: boolean;
+  isAnswerKeyPage?: boolean;
+  isCoverPage?: boolean;
+  heartbeatAt?: string;
+  checkpointAt?: string;
   updatedAt: string;
 }
 
@@ -160,20 +244,79 @@ export interface Parser2Option {
 export interface Parser2MatchTableRow {
   colAKey: string; // e.g. "A", "P"
   colAText: string;
+  colAValue?: string;
+  colAImageUrl?: string;
   colBKey: string; // e.g. "i", "1", "Q"
   colBText: string;
+  colBValue?: string;
+  colBImageUrl?: string;
 }
 
 export interface Parser2MatchTable {
   columnAHeader?: string;
   columnBHeader?: string;
+  colATitle?: string;
+  colBTitle?: string;
+  leftTableImageUrl?: string;
+  rightTableImageUrl?: string;
+  showBorders?: boolean;
   rows: Parser2MatchTableRow[];
+}
+
+export interface Parser2TableCellMeta {
+  rowSpan?: number;
+  colSpan?: number;
+  hidden?: boolean;
+  imageUrl?: string;
+  align?: 'left' | 'center' | 'right';
 }
 
 export interface Parser2StructuredTable {
   headers: string[];
   rows: string[][];
   caption?: string;
+  showBorders?: boolean;
+  alignment?: 'left' | 'center' | 'right';
+  cellMeta?: Record<string, Parser2TableCellMeta>; // keyed as `${rowIdx}:${colIdx}`
+}
+
+export type Parser2ImagePlacement =
+  | 'before_question'
+  | 'between_paragraphs'
+  | 'after_question'
+  | 'option_A'
+  | 'option_B'
+  | 'option_C'
+  | 'option_D'
+  | 'match_left_table'
+  | 'match_right_table'
+  | 'table_cell'
+  | 'assertion_reason'
+  | 'explanation'
+  | 'answer_key_explanation';
+
+export interface Parser2ImageAttachment {
+  id: string;
+  url: string;
+  storageKey?: string;
+  placement: Parser2ImagePlacement;
+  paragraphIndex?: number; // used when placement === 'between_paragraphs'
+  tableRow?: number;       // used when placement === 'table_cell'
+  tableCol?: number;       // used when placement === 'table_cell'
+  caption?: string;
+  alt?: string;
+  altText?: string;
+  alignment?: 'left' | 'center' | 'right';
+  widthPercent?: number;   // 25..100
+  width?: number;
+  height?: number;
+  rotation?: number;       // 0 | 90 | 180 | 270
+  pageNumber?: number;
+  sourcePageNumber?: number;
+  boundingBox?: [number, number, number, number];
+  sourceType: 'upload' | 'pdf_crop' | 'clipboard' | 'media_library' | 'library';
+  mimeType?: string;
+  createdAt?: string;
 }
 
 export type Parser2CropType =
@@ -191,6 +334,7 @@ export type Parser2CropType =
   | 'match_the_column'
   | 'chemical_structure'
   | 'math_expression'
+  | 'explanation'
   | 'other';
 
 export interface Parser2Figure {
@@ -210,6 +354,7 @@ export interface Parser2Figure {
   naturalHeight?: number;
   figureType: Parser2CropType | 'embedded_image';
   cropType?: Parser2CropType;
+  placement?: Parser2ImagePlacement;
   caption?: string;
   isManualCrop?: boolean;
   createdAt: string;
@@ -248,6 +393,7 @@ export interface Parser2Question {
   originalFigureUrl?: string; // backup of initial figure crop for Restore Original
   optionFigures?: { [label: string]: string }; // option-level images e.g. chemical structures
   originalOptionFigures?: { [label: string]: string };
+  imageAttachments?: Parser2ImageAttachment[]; // rich 14-slot image attachment array
   matchTable?: Parser2MatchTable;
   structuredTable?: Parser2StructuredTable;
   originalExtractedSnapshot?: {
@@ -259,6 +405,8 @@ export interface Parser2Question {
     capturedAt: string;
   };
   extractionEngine: Parser2OcrEngine;
+  providerUsed?: string;
+  modelUsed?: string;
   verificationStatus: Parser2VerificationStatus;
   confidenceScore: number; // 0..100
   componentValidation?: Parser2ComponentValidation;
@@ -282,11 +430,20 @@ export function isPlaceholderOption(val: string | undefined | null): boolean {
   const trimmed = val.trim().toLowerCase();
   if (trimmed.length === 0) return true;
 
-  // Real answers like "None", "None of these", "All of these", or pure numbers like "4", "3.5", "10" are authentic options
+  // Real NEET/JEE MCQ choices like "None", "None of these", "All of these",
+  // "Nothing can be said due to insufficient data", "Insufficient data", "Cannot be determined",
+  // or pure numbers like "4", "3.5", "10" are authentic answer options — NEVER placeholders.
   if (
-    trimmed === 'none' || 
-    trimmed === 'none of these' || 
-    trimmed === 'all of these' || 
+    trimmed === 'none' ||
+    trimmed === 'none of these' ||
+    trimmed === 'none of the above' ||
+    trimmed === 'all of these' ||
+    trimmed === 'all of the above' ||
+    trimmed === 'data insufficient' ||
+    trimmed === 'insufficient data' ||
+    trimmed === 'cannot be determined' ||
+    trimmed === 'can not be determined' ||
+    /^nothing\s+can\s+be\s+said/i.test(trimmed) ||
     /^\d+(?:\.\d+)?(?:\s*[a-zµΩ°%]+)?$/i.test(trimmed)
   ) {
     return false;
@@ -294,9 +451,9 @@ export function isPlaceholderOption(val: string | undefined | null): boolean {
 
   return (
     /^(?:(?:option|विकल्प)\s*[\(\[]?[a-d1-4१-४][\)\]]?|option\s+[a-d1-4]|[\(\[][a-d1-4][\)\]])$/i.test(trimmed) ||
-    /insufficient\s+data/i.test(trimmed) ||
+    /insufficient\s+data\s+in\s+(?:the\s+)?(?:snippet|image|crop|page|ocr)/i.test(trimmed) ||
     /not\s+(?:visible|provided|available|readable|shown)\s+in\s+(?:the\s+)?(?:snippet|image|crop|page)/i.test(trimmed) ||
-    /cannot\s+be\s+(?:determined|read|extracted)/i.test(trimmed) ||
+    /cannot\s+be\s+(?:read|extracted)\s+(?:from|in)\s+(?:the\s+)?(?:snippet|image|crop|page)/i.test(trimmed) ||
     /^\[?\s*(?:illegible|unclear|unreadable|missing\s+option(?:\s+text)?|data\s+missing|not\s+available|n\/a)\s*\]?$/i.test(trimmed) ||
     trimmed === '[missing option text]' ||
     trimmed === 'missing option' ||
@@ -335,7 +492,7 @@ export interface Parser2ValidationCheck {
 export interface Parser2ValidationReport {
   id: string;
   jobId: string;
-  qualityScore: number; // 0..100
+  qualityScore: number | null; // 0..100 or null (N/A when 0 questions extracted)
   totalChecks: number;
   passedChecks: number;
   criticalErrorsCount: number;
@@ -361,7 +518,17 @@ export interface Parser2ProcessingLog {
 export interface Parser2Settings {
   mistralOcrEnabled: boolean;
   geminiVerificationEnabled: boolean;
-  geminiModel: string; // e.g. "gemini-3.8-flash"
+  defaultProvider?: Parser2OcrEngine;
+  geminiModel: string; // e.g. "gemini-4-hydrogen"
+  mistralModel?: string; // e.g. "mistral-ocr-latest"
+  allowProviderFallback?: boolean;
+  fallbackProvider?: Parser2OcrEngine | 'none';
+  autoScanAnswerKey?: boolean;
+  geminiMaxConcurrency?: number;
+  geminiCooldownMs?: number;
+  mistralMaxConcurrency?: number;
+  mistralCooldownMs?: number;
+  maxApiRetries?: number;
   ocrBatchSize: number; // e.g. 5 pages per batch
   retryCount: number; // e.g. 3 retries
   pageLimit: number; // e.g. 100 pages per test

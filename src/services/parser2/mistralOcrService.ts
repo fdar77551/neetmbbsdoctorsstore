@@ -1,5 +1,8 @@
-// NCERTify AI Parser 2.0 - Mistral OCR API Service
-// Official API: mistral-ocr-latest / mistral-ocr-2512 with include_image_base64: true
+// NCERTify AI Parser 3.0 - Mistral OCR API Service
+// Official API: mistral-ocr-latest with include_image_base64: true
+// All requests are routed through the centralized ApiRateLimiter (429 / Retry-After / backoff / concurrency caps).
+
+import { apiRateLimiter, RetryNotice, StructuredApiError } from './apiRateLimiter.js';
 
 export interface MistralOcrImage {
   id: string;
@@ -25,143 +28,196 @@ export interface MistralOcrResponse {
   pages: MistralOcrPage[];
   model: string;
   rateLimited?: boolean;
+  error?: string;
+  statusCode?: number;
   usage_info?: {
     pages_processed: number;
     doc_size_bytes?: number;
   };
 }
 
+export interface MistralCallOptions {
+  model?: string;
+  label?: string;
+  maxRetries?: number;
+  onRetry?: (notice: RetryNotice) => void;
+  throwOnError?: boolean;
+}
+
 export class MistralOcrService {
-  private apiKey: string;
+  private explicitApiKey?: string;
   private baseUrl = 'https://api.mistral.ai/v1';
-  private rateLimitedUntil: number = 0;
 
   constructor(apiKey?: string) {
-    this.apiKey = apiKey || process.env.MISTRAL_API_KEY || 'mstrl_lI2FZX73d3MJPivLFIPQQAwZ0PQZYS4v_1B17tc';
+    this.explicitApiKey = apiKey;
+  }
+
+  private getApiKey(): string {
+    return (this.explicitApiKey || process.env.MISTRAL_API_KEY || '').trim();
   }
 
   public isConfigured(): boolean {
-    return Boolean(this.apiKey && this.apiKey.trim().length > 10);
+    return this.getApiKey().length > 10;
   }
 
   /**
    * Uploads a PDF to Mistral Files API (purpose='ocr')
    */
-  public async uploadPdfFile(pdfBuffer: Buffer, fileName: string = 'document.pdf'): Promise<string> {
-    if (!this.isConfigured()) {
-      throw new Error('Mistral API Key is not configured.');
+  public async uploadPdfFile(
+    pdfBuffer: Buffer,
+    fileName: string = 'document.pdf',
+    options?: MistralCallOptions,
+  ): Promise<string> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new StructuredApiError('MISTRAL_API_KEY is not configured in the server environment.', {
+        status: 401,
+        category: 'permanent',
+        provider: 'mistral',
+      });
     }
 
-    const formData = new FormData();
-    formData.append('purpose', 'ocr');
-    const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
-    formData.append('file', blob, fileName);
+    return apiRateLimiter.schedule(
+      'mistral',
+      async () => {
+        const formData = new FormData();
+        formData.append('purpose', 'ocr');
+        const blob = new Blob([new Uint8Array(pdfBuffer)], { type: 'application/pdf' });
+        formData.append('file', blob, fileName);
 
-    const res = await fetch(`${this.baseUrl}/files`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`
+        const res = await fetch(`${this.baseUrl}/files`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: formData,
+          signal: AbortSignal.timeout(25000),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text().catch(() => res.statusText);
+          throw new StructuredApiError(`Mistral File Upload failed (HTTP ${res.status}): ${errText.slice(0, 260)}`, {
+            status: res.status,
+            retryAfterHeader: res.headers.get('retry-after'),
+            provider: 'mistral',
+          });
+        }
+
+        const data = (await res.json()) as { id: string };
+        return data.id;
       },
-      body: formData,
-      signal: AbortSignal.timeout(20000)
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Mistral File Upload failed (${res.status}): ${errText}`);
-    }
-
-    const data = await res.json();
-    return data.id; // file_id
+      {
+        label: options?.label || `Mistral upload ${fileName}`,
+        maxRetries: options?.maxRetries,
+        onRetry: options?.onRetry,
+      },
+    );
   }
 
   /**
    * Retrieves a temporary signed download URL for an uploaded file
    */
-  public async getSignedUrl(fileId: string): Promise<string> {
-    const res = await fetch(`${this.baseUrl}/files/${fileId}/signed_url`, {
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`
-      },
-      signal: AbortSignal.timeout(12000)
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Mistral get_signed_url failed (${res.status}): ${errText}`);
+  public async getSignedUrl(fileId: string, options?: MistralCallOptions): Promise<string> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new StructuredApiError('MISTRAL_API_KEY is not configured in the server environment.', {
+        status: 401,
+        category: 'permanent',
+        provider: 'mistral',
+      });
     }
 
-    const data = await res.json();
-    return data.url;
+    return apiRateLimiter.schedule(
+      'mistral',
+      async () => {
+        const res = await fetch(`${this.baseUrl}/files/${fileId}/signed_url`, {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+          signal: AbortSignal.timeout(15000),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text().catch(() => res.statusText);
+          throw new StructuredApiError(`Mistral get_signed_url failed (HTTP ${res.status}): ${errText.slice(0, 260)}`, {
+            status: res.status,
+            retryAfterHeader: res.headers.get('retry-after'),
+            provider: 'mistral',
+          });
+        }
+
+        const data = (await res.json()) as { url: string };
+        return data.url;
+      },
+      {
+        label: options?.label || `Mistral signed_url ${fileId}`,
+        maxRetries: options?.maxRetries,
+        onRetry: options?.onRetry,
+      },
+    );
   }
 
   /**
    * Process PDF document via Mistral OCR API
    */
   public async processDocument(
-    documentUrl: string, 
+    documentUrl: string,
     pages?: number[],
-    includeImageBase64: boolean = true
+    includeImageBase64: boolean = true,
+    options?: MistralCallOptions,
   ): Promise<MistralOcrResponse> {
-    if (!this.isConfigured()) {
-      throw new Error('Mistral API Key is not configured.');
-    }
-    if (Date.now() < this.rateLimitedUntil) {
-      return { pages: [], model: 'mistral-ocr-rate-limited', rateLimited: true };
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new StructuredApiError('MISTRAL_API_KEY is not configured in the server environment.', {
+        status: 401,
+        category: 'permanent',
+        provider: 'mistral',
+      });
     }
 
-    const payload: any = {
-      model: 'mistral-ocr-latest',
+    const model = options?.model || 'mistral-ocr-latest';
+    const payload: Record<string, unknown> = {
+      model,
       document: {
         type: 'document_url',
-        document_url: documentUrl
+        document_url: documentUrl,
       },
-      include_image_base64: includeImageBase64
+      include_image_base64: includeImageBase64,
     };
-
     if (pages && pages.length > 0) {
       payload.pages = pages;
     }
 
-    let retries = 2;
-    let delay = 1500;
-
-    while (retries > 0) {
-      try {
+    return apiRateLimiter.schedule(
+      'mistral',
+      async () => {
         const res = await fetch(`${this.baseUrl}/ocr`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
           },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(25000)
+          signal: AbortSignal.timeout(35000),
         });
 
-        if (res.status === 429) {
-          this.rateLimitedUntil = Date.now() + 45000;
-          await new Promise(r => setTimeout(r, delay));
-          delay *= 2;
-          retries--;
-          continue;
-        }
-
         if (!res.ok) {
-          const errText = await res.text();
-          throw new Error(`Mistral OCR API error (${res.status}): ${errText}`);
+          const errText = await res.text().catch(() => res.statusText);
+          throw new StructuredApiError(`Mistral OCR API error (HTTP ${res.status}): ${errText.slice(0, 260)}`, {
+            status: res.status,
+            retryAfterHeader: res.headers.get('retry-after'),
+            provider: 'mistral',
+          });
         }
 
-        const data: MistralOcrResponse = await res.json();
-        return data;
-      } catch (e: any) {
-        retries--;
-        if (retries === 0) throw e;
-        await new Promise(r => setTimeout(r, delay));
-        delay *= 2;
-      }
-    }
-
-    throw new Error('Mistral OCR API request failed after retries.');
+        return (await res.json()) as MistralOcrResponse;
+      },
+      {
+        label: options?.label || `Mistral document OCR`,
+        maxRetries: options?.maxRetries,
+        onRetry: options?.onRetry,
+      },
+    );
   }
 
   /**
@@ -169,108 +225,98 @@ export class MistralOcrService {
    */
   public async processPageImage(
     imageBase64DataUrl: string,
-    includeImageBase64: boolean = true
+    includeImageBase64: boolean = true,
+    options?: MistralCallOptions,
   ): Promise<MistralOcrResponse> {
-    if (!this.isConfigured()) {
-      throw new Error('Mistral API Key is not configured.');
-    }
-
-    // Immediate non-blocking delegation if Mistral 429 cooldown is currently active
-    if (Date.now() < this.rateLimitedUntil) {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      const err = new StructuredApiError('MISTRAL_API_KEY is not configured in the server environment.', {
+        status: 401,
+        category: 'permanent',
+        provider: 'mistral',
+      });
+      if (options?.throwOnError) throw err;
       return {
         pages: [],
-        model: 'mistral-ocr-rate-limited',
-        rateLimited: true
+        model: options?.model || 'mistral-ocr-latest',
+        rateLimited: false,
+        statusCode: 401,
+        error: err.message,
       };
     }
 
+    const model = options?.model || 'mistral-ocr-latest';
     const payload = {
-      model: 'mistral-ocr-latest',
+      model,
       document: {
         type: 'image_url',
-        image_url: imageBase64DataUrl
+        image_url: imageBase64DataUrl,
       },
-      include_image_base64: includeImageBase64
+      include_image_base64: includeImageBase64,
     };
 
-    let retries = 2;
+    try {
+      return await apiRateLimiter.schedule(
+        'mistral',
+        async () => {
+          const res = await fetch(`${this.baseUrl}/ocr`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(25000),
+          });
 
-    while (retries > 0) {
-      try {
-        const res = await fetch(`${this.baseUrl}/ocr`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(15000)
-        });
-
-        if (res.ok) {
-          return await res.json();
-        }
-
-        if (res.status === 429) {
-          retries--;
-          const retryHeader = res.headers.get('retry-after');
-          const retrySec = retryHeader ? parseInt(retryHeader, 10) : 0;
-          const cooldownMs = retrySec > 0 ? Math.min(60000, retrySec * 1000) : 45000;
-          this.rateLimitedUntil = Date.now() + cooldownMs;
-
-          if (retries > 0 && retrySec <= 2) {
-            await new Promise(r => setTimeout(r, 1200));
-            continue;
+          if (!res.ok) {
+            const errText = await res.text().catch(() => res.statusText);
+            throw new StructuredApiError(`Mistral OCR error (HTTP ${res.status}): ${errText.slice(0, 260)}`, {
+              status: res.status,
+              retryAfterHeader: res.headers.get('retry-after'),
+              provider: 'mistral',
+            });
           }
-          console.log(`[MistralOCR] Rate limit 429 active (cooldown ${Math.round(cooldownMs / 1000)}s); delegating to Ghostscript + Gemini visual parser.`);
-          return {
-            pages: [],
-            model: 'mistral-ocr-rate-limited',
-            rateLimited: true
-          };
-        }
 
-        const err = await res.text();
-        console.warn(`[MistralOCR] HTTP ${res.status}: ${err.slice(0, 200)}`);
-        return {
-          pages: [],
-          model: 'mistral-ocr-error',
-          rateLimited: res.status === 429
-        };
-      } catch (err: any) {
-        retries--;
-        if (retries > 0) {
-          await new Promise(r => setTimeout(r, 800));
-        } else {
-          return {
-            pages: [],
-            model: 'mistral-ocr-error',
-            rateLimited: false
-          };
-        }
-      }
+          return (await res.json()) as MistralOcrResponse;
+        },
+        {
+          label: options?.label || 'Mistral page OCR',
+          maxRetries: options?.maxRetries,
+          onRetry: options?.onRetry,
+        },
+      );
+    } catch (err: any) {
+      if (options?.throwOnError) throw err;
+      const statusCode = err instanceof StructuredApiError ? err.status : undefined;
+      return {
+        pages: [],
+        model,
+        rateLimited: statusCode === 429,
+        statusCode,
+        error: err?.message || 'Mistral OCR request failed',
+      };
     }
-
-    return {
-      pages: [],
-      model: 'mistral-ocr-fallback',
-      rateLimited: true
-    };
   }
 
   /**
    * Test connectivity to Mistral API
    */
   public async testConnection(): Promise<{ success: boolean; model?: string; error?: string }> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      return { success: false, error: 'MISTRAL_API_KEY is not configured in server environment.' };
+    }
     try {
       const res = await fetch(`${this.baseUrl}/models`, {
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`
-        }
+          Authorization: `Bearer ${apiKey}`,
+        },
+        signal: AbortSignal.timeout(12000),
       });
       if (res.ok) {
-        const data = await res.json();
-        const ocrModel = (data.data || []).find((m: any) => m.id.includes('ocr'));
+        const data = (await res.json()) as { data?: Array<{ id: string }> };
+        const ocrModel = (data.data || []).find((m) => m.id.includes('ocr'));
         return { success: true, model: ocrModel?.id || 'mistral-ocr-latest' };
       }
       return { success: false, error: `HTTP ${res.status}: ${res.statusText}` };

@@ -39,7 +39,9 @@ import {
   Parser2Figure,
   Parser2ValidationReport,
   Parser2ProcessingLog,
-  isPlaceholderOption
+  Parser2ImagePlacement,
+  isPlaceholderOption,
+  isPageCompletedStatus
 } from '../../services/parser2/types';
 import { syncAllMockTestsFromSources, hasSuspiciousMathNotation } from '../../lib/mockTestData';
 import { getAdminRequestHeaders } from '../../lib/firebase';
@@ -51,21 +53,27 @@ import { Parser2ValidationModal } from './Parser2ValidationModal';
 import { Parser2SettingsModal } from './Parser2SettingsModal';
 import { Parser2PublishModal } from './Parser2PublishModal';
 import { Parser2AnswerKeyModal } from './Parser2AnswerKeyModal';
+import { Parser2ManualImportModal } from './Parser2ManualImportModal';
+import { Parser2DiagnosticsPanel } from './Parser2DiagnosticsPanel';
 
 const ACTIVE_STATUS_SET = new Set<Parser2JobStatus>([
   'uploaded',
   'queued',
+  'starting',
   'uploading',
   'extracting',
   'processing',
   'ocr_in_progress',
+  'ocr_completed',
   'question_detection',
   'question_extraction',
   'structuring',
   'figure_extraction',
   'validation',
+  'validating',
   'saving',
-  'verifying'
+  'verifying',
+  'retry_waiting'
 ]);
 
 const isJobActiveStatus = (status?: Parser2JobStatus) => Boolean(status && ACTIVE_STATUS_SET.has(status));
@@ -86,7 +94,7 @@ export const Parser2Dashboard: React.FC = () => {
   const [logs, setLogs] = useState<Parser2ProcessingLog[]>([]);
   const [validationReport, setValidationReport] = useState<Parser2ValidationReport | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'questions' | 'figures' | 'comparison' | 'validation' | 'logs'>('questions');
+  const [activeTab, setActiveTab] = useState<'questions' | 'figures' | 'comparison' | 'validation' | 'logs' | 'diagnostics'>('questions');
   const [questionFilter, setQuestionFilter] = useState<'all' | 'verified' | 'needs_review' | 'missing_options' | 'missing_table' | 'missing_figure' | 'symbol_review' | 'missing_answer' | 'has_figure' | 'has_table' | 'low_confidence'>('all');
   const [isBulkVerifying, setIsBulkVerifying] = useState(false);
   const [isRepairingPublication, setIsRepairingPublication] = useState(false);
@@ -96,6 +104,7 @@ export const Parser2Dashboard: React.FC = () => {
 
   // Modals
   const [isCreatorOpen, setIsCreatorOpen] = useState(false);
+  const [isManualImportOpen, setIsManualImportOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isValidationModalOpen, setIsValidationModalOpen] = useState(false);
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
@@ -105,6 +114,18 @@ export const Parser2Dashboard: React.FC = () => {
   const [copyFromPageMode, setCopyFromPageMode] = useState(false);
   const [recroppingQuestion, setRecroppingQuestion] = useState<Parser2Question | null>(null);
   const [recropTargetOption, setRecropTargetOption] = useState<'A' | 'B' | 'C' | 'D' | undefined>(undefined);
+  const [recropInitialPlacement, setRecropInitialPlacement] = useState<Parser2ImagePlacement | undefined>(undefined);
+  const [reExtractPreview, setReExtractPreview] = useState<{
+    questionId: string;
+    mode: 'options' | 'question' | 'both';
+    before: Parser2Question;
+    after: Parser2Question;
+    changesSummary: string[];
+    wasManuallyEdited: boolean;
+    wasVerified: boolean;
+    message: string;
+  } | null>(null);
+  const [isAcceptingReExtract, setIsAcceptingReExtract] = useState(false);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -267,18 +288,20 @@ export const Parser2Dashboard: React.FC = () => {
     const id = targetJobId || selectedJobId;
     if (!id) return;
     try {
-      const res = await fetch(`/api/parser2/jobs/${id}/retry-failed`, {
+      const res = await fetch(`/api/parser2/jobs/${id}/retry-stage`, {
         method: 'POST',
         headers: getAdminRequestHeaders()
       });
       const data = await res.json();
       if (data.success) {
-        triggerToast('Retrying failed pages with exponential backoff...');
+        triggerToast(data.message || 'Retrying failed stage with fresh extraction...');
         fetchJobs();
         fetchJobDetails(id);
+      } else {
+        triggerToast('Retry failed: ' + (data.error || `HTTP ${res.status}`));
       }
     } catch (e: any) {
-      triggerToast('Error retrying pages: ' + e.message);
+      triggerToast('Error retrying failed stage: ' + e.message);
     }
   };
 
@@ -390,6 +413,158 @@ export const Parser2Dashboard: React.FC = () => {
       }
     } catch (e: any) {
       triggerToast('Error removing figure: ' + e.message);
+    }
+  };
+
+  const handleRemoveOptionFigure = async (qId: string, optionLabel: 'A' | 'B' | 'C' | 'D') => {
+    if (!selectedJobId) return;
+    try {
+      const res = await fetch(`/api/parser2/jobs/${selectedJobId}/questions/${qId}/options/${optionLabel}/figure`, {
+        method: 'DELETE',
+        headers: getAdminRequestHeaders()
+      });
+      const data = await res.json();
+      if (data.success && data.question) {
+        setQuestions(prev => prev.map(q => (q.id === qId ? data.question : q)));
+        triggerToast(data.message || `Removed image from Option (${optionLabel}).`);
+        fetchJobDetails(selectedJobId);
+      } else {
+        triggerToast(data.error || `Failed to remove Option (${optionLabel}) image.`);
+      }
+    } catch (e: any) {
+      triggerToast('Error removing option image: ' + e.message);
+    }
+  };
+
+  const handleReExtractQuestion = async (qId: string, mode: 'options' | 'question' | 'both') => {
+    if (!selectedJobId) return;
+    try {
+      const res = await fetch(`/api/parser2/jobs/${selectedJobId}/questions/${qId}/re-extract`, {
+        method: 'POST',
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ mode, previewOnly: true })
+      });
+      const data = await res.json();
+      if (data.success && data.preview?.before && data.preview?.after) {
+        setReExtractPreview({
+          questionId: qId,
+          mode,
+          before: data.preview.before,
+          after: data.preview.after,
+          changesSummary: Array.isArray(data.preview.changesSummary) ? data.preview.changesSummary : [],
+          wasManuallyEdited: Boolean(data.preview.wasManuallyEdited),
+          wasVerified: Boolean(data.preview.wasVerified),
+          message: data.message || 'Preview generated from original PDF page.'
+        });
+      } else if (data.success && data.question) {
+        setQuestions(prev => prev.map(q => (q.id === qId ? data.question : q)));
+        triggerToast(data.message || 'Re-extraction complete.');
+        fetchJobQuestionsAndFigures(selectedJobId);
+        fetchJobDetails(selectedJobId);
+      } else {
+        triggerToast(data.error || 'Re-extraction could not update this question.');
+      }
+    } catch (e: any) {
+      triggerToast('Re-extraction error: ' + e.message);
+    }
+  };
+
+  const handleConfirmReExtractPreview = async () => {
+    if (!selectedJobId || !reExtractPreview || isAcceptingReExtract) return;
+    setIsAcceptingReExtract(true);
+    try {
+      const { questionId, after } = reExtractPreview;
+      const res = await fetch(`/api/parser2/jobs/${selectedJobId}/questions/${questionId}`, {
+        method: 'PUT',
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          questionText: after.questionText,
+          options: after.options,
+          optionFigures: after.optionFigures,
+          figureUrl: after.figureUrl ?? null,
+          figures: after.figures,
+          imageAttachments: after.imageAttachments,
+          hasDiagram: after.hasDiagram,
+          questionType: after.questionType,
+          structuredTable: after.structuredTable ?? null,
+          matchTable: after.matchTable ?? null,
+          verificationStatus: after.verificationStatus,
+          reviewRequired: after.reviewRequired,
+          reviewNotes: after.reviewNotes,
+          confidenceScore: after.confidenceScore,
+          componentValidation: after.componentValidation
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.question) {
+        setQuestions(prev => prev.map(q => (q.id === questionId ? data.question : q)));
+        setReExtractPreview(null);
+        triggerToast(`Saved re-extracted updates for Question ${data.question.questionNumber}!`);
+        fetchJobQuestionsAndFigures(selectedJobId);
+        fetchJobDetails(selectedJobId);
+      } else {
+        triggerToast(data.error || 'Failed to save re-extracted update.');
+      }
+    } catch (e: any) {
+      triggerToast('Error saving re-extracted update: ' + e.message);
+    } finally {
+      setIsAcceptingReExtract(false);
+    }
+  };
+
+  const handleRejectQuestion = async (qId: string) => {
+    if (!selectedJobId) return;
+    try {
+      const res = await fetch(`/api/parser2/jobs/${selectedJobId}/questions/${qId}`, {
+        method: 'PUT',
+        headers: getAdminRequestHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          verificationStatus: 'failed',
+          reviewRequired: true,
+          reviewNotes: 'Rejected by Admin during review; excluded from publishing until fixed.'
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.question) {
+        setQuestions(prev => prev.map(q => (q.id === qId ? data.question : q)));
+        triggerToast(`Question ${data.question.questionNumber} flagged as Rejected.`);
+        fetchJobDetails(selectedJobId);
+      } else {
+        triggerToast(data.error || 'Failed to reject question.');
+      }
+    } catch (e: any) {
+      triggerToast('Error rejecting question: ' + e.message);
+    }
+  };
+
+  const handleQuickUploadImage = async (
+    qId: string,
+    file: File,
+    opts?: { placement?: Parser2ImagePlacement; targetOption?: 'A' | 'B' | 'C' | 'D' }
+  ) => {
+    if (!selectedJobId) return;
+    try {
+      const formData = new FormData();
+      formData.append('figureFile', file);
+      if (opts?.placement) formData.append('placement', opts.placement);
+      if (opts?.targetOption) formData.append('targetOption', opts.targetOption);
+      const res = await fetch(`/api/parser2/jobs/${selectedJobId}/questions/${qId}/upload-figure`, {
+        method: 'POST',
+        headers: getAdminRequestHeaders(),
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success && data.question) {
+        setQuestions(prev => prev.map(q => (q.id === qId ? data.question : q)));
+        const targetLabel = opts?.targetOption ? `Option (${opts.targetOption}) of ` : '';
+        triggerToast(data.message || `Uploaded image to ${targetLabel}Question ${data.question.questionNumber}!`);
+        fetchJobQuestionsAndFigures(selectedJobId);
+        fetchJobDetails(selectedJobId);
+      } else {
+        triggerToast(data.error || 'Image upload failed.');
+      }
+    } catch (e: any) {
+      triggerToast('Error uploading image: ' + e.message);
     }
   };
 
@@ -552,7 +727,7 @@ export const Parser2Dashboard: React.FC = () => {
     if (jobHistoryFilter === 'active') return (isJobActiveStatus(j.status) && j.status !== 'queued' && j.status !== 'uploaded') || j.status === 'paused';
     if (jobHistoryFilter === 'completed') return j.status === 'completed' || j.status === 'review_required';
     if (jobHistoryFilter === 'published') return j.status === 'published' || Boolean(j.publishedTestId);
-    if (jobHistoryFilter === 'failed') return j.status === 'failed';
+    if (jobHistoryFilter === 'failed') return j.status === 'failed' || j.status === 'stalled' || j.status === 'dead_letter';
     return true;
   });
 
@@ -583,19 +758,19 @@ export const Parser2Dashboard: React.FC = () => {
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-lg sm:text-xl font-black font-['Outfit',sans-serif] tracking-tight">
-                  NCERTify AI Parser 3.0
+                  NCERTify AI Parser 4.0
                 </h1>
                 <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-400/30">
-                  Durable Queue + Multimodal Vision
+                  Durable Queue + Stall Watchdog + Multimodal
                 </span>
               </div>
               <p className="text-xs text-slate-300 font-medium mt-0.5">
-                Server-side background PDF extraction · Checkpoint recovery · Explicit review-before-publish
+                PDF extraction · Copy-Paste/MD/DOCX import · 14-slot media &amp; visual tables · Self-diagnostics
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={fetchJobs}
@@ -613,6 +788,15 @@ export const Parser2Dashboard: React.FC = () => {
             >
               <Settings2 className="w-4 h-4 text-blue-400" />
               <span className="whitespace-nowrap">Settings</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsManualImportOpen(true)}
+              className="min-h-[42px] px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-md shadow-emerald-600/25 transition cursor-pointer flex items-center gap-1.5"
+            >
+              <Upload className="w-4 h-4" />
+              <span className="whitespace-nowrap">Import Text / MD / File</span>
             </button>
 
             <button
@@ -664,7 +848,7 @@ export const Parser2Dashboard: React.FC = () => {
                 { id: 'active', label: `Active (${jobs.filter(j => (isJobActiveStatus(j.status) && j.status !== 'queued' && j.status !== 'uploaded') || j.status === 'paused').length})` },
                 { id: 'completed', label: `Completed / Review (${jobs.filter(j => j.status === 'completed' || j.status === 'review_required').length})` },
                 { id: 'published', label: `Published (${jobs.filter(j => j.status === 'published' || Boolean(j.publishedTestId)).length})` },
-                { id: 'failed', label: `Failed (${jobs.filter(j => j.status === 'failed').length})` }
+                { id: 'failed', label: `Failed / Stalled (${jobs.filter(j => j.status === 'failed' || j.status === 'stalled' || j.status === 'dead_letter').length})` }
               ] as const
             ).map(f => (
               <button
@@ -734,7 +918,7 @@ export const Parser2Dashboard: React.FC = () => {
                               ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
                               : j.status === 'review_required'
                               ? 'bg-orange-100 text-orange-800 border-orange-300'
-                              : j.status === 'failed'
+                              : j.status === 'failed' || j.status === 'stalled' || j.status === 'dead_letter'
                               ? 'bg-rose-100 text-rose-800 border-rose-300'
                               : 'bg-slate-200 text-slate-700 border-slate-300'
                           }`}
@@ -761,7 +945,11 @@ export const Parser2Dashboard: React.FC = () => {
                           {j.savedVerified && savedCount > 0 ? ' ✓' : ''}
                         </span>
                         <span>
-                          {typeof j.qualityScore === 'number' ? `Q: ${j.qualityScore}%` : `${pct}%`}
+                          {typeof j.qualityScore === 'number' && savedCount > 0
+                            ? `Q: ${j.qualityScore}%`
+                            : savedCount === 0 && !active
+                            ? 'Q: N/A'
+                            : `${pct}%`}
                         </span>
                       </div>
 
@@ -769,9 +957,15 @@ export const Parser2Dashboard: React.FC = () => {
                         <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
                           <div
                             className={`h-full transition-all ${
-                              j.status === 'failed' ? 'bg-rose-500' : active ? 'bg-amber-500' : 'bg-emerald-500'
+                              j.status === 'failed' || (!active && savedCount === 0)
+                                ? 'bg-rose-500'
+                                : active
+                                ? 'bg-amber-500'
+                                : j.status === 'review_required'
+                                ? 'bg-orange-500'
+                                : 'bg-emerald-500'
                             }`}
-                            style={{ width: `${pct}%` }}
+                            style={{ width: `${j.status === 'failed' && savedCount === 0 ? Math.max(pct, 100) : pct}%` }}
                           />
                         </div>
                       )}
@@ -852,18 +1046,29 @@ export const Parser2Dashboard: React.FC = () => {
                         ? 'bg-orange-50 text-orange-800 border-orange-300'
                         : selectedJob.status === 'published'
                         ? 'bg-purple-50 text-purple-700 border-purple-200'
-                        : selectedJob.status === 'failed'
+                        : selectedJob.status === 'failed' || selectedJob.status === 'stalled' || selectedJob.status === 'dead_letter'
                         ? 'bg-rose-50 text-rose-700 border-rose-200'
                         : 'bg-slate-100 text-slate-700 border-slate-200'
                     }`}
                   >
-                    {selectedJob.status.replace('_', ' ')}
+                    {selectedJob.status.replace(/_/g, ' ')}
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 font-medium mt-0.5">
-                  Subject: <span className="font-bold text-slate-800">{selectedJob.subject}</span> · Engine:{' '}
+                  Subject: <span className="font-bold text-slate-800">{selectedJob.subject}</span> · Provider:{' '}
                   <span className="font-bold text-slate-800">{selectedJob.ocrEngine.toUpperCase()}</span> · Model:{' '}
-                  <span className="font-mono text-slate-700">{selectedJob.geminiModel}</span>
+                  <span className="font-mono text-slate-700">
+                    {selectedJob.ocrEngine === 'mistral'
+                      ? `${selectedJob.mistralModel || 'mistral-ocr-latest'}${selectedJob.enableGeminiVerification ? ` + ${selectedJob.geminiModel}` : ''}`
+                      : selectedJob.ocrEngine === 'hybrid'
+                      ? `${selectedJob.mistralModel || 'mistral-ocr-latest'} + ${selectedJob.geminiModel}`
+                      : selectedJob.geminiModel}
+                  </span>
+                  {pages.some(p => p.fallbackUsed) && (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
+                      Fallback used on {pages.filter(p => p.fallbackUsed).length} pg(s)
+                    </span>
+                  )}
                   {selectedJob.currentStage ? ` · Stage: ${selectedJob.currentStage}` : ''}
                 </p>
               </div>
@@ -891,15 +1096,31 @@ export const Parser2Dashboard: React.FC = () => {
                   </button>
                 )}
 
-                {selectedJob.failedPages > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => handleRetryFailed()}
-                    className="min-h-[40px] px-3.5 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition cursor-pointer flex items-center gap-1.5"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" /> Retry {selectedJob.failedPages} Failed
-                  </button>
-                )}
+                {(() => {
+                  const retryablePagesCount =
+                    pages.filter(p => p.status === 'failed' || p.status === 'retry_required').length ||
+                    selectedJob.failedPages ||
+                    0;
+                  const showRetry =
+                    selectedJob.status === 'failed' ||
+                    selectedJob.status === 'stalled' ||
+                    selectedJob.status === 'dead_letter' ||
+                    retryablePagesCount > 0 ||
+                    (!isJobActiveStatus(selectedJob.status) && questions.length === 0);
+                  if (!showRetry) return null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => handleRetryFailed()}
+                      className="min-h-[40px] px-3.5 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />{' '}
+                      {retryablePagesCount > 0
+                        ? `Retry ${retryablePagesCount} Failed Page(s)`
+                        : 'Retry Failed Stage'}
+                    </button>
+                  );
+                })()}
 
                 <button
                   type="button"
@@ -956,10 +1177,63 @@ export const Parser2Dashboard: React.FC = () => {
               </div>
             </div>
 
-            {selectedJob.errorMessage && (
-              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-semibold flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                <span>Pipeline notice: {selectedJob.errorMessage}</span>
+            {selectedJob.rateLimitStatus?.active && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-start gap-2 min-w-0 flex-1">
+                  <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 animate-pulse" />
+                  <div className="space-y-0.5 min-w-0">
+                    <div className="font-black text-amber-900">
+                      API Rate Limit / Backoff Active ({selectedJob.rateLimitStatus.provider.toUpperCase()} · Attempt{' '}
+                      {selectedJob.rateLimitStatus.attempt}/{selectedJob.rateLimitStatus.maxRetries})
+                    </div>
+                    <div className="font-medium text-amber-800 break-words">
+                      {selectedJob.rateLimitStatus.message}
+                      {selectedJob.rateLimitStatus.nextRetryAt
+                        ? ` · Next retry at ${new Date(selectedJob.rateLimitStatus.nextRetryAt).toLocaleTimeString()}`
+                        : ''}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {(selectedJob.status === 'failed' || selectedJob.status === 'stalled' || selectedJob.status === 'dead_letter' || selectedJob.errorMessage || (!isJobActiveStatus(selectedJob.status) && questions.length === 0)) && (
+              <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-start gap-2 min-w-0 flex-1">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5 min-w-0">
+                    <div className="font-black text-rose-900">
+                      {selectedJob.status === 'stalled'
+                        ? 'Watchdog Detected Stalled Job'
+                        : selectedJob.status === 'failed' || selectedJob.status === 'dead_letter' || questions.length === 0
+                        ? `Extraction Failed${selectedJob.failedStage ? ` (${selectedJob.failedStage.replace(/_/g, ' ')})` : ''}`
+                        : 'Pipeline Warning'}
+                    </div>
+                    <div className="font-medium text-rose-800 break-words">
+                      {selectedJob.stallReason ||
+                        selectedJob.errorMessage ||
+                        '0 questions were extracted or saved for this job. Click Retry Failed Stage to re-run extraction cleanly.'}
+                    </div>
+                  </div>
+                </div>
+                {!isJobActiveStatus(selectedJob.status) && (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleRetryFailed()}
+                      className="min-h-[34px] px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black cursor-pointer flex items-center gap-1"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> Retry Failed Stage
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleStartResume()}
+                      className="min-h-[34px] px-3 py-1 rounded-lg bg-white hover:bg-rose-100 text-rose-800 border border-rose-300 text-[11px] font-bold cursor-pointer"
+                    >
+                      Resume Job
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -995,15 +1269,19 @@ export const Parser2Dashboard: React.FC = () => {
 
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
                 <span className="text-[10.5px] font-bold text-slate-500 uppercase block">Quality Score</span>
-                <span
-                  className={`text-base font-black font-['Outfit',sans-serif] ${
-                    (validationReport?.qualityScore ?? selectedJob.qualityScore ?? 0) >= 85
-                      ? 'text-emerald-600'
-                      : 'text-amber-600'
-                  }`}
-                >
-                  {validationReport?.qualityScore ?? selectedJob.qualityScore ?? 0}%
-                </span>
+                {(() => {
+                  const qScore = validationReport?.qualityScore ?? selectedJob.qualityScore;
+                  const isNA = qScore === null || qScore === undefined || questions.length === 0;
+                  return (
+                    <span
+                      className={`text-base font-black font-['Outfit',sans-serif] ${
+                        isNA ? 'text-slate-400' : qScore >= 85 ? 'text-emerald-600' : 'text-amber-600'
+                      }`}
+                    >
+                      {isNA ? 'N/A' : `${qScore}%`}
+                    </span>
+                  );
+                })()}
               </div>
 
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
@@ -1019,17 +1297,35 @@ export const Parser2Dashboard: React.FC = () => {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
                 {reconciliation && (
                   <div className="p-3 rounded-xl bg-slate-50/70 border border-slate-200 space-y-2">
-                    <div className="text-[11px] font-black uppercase tracking-wider text-slate-600">
-                      Stage 4 Extraction Reconciliation
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-slate-600">
+                        Stage 4 Extraction Reconciliation
+                      </span>
+                      <span className="text-[10.5px] font-bold text-slate-500 tabular-nums">
+                        Key Coverage:{' '}
+                        {reconciliation.answerKeyCoverage === null || reconciliation.answerKeyCoverage === undefined
+                          ? 'N/A'
+                          : `${reconciliation.answerKeyCoverage}%`}
+                      </span>
                     </div>
-                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center text-xs tabular-nums">
+                    <div className="grid grid-cols-4 sm:grid-cols-4 gap-2 text-center text-xs tabular-nums">
                       <div className="p-2 bg-white rounded-lg border border-slate-200">
-                        <div className="text-[10px] text-slate-500 font-bold">Expected</div>
-                        <div className="font-black text-slate-900">{reconciliation.expectedQuestions}</div>
+                        <div className="text-[10px] text-slate-500 font-bold">
+                          Expected{reconciliation.expectedQuestionsSource === 'manual' ? ' (Manual)' : ' (Auto)'}
+                        </div>
+                        <div className="font-black text-slate-900">
+                          {reconciliation.expectedQuestions != null ? reconciliation.expectedQuestions : 'Auto'}
+                        </div>
                       </div>
                       <div className="p-2 bg-white rounded-lg border border-slate-200">
                         <div className="text-[10px] text-slate-500 font-bold">Extracted</div>
                         <div className="font-black text-blue-700">{reconciliation.extractedQuestions}</div>
+                      </div>
+                      <div className="p-2 bg-white rounded-lg border border-slate-200">
+                        <div className="text-[10px] text-slate-500 font-bold">Saved</div>
+                        <div className={`font-black ${(reconciliation.savedQuestions ?? questions.length) > 0 ? 'text-indigo-700' : 'text-rose-700'}`}>
+                          {reconciliation.savedQuestions ?? questions.length}
+                        </div>
                       </div>
                       <div className="p-2 bg-white rounded-lg border border-slate-200">
                         <div className="text-[10px] text-slate-500 font-bold">Valid</div>
@@ -1040,12 +1336,18 @@ export const Parser2Dashboard: React.FC = () => {
                         <div className="font-black text-amber-700">{reconciliation.reviewRequiredCount}</div>
                       </div>
                       <div className="p-2 bg-white rounded-lg border border-slate-200">
+                        <div className="text-[10px] text-slate-500 font-bold">Missing</div>
+                        <div className={`font-black ${reconciliation.missingQuestions != null && reconciliation.missingQuestions > 0 ? 'text-rose-700' : 'text-slate-700'}`}>
+                          {reconciliation.missingQuestions != null ? reconciliation.missingQuestions : 'N/A'}
+                        </div>
+                      </div>
+                      <div className="p-2 bg-white rounded-lg border border-slate-200">
                         <div className="text-[10px] text-slate-500 font-bold">Dupes</div>
                         <div className="font-black text-rose-700">{reconciliation.duplicateCount}</div>
                       </div>
                       <div className="p-2 bg-white rounded-lg border border-slate-200">
                         <div className="text-[10px] text-slate-500 font-bold">No Key</div>
-                        <div className="font-black text-orange-700">{reconciliation.missingAnswerCount}</div>
+                        <div className="font-black text-orange-700">{reconciliation.missingAnswerCount ?? 0}</div>
                       </div>
                     </div>
                   </div>
@@ -1066,22 +1368,38 @@ export const Parser2Dashboard: React.FC = () => {
                           ['Math', qualityBreakdown.mathematics],
                           ['Answer Key', qualityBreakdown.answerKey]
                         ] as const
-                      ).map(([label, score]) => (
-                        <div key={label} className="bg-white p-2 rounded-lg border border-slate-200 space-y-1">
-                          <div className="flex items-center justify-between">
-                            <span className="text-slate-600">{label}</span>
-                            <span className={score >= 85 ? 'text-emerald-700' : score >= 60 ? 'text-amber-700' : 'text-rose-700'}>
-                              {score}%
-                            </span>
+                      ).map(([label, score]) => {
+                        const isZeroJob = questions.length === 0 && (reconciliation?.extractedQuestions ?? 0) === 0;
+                        const effectiveScore = isZeroJob ? null : score;
+                        const isNA = effectiveScore === null || effectiveScore === undefined;
+                        return (
+                          <div key={label} className="bg-white p-2 rounded-lg border border-slate-200 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-600">{label}</span>
+                              {isNA ? (
+                                <span
+                                  className="text-slate-400 font-extrabold text-[10.5px]"
+                                  title="Not applicable — insufficient extracted data for this dimension"
+                                >
+                                  N/A
+                                </span>
+                              ) : (
+                                <span className={effectiveScore >= 85 ? 'text-emerald-700' : effectiveScore >= 60 ? 'text-amber-700' : 'text-rose-700'}>
+                                  {effectiveScore}%
+                                </span>
+                              )}
+                            </div>
+                            <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                              {!isNA && (
+                                <div
+                                  className={`h-full ${effectiveScore >= 85 ? 'bg-emerald-500' : effectiveScore >= 60 ? 'bg-amber-500' : 'bg-rose-500'}`}
+                                  style={{ width: `${effectiveScore}%` }}
+                                />
+                              )}
+                            </div>
                           </div>
-                          <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full ${score >= 85 ? 'bg-emerald-500' : score >= 60 ? 'bg-amber-500' : 'bg-rose-500'}`}
-                              style={{ width: `${score}%` }}
-                            />
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -1093,20 +1411,39 @@ export const Parser2Dashboard: React.FC = () => {
               <div className="space-y-1.5 pt-1">
                 <div className="flex items-center justify-between text-[11px] font-bold text-slate-600 tabular-nums">
                   <span>Page-by-Page Ingestion Progress</span>
-                  <span>{Math.round((selectedJob.completedPages / selectedJob.totalPages) * 100)}% Complete</span>
+                  <span>
+                    {selectedJob.status === 'failed' || (!isJobActiveStatus(selectedJob.status) && questions.length === 0)
+                      ? `Failed (${selectedJob.completedPages}/${selectedJob.totalPages} pages · 0 Qs saved)`
+                      : `${Math.round((selectedJob.completedPages / selectedJob.totalPages) * 100)}% Pages Processed`}
+                  </span>
                 </div>
                 <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
                   <div
-                    className="bg-blue-600 h-full transition-all duration-300"
+                    className={`h-full transition-all duration-300 ${
+                      selectedJob.status === 'failed' || (!isJobActiveStatus(selectedJob.status) && questions.length === 0)
+                        ? 'bg-rose-500'
+                        : selectedJob.status === 'review_required'
+                        ? 'bg-orange-500'
+                        : 'bg-blue-600'
+                    }`}
                     style={{ width: `${(selectedJob.completedPages / selectedJob.totalPages) * 100}%` }}
                   />
                 </div>
 
                 <div className="flex flex-wrap items-center gap-1 pt-1.5">
                   {pages.map(p => {
-                    const isDone = p.status === 'completed';
+                    const isDone = isPageCompletedStatus(p.status);
                     const isFail = p.status === 'failed';
-                    const isProc = p.status === 'processing';
+                    const isRetryReq = p.status === 'retry_required';
+                    const isProc = p.status === 'processing' || p.status === 'extracted' || p.status === 'validated';
+                    const isSkip = p.status === 'skipped';
+                    const tooltipParts = [
+                      `Page ${p.pageNumber}: ${p.status.replace(/_/g, ' ')}`,
+                      typeof p.questionsSavedCount === 'number' ? `${p.questionsSavedCount} Qs saved` : null,
+                      p.providerUsed ? `${p.providerUsed}${p.modelUsed ? ` (${p.modelUsed})` : ''}` : null,
+                      p.fallbackUsed && p.fallbackReason ? `Fallback: ${p.fallbackReason}` : null,
+                      p.errorMessage ? `Error: ${p.errorMessage}` : null
+                    ].filter(Boolean);
 
                     return (
                       <span
@@ -1116,11 +1453,15 @@ export const Parser2Dashboard: React.FC = () => {
                             ? 'bg-emerald-100 text-emerald-800'
                             : isFail
                             ? 'bg-rose-100 text-rose-800'
+                            : isRetryReq
+                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
                             : isProc
                             ? 'bg-blue-100 text-blue-800 animate-pulse'
+                            : isSkip
+                            ? 'bg-slate-200 text-slate-600'
                             : 'bg-slate-100 text-slate-400'
                         }`}
-                        title={`Page ${p.pageNumber}: ${p.status}`}
+                        title={tooltipParts.join(' · ')}
                       >
                         {p.pageNumber}
                       </span>
@@ -1178,10 +1519,16 @@ export const Parser2Dashboard: React.FC = () => {
               {validationReport && (
                 <span
                   className={`text-[10px] font-black px-1.5 py-0.2 rounded-full ${
-                    validationReport.canPublish ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                    validationReport.qualityScore === null || validationReport.qualityScore === undefined || questions.length === 0
+                      ? 'bg-slate-100 text-slate-500'
+                      : validationReport.canPublish
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-amber-100 text-amber-800'
                   }`}
                 >
-                  {validationReport.qualityScore}%
+                  {validationReport.qualityScore === null || validationReport.qualityScore === undefined || questions.length === 0
+                    ? 'N/A'
+                    : `${validationReport.qualityScore}%`}
                 </span>
               )}
             </button>
@@ -1195,6 +1542,17 @@ export const Parser2Dashboard: React.FC = () => {
             >
               <Terminal className="w-4 h-4" />
               <span>Logs ({logs.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('diagnostics')}
+              className={`px-4 py-2.5 min-h-[42px] text-xs font-bold transition border-b-2 whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-2 ${
+                activeTab === 'diagnostics' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Activity className="w-4 h-4" />
+              <span>Diagnostics</span>
             </button>
           </div>
 
@@ -1366,9 +1724,13 @@ export const Parser2Dashboard: React.FC = () => {
                         setRecroppingQuestion(question);
                       }}
                       onAutoRecrop={handleAutoRecrop}
+                      onReExtract={handleReExtractQuestion}
+                      onQuickUploadImage={handleQuickUploadImage}
                       onDelete={qId => handleDeleteQuestion(qId)}
                       onMarkVerified={qId => handleApproveQuestion(qId)}
+                      onReject={qId => handleRejectQuestion(qId)}
                       onRemoveFigure={qId => handleRemoveFigure(qId)}
+                      onRemoveOptionFigure={handleRemoveOptionFigure}
                     />
                   ))}
                 </div>
@@ -1547,9 +1909,13 @@ export const Parser2Dashboard: React.FC = () => {
                               setRecroppingQuestion(question);
                             }}
                             onAutoRecrop={handleAutoRecrop}
+                            onReExtract={handleReExtractQuestion}
+                            onQuickUploadImage={handleQuickUploadImage}
                             onDelete={qId => handleDeleteQuestion(qId)}
                             onMarkVerified={qId => handleApproveQuestion(qId)}
+                            onReject={qId => handleRejectQuestion(qId)}
                             onRemoveFigure={qId => handleRemoveFigure(qId)}
+                            onRemoveOptionFigure={handleRemoveOptionFigure}
                           />
                         ))}
                     </div>
@@ -1584,8 +1950,16 @@ export const Parser2Dashboard: React.FC = () => {
                 <div className="space-y-3">
                   <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <div className="text-2xl font-black text-emerald-600 font-['Outfit',sans-serif] tabular-nums">
-                        {validationReport.qualityScore}% Quality Score
+                      <div className={`text-2xl font-black font-['Outfit',sans-serif] tabular-nums ${
+                        validationReport.qualityScore === null || validationReport.qualityScore === undefined || questions.length === 0
+                          ? 'text-slate-500'
+                          : validationReport.canPublish
+                          ? 'text-emerald-600'
+                          : 'text-amber-600'
+                      }`}>
+                        {validationReport.qualityScore === null || validationReport.qualityScore === undefined || questions.length === 0
+                          ? 'Quality Score: N/A'
+                          : `${validationReport.qualityScore}% Quality Score`}
                       </div>
                       <p className="text-xs text-slate-600 font-medium mt-0.5">{validationReport.summary}</p>
                     </div>
@@ -1653,6 +2027,22 @@ export const Parser2Dashboard: React.FC = () => {
               <div ref={logEndRef} />
             </div>
           )}
+
+          {/* TAB 6: PARSER 4.0 DIAGNOSTICS & LIVE SELF-TESTS */}
+          {activeTab === 'diagnostics' && (
+            <Parser2DiagnosticsPanel
+              job={selectedJob}
+              pages={pages}
+              logs={logs}
+              onRefreshJob={() => {
+                fetchJobs();
+                if (selectedJobId) {
+                  fetchJobDetails(selectedJobId);
+                  fetchJobQuestionsAndFigures(selectedJobId);
+                }
+              }}
+            />
+          )}
         </div>
       ) : (
         <div className="p-10 text-center bg-white rounded-2xl border border-slate-200 space-y-3">
@@ -1660,18 +2050,27 @@ export const Parser2Dashboard: React.FC = () => {
             <Layers className="w-6 h-6" />
           </div>
           <h3 className="text-base font-black text-slate-900 font-['Outfit',sans-serif]">
-            Welcome to NCERTify AI Parser 3.0
+            Welcome to NCERTify AI Parser 4.0
           </h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Upload question PDFs and answer keys to run persistent background extraction with exact diagram cropping and audit checks.
+            Upload question PDFs or import Markdown/Text/DOCX/JSON tests with checkpoint recovery, 14-slot image attachments, visual tables, and live diagnostics.
           </p>
-          <button
-            type="button"
-            onClick={() => setIsCreatorOpen(true)}
-            className="min-h-[42px] px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow-md transition cursor-pointer inline-flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" /> Create First Ingestion Job
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsManualImportOpen(true)}
+              className="min-h-[42px] px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-md transition cursor-pointer inline-flex items-center gap-2"
+            >
+              <Upload className="w-4 h-4" /> Import Text / MD / File
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsCreatorOpen(true)}
+              className="min-h-[42px] px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow-md transition cursor-pointer inline-flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" /> Create First Ingestion Job
+            </button>
+          </div>
         </div>
       )}
 
@@ -1775,6 +2174,22 @@ export const Parser2Dashboard: React.FC = () => {
         />
       )}
 
+      <Parser2ManualImportModal
+        isOpen={isManualImportOpen}
+        onClose={() => setIsManualImportOpen(false)}
+        existingJobs={jobs}
+        activeJobId={selectedJobId || undefined}
+        onImportSuccess={importedJob => {
+          setJobs(prev => [importedJob, ...prev.filter(j => j.id !== importedJob.id)]);
+          setSelectedJob(importedJob);
+          setSelectedJobId(importedJob.id);
+          fetchJobs();
+          fetchJobDetails(importedJob.id);
+          fetchJobQuestionsAndFigures(importedJob.id);
+          triggerToast(`Imported ${importedJob.totalQuestions} question(s) into "${importedJob.testName}".`);
+        }}
+      />
+
       {editingQuestion && selectedJob && (
         <Parser2QuestionEditModal
           jobId={selectedJob.id}
@@ -1791,8 +2206,9 @@ export const Parser2Dashboard: React.FC = () => {
             fetchJobQuestionsAndFigures(selectedJob.id);
             fetchJobDetails(selectedJob.id);
           }}
-          onOpenCropModal={(q, targetOption) => {
+          onOpenCropModal={(q, targetOption, initialPlacement) => {
             setRecropTargetOption(targetOption);
+            setRecropInitialPlacement(initialPlacement);
             setRecroppingQuestion(q);
           }}
           onSave={updatedQ => {
@@ -1811,9 +2227,11 @@ export const Parser2Dashboard: React.FC = () => {
           question={recroppingQuestion}
           totalPages={selectedJob.totalPages}
           targetOption={recropTargetOption}
+          initialPlacement={recropInitialPlacement}
           onClose={() => {
             setRecroppingQuestion(null);
             setRecropTargetOption(undefined);
+            setRecropInitialPlacement(undefined);
           }}
           onQuestionUpdated={updatedQ => {
             setQuestions(prev => prev.map(q => (q.id === updatedQ.id ? updatedQ : q)));
@@ -1848,10 +2266,167 @@ export const Parser2Dashboard: React.FC = () => {
             triggerToast(`Figure cropped & attached to ${labelInfo}Question ${recroppingQuestion.questionNumber}!`);
             setRecroppingQuestion(null);
             setRecropTargetOption(undefined);
+            setRecropInitialPlacement(undefined);
             fetchJobQuestionsAndFigures(selectedJob.id);
             fetchJobDetails(selectedJob.id);
           }}
         />
+      )}
+
+      {/* Re-extract Preview & Comparison Modal (Never silently overwrites verified/edited questions) */}
+      {reExtractPreview && (
+        <div className="fixed inset-0 z-[95] bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm sm:text-base font-black font-['Outfit',sans-serif]">
+                  Re-extract Preview — Q{reExtractPreview.before.questionNumber} ({reExtractPreview.mode === 'options' ? 'Options Only' : reExtractPreview.mode === 'question' ? 'Question Stem & Diagram' : 'Full Question'})
+                </h3>
+                <p className="text-[11px] text-slate-300 mt-0.5">
+                  Review extracted changes side-by-side before saving. Your database record is untouched until you click Accept.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReExtractPreview(null)}
+                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer"
+                aria-label="Close preview"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+              {(reExtractPreview.wasManuallyEdited || reExtractPreview.wasVerified) && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-xs text-amber-900 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <span>
+                    <strong>Protection Notice:</strong> This question was previously{' '}
+                    {reExtractPreview.wasManuallyEdited ? 'manually edited' : 'verified'}. Click{' '}
+                    <strong>Accept &amp; Save Update</strong> only if the newly extracted version is better.
+                  </span>
+                </div>
+              )}
+
+              {reExtractPreview.changesSummary.length > 0 && (
+                <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-900">
+                  <div className="font-bold mb-1">Detected Improvements:</div>
+                  <ul className="list-disc pl-4 space-y-0.5">
+                    {reExtractPreview.changesSummary.map((c, idx) => (
+                      <li key={idx}>{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {/* Current Version */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black uppercase tracking-wide text-slate-600">Current Saved Version</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-200 text-slate-700">
+                      {reExtractPreview.before.verificationStatus}
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-800 whitespace-pre-wrap bg-white p-2.5 rounded-lg border border-slate-200">
+                    {reExtractPreview.before.questionText || '(Empty stem)'}
+                  </div>
+                  {reExtractPreview.before.figureUrl && (
+                    <img
+                      src={reExtractPreview.before.figureUrl}
+                      alt="Current figure"
+                      className="max-h-32 mx-auto object-contain rounded border border-slate-200 bg-white p-1"
+                    />
+                  )}
+                  <div className="space-y-1.5">
+                    {(reExtractPreview.before.options || []).map(opt => {
+                      const img = opt.imageUrl || reExtractPreview.before.optionFigures?.[opt.label];
+                      const txt = (opt.value || opt.text || '').trim();
+                      return (
+                        <div key={opt.label} className="text-xs p-2 rounded-lg bg-white border border-slate-200 flex items-start gap-2">
+                          <span className="font-black text-slate-500">({opt.label})</span>
+                          <div className="flex-1 min-w-0">
+                            {txt ? <span>{txt}</span> : !img ? <span className="text-rose-500 italic">Missing</span> : null}
+                            {img && <img src={img} alt={`Current Option ${opt.label}`} className="max-h-14 mt-1 object-contain rounded border" />}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {reExtractPreview.before.structuredTable?.rows?.length ? (
+                    <div className="text-[11px] font-semibold text-slate-600">
+                      Data Table: {reExtractPreview.before.structuredTable.rows.length} rows
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Newly Extracted Preview */}
+                <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50/40 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black uppercase tracking-wide text-emerald-800">Newly Extracted Preview</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                      {reExtractPreview.after.verificationStatus}
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-900 whitespace-pre-wrap bg-white p-2.5 rounded-lg border border-emerald-200">
+                    {reExtractPreview.after.questionText || '(Empty stem)'}
+                  </div>
+                  {reExtractPreview.after.figureUrl && (
+                    <img
+                      src={reExtractPreview.after.figureUrl}
+                      alt="Extracted figure"
+                      className="max-h-32 mx-auto object-contain rounded border border-emerald-200 bg-white p-1"
+                    />
+                  )}
+                  <div className="space-y-1.5">
+                    {(reExtractPreview.after.options || []).map(opt => {
+                      const img = opt.imageUrl || reExtractPreview.after.optionFigures?.[opt.label];
+                      const txt = (opt.value || opt.text || '').trim();
+                      return (
+                        <div key={opt.label} className="text-xs p-2 rounded-lg bg-white border border-emerald-200 flex items-start gap-2">
+                          <span className="font-black text-emerald-700">({opt.label})</span>
+                          <div className="flex-1 min-w-0">
+                            {txt ? <span>{txt}</span> : !img ? <span className="text-rose-500 italic">Missing</span> : null}
+                            {img && <img src={img} alt={`Preview Option ${opt.label}`} className="max-h-14 mt-1 object-contain rounded border" />}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {reExtractPreview.after.structuredTable?.rows?.length ? (
+                    <div className="text-[11px] font-semibold text-emerald-800">
+                      Data Table: {reExtractPreview.after.structuredTable.rows.length} rows
+                    </div>
+                  ) : reExtractPreview.before.structuredTable?.rows?.length ? (
+                    <div className="text-[11px] font-semibold text-emerald-700">
+                      Bogus duplicate Data Table removed
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={isAcceptingReExtract}
+                onClick={() => setReExtractPreview(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+              >
+                Discard (Keep Existing)
+              </button>
+              <button
+                type="button"
+                disabled={isAcceptingReExtract}
+                onClick={handleConfirmReExtractPreview}
+                className="px-4 py-2 text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-xl transition shadow-sm cursor-pointer flex items-center gap-1.5"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                {isAcceptingReExtract ? 'Saving...' : 'Accept & Save Update'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

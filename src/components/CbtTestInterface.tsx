@@ -28,6 +28,12 @@ import {
 import { idbGetQuestions } from '../lib/idbStorage';
 import { cleanQuestionTextForMatchTable } from '../lib/geminiPdfParser';
 import { MathRenderer } from './common/MathRenderer';
+import {
+  QuestionStemWithAttachments,
+  QuestionAttachmentStrip,
+  RichMatchTableView,
+  RichStructuredTableView
+} from './common/QuestionMediaBlocks';
 
 interface CbtTestInterfaceProps {
   test: MockTest;
@@ -608,74 +614,32 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
                     </div>
                   )}
 
-                  {/* Question Text with KaTeX and Scientific Math Rendering */}
-                  <div className="text-sm sm:text-base font-semibold text-slate-900 leading-relaxed font-sans">
-                    <MathRenderer
-                      text={cleanQuestionTextForMatchTable(displayContent.questionText, displayContent.matchTable)}
-                      className="inline-block w-full"
-                    />
-                  </div>
+                  {/* Question Text with KaTeX, Scientific Math & before/between/assertion_reason images */}
+                  <QuestionStemWithAttachments
+                    text={cleanQuestionTextForMatchTable(displayContent.questionText, displayContent.matchTable)}
+                    attachments={currentQuestion?.imageAttachments}
+                    onZoom={url => setZoomedImage(url)}
+                    textClassName="text-sm sm:text-base font-semibold text-slate-900 leading-relaxed font-sans"
+                  />
 
-                  {/* Match-the-Column Structured Table (Preserves exam table format) */}
+                  {/* Match-the-Column Structured Table (supports cell/column images & borders) */}
                   {displayContent.matchTable && displayContent.matchTable.rows && displayContent.matchTable.rows.length > 0 && (
-                    <div className="my-3 overflow-x-auto rounded-xl border border-slate-300 bg-white shadow-2xs w-full max-w-2xl">
-                      <table className="w-full min-w-[320px] text-left text-xs sm:text-sm border-collapse">
-                        <thead>
-                          <tr className="bg-slate-100/90 border-b border-slate-300 text-slate-800 font-bold">
-                            <th className="py-2.5 px-3.5 border-r border-slate-300 w-1/2">
-                              {displayContent.matchTable.column1Header || (currentLanguage === 'hi' ? 'कॉलम-I' : 'Column-I')}
-                            </th>
-                            <th className="py-2.5 px-3.5 w-1/2">
-                              {displayContent.matchTable.column2Header || (currentLanguage === 'hi' ? 'कॉलम-II' : 'Column-II')}
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200">
-                          {displayContent.matchTable.rows.map((row, rIdx) => (
-                            <tr key={rIdx} className={rIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70'}>
-                              <td className="py-2.5 px-3.5 border-r border-slate-200 font-medium">
-                                <span className="font-bold text-blue-700 mr-2">{row.leftKey}</span>
-                                <MathRenderer as="span" text={row.leftText} className="text-slate-900 inline" />
-                              </td>
-                              <td className="py-2.5 px-3.5 font-medium">
-                                <span className="font-bold text-indigo-700 mr-2">{row.rightKey}</span>
-                                <MathRenderer as="span" text={row.rightText} className="text-slate-900 inline" />
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <RichMatchTableView
+                      matchTable={displayContent.matchTable}
+                      attachments={currentQuestion?.imageAttachments}
+                      defaultCol1={currentLanguage === 'hi' ? 'कॉलम-I' : 'Column-I'}
+                      defaultCol2={currentLanguage === 'hi' ? 'कॉलम-II' : 'Column-II'}
+                      onZoom={url => setZoomedImage(url)}
+                    />
                   )}
 
-                  {/* Generic Structured Data Table */}
+                  {/* Generic Structured Data Table (supports merged cells & cell images) */}
                   {displayContent.structuredTable && displayContent.structuredTable.rows && displayContent.structuredTable.rows.length > 0 && (
-                    <div className="my-3 overflow-x-auto rounded-xl border border-slate-300 bg-white shadow-2xs w-full max-w-2xl">
-                      <table className="w-full min-w-[320px] text-left text-xs sm:text-sm border-collapse">
-                        {displayContent.structuredTable.headers && displayContent.structuredTable.headers.length > 0 && (
-                          <thead>
-                            <tr className="bg-slate-100/90 border-b border-slate-300 text-slate-800 font-bold">
-                              {displayContent.structuredTable.headers.map((hdr, hIdx) => (
-                                <th key={hIdx} className="py-2.5 px-3.5 border-r last:border-r-0 border-slate-300">
-                                  <MathRenderer as="span" text={hdr} className="inline" />
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                        )}
-                        <tbody className="divide-y divide-slate-200">
-                          {displayContent.structuredTable.rows.map((row, rIdx) => (
-                            <tr key={rIdx} className={rIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70'}>
-                              {row.map((cell, cIdx) => (
-                                <td key={cIdx} className="py-2.5 px-3.5 border-r last:border-r-0 border-slate-200 font-medium text-slate-900">
-                                  <MathRenderer as="span" text={cell} className="inline" />
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <RichStructuredTableView
+                      table={displayContent.structuredTable}
+                      attachments={currentQuestion?.imageAttachments}
+                      onZoom={url => setZoomedImage(url)}
+                    />
                   )}
 
                   {/* ORIGINAL Scientific Figure (Diagram / Paper Chromatography / Circuit / Ray optics) */}
@@ -703,6 +667,15 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
                       />
                     </div>
                   )}
+
+                  {/* Additional after_question imageAttachments */}
+                  <QuestionAttachmentStrip
+                    attachments={(currentQuestion?.imageAttachments || []).filter(
+                      a => a.placement === 'after_question' && a.url !== sharedFigureUrl
+                    )}
+                    placements={['after_question']}
+                    onZoom={url => setZoomedImage(url)}
+                  />
 
                   {/* Four Options (A, B, C, D) */}
                   <div className="space-y-2 pt-2">
@@ -749,10 +722,22 @@ export const CbtTestInterface: React.FC<CbtTestInterfaceProps> = ({
                                   <img
                                     src={optFigure}
                                     alt={`Option ${opt.label} diagram`}
-                                    className="max-h-28 object-contain rounded-lg border border-slate-200 bg-white p-1.5 shadow-2xs"
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      setZoomedImage(optFigure);
+                                    }}
+                                    className="max-h-28 object-contain rounded-lg border border-slate-200 bg-white p-1.5 shadow-2xs cursor-zoom-in"
                                   />
                                 </div>
                               )}
+                              <QuestionAttachmentStrip
+                                attachments={(currentQuestion?.imageAttachments || []).filter(
+                                  a => a.placement === `option_${opt.label}` && a.url !== optFigure
+                                )}
+                                placements={[`option_${opt.label}`]}
+                                onZoom={url => setZoomedImage(url)}
+                                compact
+                              />
                             </div>
 
                             {isSelected && (

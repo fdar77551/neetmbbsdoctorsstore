@@ -38,9 +38,13 @@ import {
   Parser2MatchTable,
   Parser2StructuredTable,
   Parser2Figure,
+  Parser2ImageAttachment,
+  Parser2ImagePlacement,
   isPlaceholderOption 
 } from '../../services/parser2/types';
 import { getAdminRequestHeaders } from '../../lib/firebase';
+import { Parser2ImageManager } from './Parser2ImageManager';
+import { Parser2TableEditor } from './Parser2TableEditor';
 
 export type CopyTargetField =
   | 'questionText'
@@ -82,7 +86,11 @@ interface Parser2QuestionEditModalProps {
   onClose: () => void;
   onSave: (updated: Parser2Question) => void;
   onQuestionSync?: (updated: Parser2Question) => void;
-  onOpenCropModal?: (question: Parser2Question, targetOption?: 'A' | 'B' | 'C' | 'D') => void;
+  onOpenCropModal?: (
+    question: Parser2Question,
+    targetOption?: 'A' | 'B' | 'C' | 'D',
+    initialPlacement?: Parser2ImagePlacement
+  ) => void;
 }
 
 const QUICK_SYMBOLS = ['→', '⇌', 'î', 'ĵ', 'k̂', 'γ', 'Δ', 'σ', 'λ', 'θ', 'ε₀', 'μ₀', 'Ω', '⁻', '²', '³', '₁', '₂', '₃'];
@@ -117,6 +125,57 @@ export const Parser2QuestionEditModal: React.FC<Parser2QuestionEditModalProps> =
       if (o.imageUrl && !map[o.label]) map[o.label] = o.imageUrl;
     }
     return map;
+  });
+  const [explanationImageUrl, setExplanationImageUrl] = useState<string | undefined>(question.explanationImageUrl);
+  const [imageAttachments, setImageAttachments] = useState<Parser2ImageAttachment[]>(() => {
+    const base: Parser2ImageAttachment[] = Array.isArray(question.imageAttachments)
+      ? [...question.imageAttachments]
+      : [];
+    const seen = new Set(base.map(a => `${a.placement}::${a.url}`));
+    if (question.figureUrl && !seen.has(`after_question::${question.figureUrl}`) && !base.some(a => a.url === question.figureUrl)) {
+      base.push({
+        id: `legacy-fig-${question.id}`,
+        url: question.figureUrl,
+        placement: 'after_question',
+        alt: `Q${question.questionNumber} diagram`,
+        alignment: 'center',
+        widthPercent: 85,
+        sourceType: 'pdf_crop'
+      });
+      seen.add(`after_question::${question.figureUrl}`);
+    }
+    const optMap: Record<string, string> = { ...(question.optionFigures || {}) };
+    for (const o of question.options || []) {
+      if (o.imageUrl && !optMap[o.label]) optMap[o.label] = o.imageUrl;
+    }
+    for (const lbl of ['A', 'B', 'C', 'D'] as const) {
+      const url = optMap[lbl];
+      const placement = `option_${lbl}` as Parser2ImagePlacement;
+      if (url && !seen.has(`${placement}::${url}`)) {
+        base.push({
+          id: `legacy-opt-${lbl}-${question.id}`,
+          url,
+          placement,
+          alt: `Option ${lbl}`,
+          alignment: 'center',
+          widthPercent: 80,
+          sourceType: 'pdf_crop'
+        });
+        seen.add(`${placement}::${url}`);
+      }
+    }
+    if (question.explanationImageUrl && !seen.has(`explanation::${question.explanationImageUrl}`)) {
+      base.push({
+        id: `legacy-expl-${question.id}`,
+        url: question.explanationImageUrl,
+        placement: 'explanation',
+        alt: `Q${question.questionNumber} explanation`,
+        alignment: 'center',
+        widthPercent: 85,
+        sourceType: 'upload'
+      });
+    }
+    return base;
   });
 
   const [matchTable, setMatchTable] = useState<Parser2MatchTable | undefined>(question.matchTable);
@@ -250,7 +309,28 @@ export const Parser2QuestionEditModal: React.FC<Parser2QuestionEditModalProps> =
       if (o.imageUrl && !map[o.label]) map[o.label] = o.imageUrl;
     }
     setOptionFigures(map);
+    setExplanationImageUrl(question.explanationImageUrl);
+    if (Array.isArray(question.imageAttachments) && question.imageAttachments.length > 0) {
+      setImageAttachments(question.imageAttachments);
+    }
   }, [question]);
+
+  const handleImageAttachmentsChange = (next: Parser2ImageAttachment[]) => {
+    pushUndo();
+    setImageAttachments(next);
+    const primaryAtt = next.find(
+      a => a.placement === 'after_question' || a.placement === 'before_question' || a.placement === 'between_paragraphs'
+    );
+    setFigureUrl(primaryAtt ? primaryAtt.url : undefined);
+    const nextOptFigs: { [label: string]: string } = {};
+    for (const lbl of ['A', 'B', 'C', 'D'] as const) {
+      const optAtt = next.find(a => a.placement === `option_${lbl}`);
+      if (optAtt?.url) nextOptFigs[lbl] = optAtt.url;
+    }
+    setOptionFigures(nextOptFigs);
+    const explAtt = next.find(a => a.placement === 'explanation' || a.placement === 'answer_key_explanation');
+    setExplanationImageUrl(explAtt?.url);
+  };
 
   const insertSymbol = (sym: string) => {
     pushUndo();
@@ -625,9 +705,11 @@ export const Parser2QuestionEditModal: React.FC<Parser2QuestionEditModalProps> =
           options: updatedOptions,
           optionFigures: Object.keys(optionFigures).length > 0 ? optionFigures : undefined,
           figureUrl: figureUrl ?? null,
+          imageAttachments,
+          explanationImageUrl: explanationImageUrl ?? null,
           ...(figureUrl ? (figuresList.length > 0 ? { figures: figuresList, figureAssetIds: figuresList.map(f => f.id) } : {}) : { figures: [], figureAssetIds: [] }),
           matchTable: hasCanonicalMatchTable ? matchTable : undefined,
-          structuredTable: !hasCanonicalMatchTable && structuredTable && structuredTable.rows?.length ? structuredTable : undefined,
+          structuredTable: structuredTable && structuredTable.rows?.length ? structuredTable : undefined,
           verificationStatus: verifyAfterSave ? 'verified' : 'needs_review',
           reviewRequired: !verifyAfterSave,
           reviewNotes: verifyAfterSave
@@ -1282,150 +1364,28 @@ export const Parser2QuestionEditModal: React.FC<Parser2QuestionEditModalProps> =
               />
             </div>
 
-            {/* Match The Column Editable Table (Create / Edit) */}
-            {(questionType === 'match_the_column' || (matchTable && matchTable.rows?.length > 0)) && (
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs font-black text-slate-700 flex items-center gap-1.5">
-                    <Columns className="w-3.5 h-3.5 text-blue-600" /> List I / List II Match Table
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      pushUndo();
-                      const rows = matchTable?.rows ? [...matchTable.rows] : [];
-                      const idx = rows.length;
-                      rows.push({
-                        colAKey: String.fromCharCode(97 + idx),
-                        colAText: '',
-                        colBKey: ['i', 'ii', 'iii', 'iv', 'v'][idx] || String(idx + 1),
-                        colBText: ''
-                      });
-                      setMatchTable({
-                        columnAHeader: matchTable?.columnAHeader || 'List - I',
-                        columnBHeader: matchTable?.columnBHeader || 'List - II',
-                        rows
-                      });
-                    }}
-                    className="px-2 py-1 rounded-lg bg-white border border-slate-300 text-[11px] font-bold text-blue-700 hover:bg-blue-50 flex items-center gap-1 cursor-pointer"
-                  >
-                    <Plus className="w-3 h-3" /> Add Row
-                  </button>
-                </div>
-
-                {matchTable && matchTable.rows && matchTable.rows.length > 0 ? (
-                  <div className="space-y-1.5">
-                    {matchTable.rows.map((row, rIdx) => (
-                      <div key={rIdx} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <input
-                          type="text"
-                          value={row.colAText}
-                          onChange={(e) => {
-                            const nextRows = [...matchTable.rows];
-                            nextRows[rIdx] = { ...nextRows[rIdx], colAText: e.target.value };
-                            setMatchTable({ ...matchTable, rows: nextRows });
-                          }}
-                          className="bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs"
-                          placeholder={`List I (${row.colAKey})`}
-                        />
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="text"
-                            value={row.colBText}
-                            onChange={(e) => {
-                              const nextRows = [...matchTable.rows];
-                              nextRows[rIdx] = { ...nextRows[rIdx], colBText: e.target.value };
-                              setMatchTable({ ...matchTable, rows: nextRows });
-                            }}
-                            className="flex-1 bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs"
-                            placeholder={`List II (${row.colBKey})`}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              pushUndo();
-                              setMatchTable({
-                                ...matchTable,
-                                rows: matchTable.rows.filter((_, idx) => idx !== rIdx)
-                              });
-                            }}
-                            className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg cursor-pointer"
-                            title="Remove row"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                    List I / List II table is empty. Use "View Source Page &amp; Copy" (Target: Table / List I / List II) or click "Add Row" above.
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Structured Table Editor (only when no canonical matchTable is present) */}
-            {!(matchTable && matchTable.rows?.length > 0) && (questionType === 'table_based' || (structuredTable && structuredTable.rows?.length > 0)) && (
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs font-black text-slate-700 flex items-center gap-1.5">
-                    <TableIcon className="w-3.5 h-3.5 text-indigo-600" /> Structured Data Table
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      pushUndo();
-                      const headers = structuredTable?.headers?.length ? [...structuredTable.headers] : ['Column 1', 'Column 2'];
-                      const rows = structuredTable?.rows ? [...structuredTable.rows] : [];
-                      rows.push(headers.map(() => ''));
-                      setStructuredTable({ headers, rows });
-                    }}
-                    className="px-2 py-1 rounded-lg bg-white border border-slate-300 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 flex items-center gap-1 cursor-pointer"
-                  >
-                    <Plus className="w-3 h-3" /> Add Row
-                  </button>
-                </div>
-                {structuredTable && structuredTable.rows.length > 0 && (
-                  <div className="overflow-x-auto space-y-1">
-                    <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${structuredTable.headers.length}, minmax(90px, 1fr))` }}>
-                      {structuredTable.headers.map((h, hIdx) => (
-                        <input
-                          key={hIdx}
-                          type="text"
-                          value={h}
-                          onChange={e => {
-                            const nextH = [...structuredTable.headers];
-                            nextH[hIdx] = e.target.value;
-                            setStructuredTable({ ...structuredTable, headers: nextH });
-                          }}
-                          className="bg-slate-200/70 border border-slate-300 rounded px-2 py-1 text-[11px] font-bold"
-                        />
-                      ))}
-                    </div>
-                    {structuredTable.rows.map((r, rIdx) => (
-                      <div key={rIdx} className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${structuredTable.headers.length}, minmax(90px, 1fr))` }}>
-                        {r.map((cell, cIdx) => (
-                          <input
-                            key={cIdx}
-                            type="text"
-                            value={cell}
-                            onChange={e => {
-                              const nextRows = structuredTable.rows.map((rowArr, idx) =>
-                                idx === rIdx ? rowArr.map((c, j) => (j === cIdx ? e.target.value : c)) : rowArr
-                              );
-                              setStructuredTable({ ...structuredTable, rows: nextRows });
-                            }}
-                            className="bg-white border border-slate-300 rounded px-2 py-1 text-xs"
-                          />
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+            {/* Visual Match-the-Column & Data Table Editor (Parser 4.0) */}
+            <Parser2TableEditor
+              jobId={jobId}
+              questionId={question.id}
+              questionNumber={question.questionNumber}
+              matchTable={matchTable}
+              structuredTable={structuredTable}
+              onChangeMatchTable={next => {
+                pushUndo();
+                setMatchTable(next);
+                if (next && next.rows.length > 0 && questionType === 'single_mcq') {
+                  setQuestionType('match_the_column');
+                }
+              }}
+              onChangeStructuredTable={next => {
+                pushUndo();
+                setStructuredTable(next);
+                if (next && next.rows.length > 0 && questionType === 'single_mcq') {
+                  setQuestionType('table_based');
+                }
+              }}
+            />
 
             {/* Primary Scientific Figure Controls */}
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
@@ -1549,6 +1509,27 @@ export const Parser2QuestionEditModal: React.FC<Parser2QuestionEditModalProps> =
                 </div>
               )}
             </div>
+
+            {/* Complete 14-Slot Image & Diagram Attachment Manager (Parser 4.0) */}
+            <Parser2ImageManager
+              jobId={jobId}
+              questionId={question.id}
+              questionNumber={question.questionNumber}
+              attachments={imageAttachments}
+              onChange={handleImageAttachmentsChange}
+              onOpenPdfCrop={
+                onOpenCropModal
+                  ? (placement) => {
+                      const optMatch = /^option_([A-D])$/.exec(placement);
+                      onOpenCropModal(
+                        question,
+                        optMatch ? (optMatch[1] as 'A' | 'B' | 'C' | 'D') : undefined,
+                        placement
+                      );
+                    }
+                  : undefined
+              }
+            />
 
             {/* Four Options */}
             <div className="space-y-2">

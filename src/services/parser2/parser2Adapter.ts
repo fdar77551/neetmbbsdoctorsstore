@@ -88,29 +88,40 @@ export function mapParser2QuestionsToMock(
   return questions.map((q) => {
     const formattedMatchTable = q.matchTable
       ? {
-          column1Header: q.matchTable.columnAHeader || 'Column I',
-          column2Header: q.matchTable.columnBHeader || 'Column II',
+          column1Header: q.matchTable.columnAHeader || q.matchTable.colATitle || 'Column I',
+          column2Header: q.matchTable.columnBHeader || q.matchTable.colBTitle || 'Column II',
+          leftTableImageUrl: q.matchTable.leftTableImageUrl,
+          rightTableImageUrl: q.matchTable.rightTableImageUrl,
+          showBorders: q.matchTable.showBorders ?? true,
           rows: (q.matchTable.rows || []).map(r => ({
             leftKey: r.colAKey || (r as any).leftKey,
-            leftText: r.colAText || (r as any).leftText,
+            leftText: r.colAText || r.colAValue || (r as any).leftText,
+            leftImageUrl: r.colAImageUrl || (r as any).leftImageUrl,
             rightKey: r.colBKey || (r as any).rightKey,
-            rightText: r.colBText || (r as any).rightText
+            rightText: r.colBText || r.colBValue || (r as any).rightText,
+            rightImageUrl: r.colBImageUrl || (r as any).rightImageUrl
           }))
         }
       : undefined;
 
-    const hasMatchRows = Boolean(formattedMatchTable && formattedMatchTable.rows.length > 0);
     const formattedStructuredTable =
-      !hasMatchRows && q.structuredTable && Array.isArray(q.structuredTable.rows) && q.structuredTable.rows.length > 0
+      q.structuredTable && Array.isArray(q.structuredTable.rows) && q.structuredTable.rows.length > 0
         ? {
             headers: q.structuredTable.headers || [],
             rows: q.structuredTable.rows,
-            caption: q.structuredTable.caption
+            caption: q.structuredTable.caption,
+            cellMeta: q.structuredTable.cellMeta,
+            showBorders: q.structuredTable.showBorders ?? true,
+            alignment: q.structuredTable.alignment
           }
         : undefined;
 
+    const attachments = Array.isArray(q.imageAttachments) ? q.imageAttachments : [];
+
     const mappedOptions = q.options.map(o => {
-      const optImg = o.imageUrl || q.optionFigures?.[o.label];
+      const optPlacementKey = `option_${o.label}` as const;
+      const attachedOptImg = attachments.find(a => a.placement === optPlacementKey)?.url;
+      const optImg = o.imageUrl || q.optionFigures?.[o.label] || attachedOptImg;
       const val = o.value || o.text || '';
       const optType: 'text' | 'image' | 'text_and_image' =
         optImg && (!val || val.startsWith('[Figure')) ? 'image' : optImg ? 'text_and_image' : 'text';
@@ -139,6 +150,10 @@ export function mapParser2QuestionsToMock(
         : `Page ${q.sourcePageNumber || 1}`
     );
 
+    const explanationImg =
+      q.explanationImageUrl ||
+      attachments.find(a => a.placement === 'explanation' || a.placement === 'answer_key_explanation')?.url;
+
     return {
       id: `q-${targetTestId}-${q.questionNumber}`,
       testId: targetTestId,
@@ -150,10 +165,12 @@ export function mapParser2QuestionsToMock(
       correctAnswer: (q.correctAnswer && ['A', 'B', 'C', 'D'].includes(q.correctAnswer) ? q.correctAnswer : 'A') as 'A' | 'B' | 'C' | 'D',
       answerStatus: q.answerStatus || (q.correctAnswer ? 'matched' : 'answer_missing'),
       explanation: q.explanation || 'Step-by-step solution verified by NCERTify AI Parser.',
+      explanationImageUrl: explanationImg,
       figureUrl: q.figureUrl,
       questionImageUrl: q.figureUrl,
       figures: q.figures ? q.figures.map(f => f.figureUrl) : (q.figureUrl ? [q.figureUrl] : []),
       optionFigures: q.optionFigures,
+      imageAttachments: attachments.length > 0 ? attachments : undefined,
       matchTable: formattedMatchTable,
       structuredTable: formattedStructuredTable,
       sourcePageNumber: q.sourcePageNumber,
@@ -162,7 +179,7 @@ export function mapParser2QuestionsToMock(
       sourcePageRange,
       pdfPageNumber: q.sourcePageNumber,
       pdfPageRange: sourcePageRange,
-      hasFigure: Boolean(q.figureUrl),
+      hasFigure: Boolean(q.figureUrl || attachments.length > 0),
       languages: {
         en: {
           questionText: q.questionText,

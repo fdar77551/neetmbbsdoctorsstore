@@ -15,7 +15,8 @@ import {
   Parser2ValidationReport,
   Parser2ProcessingLog,
   Parser2Settings,
-  isPlaceholderOption
+  isPlaceholderOption,
+  isPageCompletedStatus
 } from './types';
 import { formatSourcePageRange } from './layoutEngine';
 import { getR2Client, getR2Json, putR2Json, listR2Keys } from './parser2R2Storage';
@@ -38,7 +39,17 @@ export function setParser2StorePath(customPath: string): void {
 export const DEFAULT_PARSER2_SETTINGS: Parser2Settings = {
   mistralOcrEnabled: true,
   geminiVerificationEnabled: true,
+  defaultProvider: 'gemini',
   geminiModel: 'gemini-4-hydrogen',
+  mistralModel: 'mistral-ocr-latest',
+  allowProviderFallback: true,
+  fallbackProvider: 'gemini',
+  autoScanAnswerKey: true,
+  geminiMaxConcurrency: 1,
+  geminiCooldownMs: 1800,
+  mistralMaxConcurrency: 1,
+  mistralCooldownMs: 1200,
+  maxApiRetries: 4,
   ocrBatchSize: 4,
   retryCount: 3,
   pageLimit: 100,
@@ -286,7 +297,7 @@ export async function ensureParser2D1Tables(): Promise<void> {
   d1TablesInitialized = true;
 
   const stmts = [
-    `CREATE TABLE IF NOT EXISTS parser2_jobs (id TEXT PRIMARY KEY, test_name TEXT NOT NULL, subject TEXT NOT NULL, chapter TEXT, question_range TEXT, ocr_engine TEXT NOT NULL DEFAULT 'mistral', gemini_model TEXT NOT NULL DEFAULT 'gemini-4-hydrogen', enable_gemini_verification INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'queued', current_stage TEXT, total_pages INTEGER NOT NULL DEFAULT 0, completed_pages INTEGER NOT NULL DEFAULT 0, failed_pages INTEGER NOT NULL DEFAULT 0, total_questions INTEGER NOT NULL DEFAULT 0, questions_detected INTEGER NOT NULL DEFAULT 0, questions_saved INTEGER NOT NULL DEFAULT 0, saved_verified INTEGER NOT NULL DEFAULT 0, verified_questions INTEGER NOT NULL DEFAULT 0, review_required_count INTEGER NOT NULL DEFAULT 0, figure_count INTEGER NOT NULL DEFAULT 0, estimated_cost_usd REAL NOT NULL DEFAULT 0.0, retry_count INTEGER NOT NULL DEFAULT 0, manually_edited_count INTEGER NOT NULL DEFAULT 0, has_answer_key INTEGER NOT NULL DEFAULT 0, quality_score INTEGER NOT NULL DEFAULT 0, reconciliation_json TEXT, quality_breakdown_json TEXT, published_test_id TEXT, error_message TEXT, original_pdf_file_name TEXT, source_question_pdf_name TEXT, source_solution_pdf_name TEXT, last_activity_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
+    `CREATE TABLE IF NOT EXISTS parser2_jobs (id TEXT PRIMARY KEY, test_name TEXT NOT NULL, subject TEXT NOT NULL, chapter TEXT, question_range TEXT, ocr_engine TEXT NOT NULL DEFAULT 'mistral', gemini_model TEXT NOT NULL DEFAULT 'gemini-4-hydrogen', enable_gemini_verification INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'queued', current_stage TEXT, failed_stage TEXT, total_pages INTEGER NOT NULL DEFAULT 0, completed_pages INTEGER NOT NULL DEFAULT 0, failed_pages INTEGER NOT NULL DEFAULT 0, total_questions INTEGER NOT NULL DEFAULT 0, questions_detected INTEGER NOT NULL DEFAULT 0, questions_saved INTEGER NOT NULL DEFAULT 0, saved_verified INTEGER NOT NULL DEFAULT 0, verified_questions INTEGER NOT NULL DEFAULT 0, review_required_count INTEGER NOT NULL DEFAULT 0, figure_count INTEGER NOT NULL DEFAULT 0, estimated_cost_usd REAL NOT NULL DEFAULT 0.0, retry_count INTEGER NOT NULL DEFAULT 0, manually_edited_count INTEGER NOT NULL DEFAULT 0, has_answer_key INTEGER NOT NULL DEFAULT 0, quality_score INTEGER NOT NULL DEFAULT 0, reconciliation_json TEXT, quality_breakdown_json TEXT, published_test_id TEXT, error_message TEXT, original_pdf_file_name TEXT, source_question_pdf_name TEXT, source_solution_pdf_name TEXT, last_activity_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
     `CREATE TABLE IF NOT EXISTS parser2_source_files (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, file_type TEXT NOT NULL, file_name TEXT NOT NULL, file_size INTEGER NOT NULL, storage_key TEXT NOT NULL, mime_type TEXT NOT NULL, page_count INTEGER NOT NULL DEFAULT 0, uploaded_at TEXT NOT NULL);`,
     `CREATE TABLE IF NOT EXISTS parser2_pages (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, page_number INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', ocr_raw_text TEXT, ocr_markdown TEXT, page_image_key TEXT, page_width INTEGER, page_height INTEGER, processing_time_ms INTEGER, error_message TEXT, updated_at TEXT NOT NULL, UNIQUE(job_id, page_number));`,
     `CREATE TABLE IF NOT EXISTS parser2_questions (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, test_id TEXT, question_number INTEGER NOT NULL, subject TEXT NOT NULL, chapter TEXT, question_type TEXT NOT NULL DEFAULT 'single_mcq', question_text TEXT NOT NULL, option_a TEXT NOT NULL, option_b TEXT NOT NULL, option_c TEXT NOT NULL, option_d TEXT NOT NULL, options_json TEXT, correct_answer TEXT, answer_status TEXT, explanation TEXT, source_page_number INTEGER NOT NULL, source_page_end INTEGER, source_pages_json TEXT, source_page_range TEXT, detected_answer TEXT, imported_answer TEXT, answer_set_code TEXT, answer_source_page INTEGER, answer_confidence REAL, answer_key_status TEXT, page_layout TEXT, chemistry_content_type TEXT, figure_url TEXT, figures_json TEXT, option_figures_json TEXT, match_table_json TEXT, structured_table_json TEXT, component_validation_json TEXT, original_snapshot_json TEXT, verification_status TEXT NOT NULL DEFAULT 'verified', confidence_score INTEGER NOT NULL DEFAULT 100, review_required INTEGER NOT NULL DEFAULT 0, review_notes TEXT, admin_override INTEGER NOT NULL DEFAULT 0, is_manually_edited INTEGER NOT NULL DEFAULT 0, manually_edited_at TEXT, edited_fields_json TEXT, is_deleted INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
@@ -303,6 +314,7 @@ export async function ensureParser2D1Tables(): Promise<void> {
   const jobColumns = await getD1TableColumns('parser2_jobs');
   const jobMigrations: Array<[string, string]> = [
     ['current_stage', `ALTER TABLE parser2_jobs ADD COLUMN current_stage TEXT;`],
+    ['failed_stage', `ALTER TABLE parser2_jobs ADD COLUMN failed_stage TEXT;`],
     ['retry_count', `ALTER TABLE parser2_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;`],
     ['manually_edited_count', `ALTER TABLE parser2_jobs ADD COLUMN manually_edited_count INTEGER NOT NULL DEFAULT 0;`],
     ['has_answer_key', `ALTER TABLE parser2_jobs ADD COLUMN has_answer_key INTEGER NOT NULL DEFAULT 0;`],
@@ -317,11 +329,46 @@ export async function ensureParser2D1Tables(): Promise<void> {
     ['original_pdf_file_name', `ALTER TABLE parser2_jobs ADD COLUMN original_pdf_file_name TEXT;`],
     ['source_question_pdf_name', `ALTER TABLE parser2_jobs ADD COLUMN source_question_pdf_name TEXT;`],
     ['source_solution_pdf_name', `ALTER TABLE parser2_jobs ADD COLUMN source_solution_pdf_name TEXT;`],
-    ['last_activity_at', `ALTER TABLE parser2_jobs ADD COLUMN last_activity_at TEXT;`]
+    ['last_activity_at', `ALTER TABLE parser2_jobs ADD COLUMN last_activity_at TEXT;`],
+    ['expected_questions_manual', `ALTER TABLE parser2_jobs ADD COLUMN expected_questions_manual INTEGER;`],
+    ['allow_provider_fallback', `ALTER TABLE parser2_jobs ADD COLUMN allow_provider_fallback INTEGER NOT NULL DEFAULT 1;`],
+    ['fallback_provider', `ALTER TABLE parser2_jobs ADD COLUMN fallback_provider TEXT;`],
+    ['auto_scan_answer_key', `ALTER TABLE parser2_jobs ADD COLUMN auto_scan_answer_key INTEGER NOT NULL DEFAULT 1;`],
+    ['mistral_model', `ALTER TABLE parser2_jobs ADD COLUMN mistral_model TEXT;`],
+    ['lock_owner_id', `ALTER TABLE parser2_jobs ADD COLUMN lock_owner_id TEXT;`],
+    ['lock_expires_at', `ALTER TABLE parser2_jobs ADD COLUMN lock_expires_at TEXT;`],
+    ['stalled_at', `ALTER TABLE parser2_jobs ADD COLUMN stalled_at TEXT;`],
+    ['stall_reason', `ALTER TABLE parser2_jobs ADD COLUMN stall_reason TEXT;`],
+    ['import_source', `ALTER TABLE parser2_jobs ADD COLUMN import_source TEXT;`]
   ];
 
   for (const [col, sql] of jobMigrations) {
     if (!jobColumns || !jobColumns.has(col)) {
+      await executeD1Query(sql, [], { ignoreDuplicateColumn: true }).catch(() => {});
+    }
+  }
+
+  const pageColumns = await getD1TableColumns('parser2_pages');
+  const pageMigrations: Array<[string, string]> = [
+    ['provider_used', `ALTER TABLE parser2_pages ADD COLUMN provider_used TEXT;`],
+    ['model_used', `ALTER TABLE parser2_pages ADD COLUMN model_used TEXT;`],
+    ['fallback_used', `ALTER TABLE parser2_pages ADD COLUMN fallback_used INTEGER NOT NULL DEFAULT 0;`],
+    ['fallback_reason', `ALTER TABLE parser2_pages ADD COLUMN fallback_reason TEXT;`],
+    ['questions_extracted_count', `ALTER TABLE parser2_pages ADD COLUMN questions_extracted_count INTEGER NOT NULL DEFAULT 0;`],
+    ['questions_saved_count', `ALTER TABLE parser2_pages ADD COLUMN questions_saved_count INTEGER NOT NULL DEFAULT 0;`],
+    ['retry_attempts', `ALTER TABLE parser2_pages ADD COLUMN retry_attempts INTEGER NOT NULL DEFAULT 0;`],
+    ['checkpoint_at', `ALTER TABLE parser2_pages ADD COLUMN checkpoint_at TEXT;`],
+    ['request_started_at', `ALTER TABLE parser2_pages ADD COLUMN request_started_at TEXT;`],
+    ['response_time_ms', `ALTER TABLE parser2_pages ADD COLUMN response_time_ms INTEGER;`],
+    ['ocr_status', `ALTER TABLE parser2_pages ADD COLUMN ocr_status TEXT;`],
+    ['extraction_status', `ALTER TABLE parser2_pages ADD COLUMN extraction_status TEXT;`],
+    ['questions_detected_count', `ALTER TABLE parser2_pages ADD COLUMN questions_detected_count INTEGER NOT NULL DEFAULT 0;`],
+    ['dead_lettered', `ALTER TABLE parser2_pages ADD COLUMN dead_lettered INTEGER NOT NULL DEFAULT 0;`],
+    ['last_api_summary', `ALTER TABLE parser2_pages ADD COLUMN last_api_summary TEXT;`]
+  ];
+
+  for (const [col, sql] of pageMigrations) {
+    if (!pageColumns || !pageColumns.has(col)) {
       await executeD1Query(sql, [], { ignoreDuplicateColumn: true }).catch(() => {});
     }
   }
@@ -337,6 +384,8 @@ export async function ensureParser2D1Tables(): Promise<void> {
     ['chemistry_content_type', `ALTER TABLE parser2_questions ADD COLUMN chemistry_content_type TEXT;`],
     ['figures_json', `ALTER TABLE parser2_questions ADD COLUMN figures_json TEXT;`],
     ['option_figures_json', `ALTER TABLE parser2_questions ADD COLUMN option_figures_json TEXT;`],
+    ['image_attachments_json', `ALTER TABLE parser2_questions ADD COLUMN image_attachments_json TEXT;`],
+    ['explanation_image_url', `ALTER TABLE parser2_questions ADD COLUMN explanation_image_url TEXT;`],
     ['match_table_json', `ALTER TABLE parser2_questions ADD COLUMN match_table_json TEXT;`],
     ['structured_table_json', `ALTER TABLE parser2_questions ADD COLUMN structured_table_json TEXT;`],
     ['component_validation_json', `ALTER TABLE parser2_questions ADD COLUMN component_validation_json TEXT;`],
@@ -350,7 +399,10 @@ export async function ensureParser2D1Tables(): Promise<void> {
     ['answer_set_code', `ALTER TABLE parser2_questions ADD COLUMN answer_set_code TEXT;`],
     ['answer_source_page', `ALTER TABLE parser2_questions ADD COLUMN answer_source_page INTEGER;`],
     ['answer_confidence', `ALTER TABLE parser2_questions ADD COLUMN answer_confidence REAL;`],
-    ['answer_key_status', `ALTER TABLE parser2_questions ADD COLUMN answer_key_status TEXT;`]
+    ['answer_key_status', `ALTER TABLE parser2_questions ADD COLUMN answer_key_status TEXT;`],
+    ['extraction_engine', `ALTER TABLE parser2_questions ADD COLUMN extraction_engine TEXT;`],
+    ['provider_used', `ALTER TABLE parser2_questions ADD COLUMN provider_used TEXT;`],
+    ['model_used', `ALTER TABLE parser2_questions ADD COLUMN model_used TEXT;`]
   ];
 
   for (const [col, sql] of questionMigrations) {
@@ -376,11 +428,17 @@ function mapD1RowToJob(r: any): Parser2Job {
     subject: r.subject,
     chapter: r.chapter || '',
     questionRange: r.question_range || '',
-    ocrEngine: r.ocr_engine || 'mistral',
+    expectedQuestionsManual: r.expected_questions_manual !== undefined && r.expected_questions_manual !== null ? Number(r.expected_questions_manual) : null,
+    ocrEngine: r.ocr_engine || 'gemini',
     geminiModel: r.gemini_model === 'gemini-3.8-flash' ? 'gemini-4-hydrogen' : (r.gemini_model || 'gemini-4-hydrogen'),
+    mistralModel: r.mistral_model || 'mistral-ocr-latest',
+    allowProviderFallback: r.allow_provider_fallback === undefined ? true : Boolean(r.allow_provider_fallback),
+    fallbackProvider: r.fallback_provider || 'gemini',
+    autoScanAnswerKey: r.auto_scan_answer_key === undefined ? true : Boolean(r.auto_scan_answer_key),
     enableGeminiVerification: Boolean(r.enable_gemini_verification),
     status: r.status || 'queued',
     currentStage: r.current_stage || undefined,
+    failedStage: r.failed_stage || undefined,
     totalPages: Number(r.total_pages || 0),
     completedPages: Number(r.completed_pages || 0),
     failedPages: Number(r.failed_pages || 0),
@@ -397,7 +455,7 @@ function mapD1RowToJob(r: any): Parser2Job {
     retryCount: Number(r.retry_count || 0),
     manuallyEditedCount: Number(r.manually_edited_count || 0),
     hasAnswerKey: Boolean(r.has_answer_key),
-    qualityScore: r.quality_score ? Number(r.quality_score) : undefined,
+    qualityScore: totalQ === 0 && (resolvedSaved || 0) === 0 ? null : (r.quality_score !== undefined && r.quality_score !== null && Number(r.quality_score) >= 0 ? Number(r.quality_score) : null),
     reconciliation: r.reconciliation_json ? JSON.parse(r.reconciliation_json) : undefined,
     qualityBreakdown: r.quality_breakdown_json ? JSON.parse(r.quality_breakdown_json) : undefined,
     publishedTestId: r.published_test_id || undefined,
@@ -406,6 +464,11 @@ function mapD1RowToJob(r: any): Parser2Job {
     sourceQuestionPdfName: r.source_question_pdf_name || undefined,
     sourceSolutionPdfName: r.source_solution_pdf_name || undefined,
     lastActivityAt: r.last_activity_at || r.updated_at,
+    lockOwnerId: r.lock_owner_id || undefined,
+    lockExpiresAt: r.lock_expires_at || undefined,
+    stalledAt: r.stalled_at || undefined,
+    stallReason: r.stall_reason || undefined,
+    importSource: r.import_source || undefined,
     createdAt: r.created_at,
     updatedAt: r.updated_at
   };
@@ -445,13 +508,17 @@ function mapD1RowToQuestion(r: any): Parser2Question {
     pageLayout: r.page_layout || undefined,
     chemistryContentType: r.chemistry_content_type || undefined,
     figureUrl: r.figure_url || undefined,
+    explanationImageUrl: r.explanation_image_url || undefined,
     figures: r.figures_json ? JSON.parse(r.figures_json) : undefined,
     optionFigures: r.option_figures_json ? JSON.parse(r.option_figures_json) : undefined,
+    imageAttachments: r.image_attachments_json ? JSON.parse(r.image_attachments_json) : undefined,
     matchTable: r.match_table_json ? JSON.parse(r.match_table_json) : undefined,
     structuredTable: r.structured_table_json ? JSON.parse(r.structured_table_json) : undefined,
     componentValidation: r.component_validation_json ? JSON.parse(r.component_validation_json) : undefined,
     originalExtractedSnapshot: r.original_snapshot_json ? JSON.parse(r.original_snapshot_json) : undefined,
-    extractionEngine: 'mistral',
+    extractionEngine: r.extraction_engine || 'gemini',
+    providerUsed: r.provider_used || undefined,
+    modelUsed: r.model_used || undefined,
     verificationStatus: r.verification_status || 'needs_review',
     confidenceScore: Number(r.confidence_score ?? 80),
     reviewRequired: Boolean(r.review_required),
@@ -568,16 +635,19 @@ export async function hydrateParser2FromRemoteStores(force: boolean = false): Pr
           ? store.parser2_questions[j.id].filter((q: Parser2Question) => !q.isDeleted)
           : [];
         const actualCount = localQs.length;
-        if (actualCount > 0 && (!j.questionsSaved || j.questionsSaved !== actualCount)) {
-          return {
-            ...j,
-            totalQuestions: Math.max(j.totalQuestions || 0, actualCount),
-            questionsDetected: Math.max(j.questionsDetected || 0, actualCount),
-            questionsSaved: actualCount,
-            savedVerified: true
-          };
+        const nextJob = actualCount > 0 && (!j.questionsSaved || j.questionsSaved !== actualCount)
+          ? {
+              ...j,
+              totalQuestions: Math.max(j.totalQuestions || 0, actualCount),
+              questionsDetected: Math.max(j.questionsDetected || 0, actualCount),
+              questionsSaved: actualCount,
+              savedVerified: true
+            }
+          : j;
+        if ((nextJob.totalQuestions || 0) === 0 && (nextJob.questionsSaved || 0) === 0) {
+          return { ...nextJob, qualityScore: null };
         }
-        return j;
+        return nextJob;
       });
 
       const mergedJobs = normalizedJobs.sort((a, b) => {
@@ -633,7 +703,7 @@ async function hydrateJobDetailsIfNeeded(jobId: string, force: boolean = false):
         }
         if (Array.isArray(rPages) && rPages.length > 0) {
           const curPages: Parser2Page[] = s.parser2_pages?.[jobId] || [];
-          if (curPages.length === 0 || rPages.filter(x => x.status === 'completed').length > curPages.filter(x => x.status === 'completed').length) {
+          if (curPages.length === 0 || rPages.filter(x => isPageCompletedStatus(x.status)).length > curPages.filter(x => isPageCompletedStatus(x.status)).length) {
             s.parser2_pages[jobId] = rPages;
           }
         }
@@ -745,16 +815,20 @@ export async function getParser2Jobs(options?: { forceRemoteSync?: boolean }): P
     const localQs: Parser2Question[] = Array.isArray(store.parser2_questions?.[j.id])
       ? store.parser2_questions[j.id].filter((q: Parser2Question) => !q.isDeleted)
       : [];
-    if (localQs.length > 0 && (!j.questionsSaved || j.questionsSaved === 0)) {
-      return {
-        ...j,
-        totalQuestions: Math.max(j.totalQuestions || 0, localQs.length),
-        questionsDetected: Math.max(j.questionsDetected || 0, localQs.length),
-        questionsSaved: localQs.length,
-        savedVerified: true
-      };
+    const nextJob =
+      localQs.length > 0 && (!j.questionsSaved || j.questionsSaved === 0)
+        ? {
+            ...j,
+            totalQuestions: Math.max(j.totalQuestions || 0, localQs.length),
+            questionsDetected: Math.max(j.questionsDetected || 0, localQs.length),
+            questionsSaved: localQs.length,
+            savedVerified: true
+          }
+        : j;
+    if ((nextJob.totalQuestions || 0) === 0 && (nextJob.questionsSaved || 0) === 0) {
+      return { ...nextJob, qualityScore: null };
     }
-    return j;
+    return nextJob;
   });
 
   return jobs.sort((a, b) => {
@@ -772,6 +846,9 @@ export async function getParser2JobById(jobId: string): Promise<Parser2Job | nul
     await hydrateParser2FromRemoteStores(true);
     const refreshed = loadStore();
     found = (refreshed.parser2_jobs || []).find((j: Parser2Job) => j.id === jobId) || null;
+  }
+  if (found && (found.totalQuestions || 0) === 0 && (found.questionsSaved || 0) === 0) {
+    return { ...found, qualityScore: null };
   }
   return found;
 }
@@ -815,9 +892,9 @@ export async function saveParser2Job(job: Parser2Job, options?: { syncRemote?: b
     isD1Configured()
       ? ensureParser2D1Tables().then(() =>
           executeD1Query(
-            `INSERT INTO parser2_jobs (id, test_name, subject, chapter, question_range, ocr_engine, gemini_model, enable_gemini_verification, status, current_stage, total_pages, completed_pages, failed_pages, total_questions, questions_detected, questions_saved, saved_verified, verified_questions, review_required_count, figure_count, estimated_cost_usd, retry_count, manually_edited_count, has_answer_key, quality_score, reconciliation_json, quality_breakdown_json, published_test_id, error_message, original_pdf_file_name, source_question_pdf_name, source_solution_pdf_name, last_activity_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET test_name=excluded.test_name, subject=excluded.subject, chapter=excluded.chapter, status=excluded.status, current_stage=excluded.current_stage, total_pages=excluded.total_pages, completed_pages=excluded.completed_pages, failed_pages=excluded.failed_pages, total_questions=excluded.total_questions, questions_detected=excluded.questions_detected, questions_saved=excluded.questions_saved, saved_verified=excluded.saved_verified, verified_questions=excluded.verified_questions, review_required_count=excluded.review_required_count, figure_count=excluded.figure_count, estimated_cost_usd=excluded.estimated_cost_usd, retry_count=excluded.retry_count, manually_edited_count=excluded.manually_edited_count, has_answer_key=excluded.has_answer_key, quality_score=excluded.quality_score, reconciliation_json=excluded.reconciliation_json, quality_breakdown_json=excluded.quality_breakdown_json, published_test_id=excluded.published_test_id, error_message=excluded.error_message, last_activity_at=excluded.last_activity_at, updated_at=excluded.updated_at;`,
+            `INSERT INTO parser2_jobs (id, test_name, subject, chapter, question_range, ocr_engine, gemini_model, enable_gemini_verification, status, current_stage, failed_stage, total_pages, completed_pages, failed_pages, total_questions, questions_detected, questions_saved, saved_verified, verified_questions, review_required_count, figure_count, estimated_cost_usd, retry_count, manually_edited_count, has_answer_key, quality_score, reconciliation_json, quality_breakdown_json, published_test_id, error_message, original_pdf_file_name, source_question_pdf_name, source_solution_pdf_name, last_activity_at, lock_owner_id, lock_expires_at, stalled_at, stall_reason, import_source, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET test_name=excluded.test_name, subject=excluded.subject, chapter=excluded.chapter, status=excluded.status, current_stage=excluded.current_stage, failed_stage=excluded.failed_stage, total_pages=excluded.total_pages, completed_pages=excluded.completed_pages, failed_pages=excluded.failed_pages, total_questions=excluded.total_questions, questions_detected=excluded.questions_detected, questions_saved=excluded.questions_saved, saved_verified=excluded.saved_verified, verified_questions=excluded.verified_questions, review_required_count=excluded.review_required_count, figure_count=excluded.figure_count, estimated_cost_usd=excluded.estimated_cost_usd, retry_count=excluded.retry_count, manually_edited_count=excluded.manually_edited_count, has_answer_key=excluded.has_answer_key, quality_score=excluded.quality_score, reconciliation_json=excluded.reconciliation_json, quality_breakdown_json=excluded.quality_breakdown_json, published_test_id=excluded.published_test_id, error_message=excluded.error_message, last_activity_at=excluded.last_activity_at, lock_owner_id=excluded.lock_owner_id, lock_expires_at=excluded.lock_expires_at, stalled_at=excluded.stalled_at, stall_reason=excluded.stall_reason, import_source=excluded.import_source, updated_at=excluded.updated_at;`,
             [
               saved.id,
               saved.testName,
@@ -829,6 +906,7 @@ export async function saveParser2Job(job: Parser2Job, options?: { syncRemote?: b
               saved.enableGeminiVerification ? 1 : 0,
               saved.status,
               saved.currentStage || '',
+              saved.failedStage || '',
               saved.totalPages || 0,
               saved.completedPages || 0,
               saved.failedPages || 0,
@@ -852,6 +930,11 @@ export async function saveParser2Job(job: Parser2Job, options?: { syncRemote?: b
               saved.sourceQuestionPdfName || '',
               saved.sourceSolutionPdfName || '',
               saved.lastActivityAt || now,
+              saved.lockOwnerId || '',
+              saved.lockExpiresAt || '',
+              saved.stalledAt || '',
+              saved.stallReason || '',
+              saved.importSource || '',
               saved.createdAt,
               saved.updatedAt
             ]
@@ -962,10 +1045,22 @@ export async function saveParser2Page(page: Parser2Page, options?: { syncRemote?
     isD1Configured()
       ? ensureParser2D1Tables().then(() =>
           executeD1Query(
-            `INSERT INTO parser2_pages (id, job_id, page_number, status, ocr_markdown, page_image_key, page_width, page_height, processing_time_ms, error_message, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(job_id, page_number) DO UPDATE SET status=excluded.status, ocr_markdown=excluded.ocr_markdown, page_image_key=excluded.page_image_key, error_message=excluded.error_message, updated_at=excluded.updated_at;`,
-            [page.id, page.jobId, page.pageNumber, page.status, page.ocrMarkdown || '', page.pageImageKey || '', page.pageWidth || 0, page.pageHeight || 0, page.processingTimeMs || 0, page.errorMessage || '', now]
+            `INSERT INTO parser2_pages (id, job_id, page_number, status, ocr_markdown, page_image_key, page_width, page_height, processing_time_ms, error_message, provider_used, model_used, fallback_used, fallback_reason, questions_extracted_count, questions_saved_count, retry_attempts, checkpoint_at, request_started_at, response_time_ms, ocr_status, extraction_status, questions_detected_count, dead_lettered, last_api_summary, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(job_id, page_number) DO UPDATE SET status=excluded.status, ocr_markdown=excluded.ocr_markdown, page_image_key=excluded.page_image_key, processing_time_ms=excluded.processing_time_ms, error_message=excluded.error_message, provider_used=excluded.provider_used, model_used=excluded.model_used, fallback_used=excluded.fallback_used, fallback_reason=excluded.fallback_reason, questions_extracted_count=excluded.questions_extracted_count, questions_saved_count=excluded.questions_saved_count, retry_attempts=excluded.retry_attempts, checkpoint_at=excluded.checkpoint_at, request_started_at=excluded.request_started_at, response_time_ms=excluded.response_time_ms, ocr_status=excluded.ocr_status, extraction_status=excluded.extraction_status, questions_detected_count=excluded.questions_detected_count, dead_lettered=excluded.dead_lettered, last_api_summary=excluded.last_api_summary, updated_at=excluded.updated_at;`,
+            [
+              page.id, page.jobId, page.pageNumber, page.status, page.ocrMarkdown || '',
+              page.pageImageKey || '', page.pageWidth || 0, page.pageHeight || 0,
+              page.processingTimeMs || 0, page.errorMessage || '',
+              page.providerUsed || '', page.modelUsed || '',
+              page.fallbackUsed ? 1 : 0, page.fallbackReason || '',
+              page.questionsExtractedCount || 0, page.questionsSavedCount || 0,
+              page.retryAttempts || 0, page.checkpointAt || now,
+              page.requestStartedAt || '', page.responseTimeMs ?? null,
+              page.ocrStatus || '', page.extractionStatus || '',
+              page.questionsDetectedCount ?? page.questionsExtractedCount ?? 0,
+              page.deadLettered ? 1 : 0, page.lastApiSummary || '', now
+            ]
           )
         )
       : Promise.resolve()
@@ -1001,14 +1096,14 @@ async function syncQuestionsToRemote(jobId: string, allQuestions: Parser2Questio
                 const optD = q.options.find(o => o.label === 'D')?.value || '';
 
                 return executeD1Query(
-                  `INSERT INTO parser2_questions (id, job_id, question_number, subject, chapter, question_type, question_text, option_a, option_b, option_c, option_d, options_json, correct_answer, answer_status, explanation, source_page_number, source_page_end, source_pages_json, source_page_range, detected_answer, imported_answer, answer_set_code, answer_source_page, answer_confidence, answer_key_status, page_layout, chemistry_content_type, figure_url, figures_json, option_figures_json, match_table_json, structured_table_json, component_validation_json, original_snapshot_json, verification_status, confidence_score, review_required, review_notes, admin_override, is_manually_edited, manually_edited_at, edited_fields_json, is_deleted, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(id) DO UPDATE SET question_text=excluded.question_text, option_a=excluded.option_a, option_b=excluded.option_b, option_c=excluded.option_c, option_d=excluded.option_d, options_json=excluded.options_json, correct_answer=excluded.correct_answer, answer_status=excluded.answer_status, explanation=excluded.explanation, source_page_number=excluded.source_page_number, source_page_end=excluded.source_page_end, source_pages_json=excluded.source_pages_json, source_page_range=excluded.source_page_range, detected_answer=excluded.detected_answer, imported_answer=excluded.imported_answer, answer_set_code=excluded.answer_set_code, answer_source_page=excluded.answer_source_page, answer_confidence=excluded.answer_confidence, answer_key_status=excluded.answer_key_status, page_layout=excluded.page_layout, chemistry_content_type=excluded.chemistry_content_type, figure_url=excluded.figure_url, figures_json=excluded.figures_json, option_figures_json=excluded.option_figures_json, match_table_json=excluded.match_table_json, structured_table_json=excluded.structured_table_json, component_validation_json=excluded.component_validation_json, original_snapshot_json=excluded.original_snapshot_json, verification_status=excluded.verification_status, confidence_score=excluded.confidence_score, review_required=excluded.review_required, review_notes=excluded.review_notes, admin_override=excluded.admin_override, is_manually_edited=excluded.is_manually_edited, manually_edited_at=excluded.manually_edited_at, edited_fields_json=excluded.edited_fields_json, is_deleted=excluded.is_deleted, updated_at=excluded.updated_at;`,
+                  `INSERT INTO parser2_questions (id, job_id, question_number, subject, chapter, question_type, question_text, option_a, option_b, option_c, option_d, options_json, correct_answer, answer_status, explanation, explanation_image_url, source_page_number, source_page_end, source_pages_json, source_page_range, detected_answer, imported_answer, answer_set_code, answer_source_page, answer_confidence, answer_key_status, page_layout, chemistry_content_type, figure_url, figures_json, option_figures_json, image_attachments_json, match_table_json, structured_table_json, component_validation_json, original_snapshot_json, extraction_engine, provider_used, model_used, verification_status, confidence_score, review_required, review_notes, admin_override, is_manually_edited, manually_edited_at, edited_fields_json, is_deleted, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET question_text=excluded.question_text, option_a=excluded.option_a, option_b=excluded.option_b, option_c=excluded.option_c, option_d=excluded.option_d, options_json=excluded.options_json, correct_answer=excluded.correct_answer, answer_status=excluded.answer_status, explanation=excluded.explanation, explanation_image_url=excluded.explanation_image_url, source_page_number=excluded.source_page_number, source_page_end=excluded.source_page_end, source_pages_json=excluded.source_pages_json, source_page_range=excluded.source_page_range, detected_answer=excluded.detected_answer, imported_answer=excluded.imported_answer, answer_set_code=excluded.answer_set_code, answer_source_page=excluded.answer_source_page, answer_confidence=excluded.answer_confidence, answer_key_status=excluded.answer_key_status, page_layout=excluded.page_layout, chemistry_content_type=excluded.chemistry_content_type, figure_url=excluded.figure_url, figures_json=excluded.figures_json, option_figures_json=excluded.option_figures_json, image_attachments_json=excluded.image_attachments_json, match_table_json=excluded.match_table_json, structured_table_json=excluded.structured_table_json, component_validation_json=excluded.component_validation_json, original_snapshot_json=excluded.original_snapshot_json, extraction_engine=excluded.extraction_engine, provider_used=excluded.provider_used, model_used=excluded.model_used, verification_status=excluded.verification_status, confidence_score=excluded.confidence_score, review_required=excluded.review_required, review_notes=excluded.review_notes, admin_override=excluded.admin_override, is_manually_edited=excluded.is_manually_edited, manually_edited_at=excluded.manually_edited_at, edited_fields_json=excluded.edited_fields_json, is_deleted=excluded.is_deleted, updated_at=excluded.updated_at;`,
                   [
                     q.id, q.jobId, q.questionNumber, q.subject, q.chapter || '',
                     q.questionType, q.questionText, optA, optB, optC, optD,
                     JSON.stringify(q.options || []),
-                    q.correctAnswer || '', q.answerStatus || '', q.explanation || '',
+                    q.correctAnswer || '', q.answerStatus || '', q.explanation || '', q.explanationImageUrl || '',
                     q.sourcePageNumber,
                     q.sourcePageEnd ?? q.sourcePageNumber,
                     JSON.stringify(q.sourcePages && q.sourcePages.length ? q.sourcePages : [q.sourcePageNumber]),
@@ -1019,10 +1114,12 @@ async function syncQuestionsToRemote(jobId: string, allQuestions: Parser2Questio
                     q.figureUrl || '',
                     q.figures ? JSON.stringify(q.figures) : '[]',
                     q.optionFigures ? JSON.stringify(q.optionFigures) : '{}',
+                    q.imageAttachments ? JSON.stringify(q.imageAttachments) : '[]',
                     q.matchTable ? JSON.stringify(q.matchTable) : '',
                     q.structuredTable ? JSON.stringify(q.structuredTable) : '',
                     q.componentValidation ? JSON.stringify(q.componentValidation) : '',
                     q.originalExtractedSnapshot ? JSON.stringify(q.originalExtractedSnapshot) : '',
+                    q.extractionEngine || 'gemini', q.providerUsed || '', q.modelUsed || '',
                     q.verificationStatus, q.confidenceScore,
                     q.reviewRequired ? 1 : 0, q.reviewNotes || '',
                     q.adminOverride ? 1 : 0,
@@ -1171,6 +1268,7 @@ const MANUAL_TRACKED_FIELDS = new Set([
   'figureUrl',
   'figures',
   'optionFigures',
+  'imageAttachments',
   'matchTable',
   'structuredTable',
   'subject',
@@ -1232,10 +1330,10 @@ export async function updateParser2Question(
             const optC = updated.options.find(o => o.label === 'C')?.value || '';
             const optD = updated.options.find(o => o.label === 'D')?.value || '';
             return executeD1Query(
-              `UPDATE parser2_questions SET question_text=?, option_a=?, option_b=?, option_c=?, option_d=?, options_json=?, correct_answer=?, answer_status=?, explanation=?, source_page_number=?, source_page_end=?, source_pages_json=?, source_page_range=?, detected_answer=?, imported_answer=?, answer_set_code=?, answer_source_page=?, answer_confidence=?, answer_key_status=?, figure_url=?, figures_json=?, option_figures_json=?, match_table_json=?, structured_table_json=?, component_validation_json=?, verification_status=?, confidence_score=?, review_required=?, review_notes=?, admin_override=?, is_manually_edited=?, manually_edited_at=?, edited_fields_json=?, is_deleted=?, updated_at=? WHERE id=?;`,
+              `UPDATE parser2_questions SET question_text=?, option_a=?, option_b=?, option_c=?, option_d=?, options_json=?, correct_answer=?, answer_status=?, explanation=?, explanation_image_url=?, source_page_number=?, source_page_end=?, source_pages_json=?, source_page_range=?, detected_answer=?, imported_answer=?, answer_set_code=?, answer_source_page=?, answer_confidence=?, answer_key_status=?, figure_url=?, figures_json=?, option_figures_json=?, image_attachments_json=?, match_table_json=?, structured_table_json=?, component_validation_json=?, verification_status=?, confidence_score=?, review_required=?, review_notes=?, admin_override=?, is_manually_edited=?, manually_edited_at=?, edited_fields_json=?, is_deleted=?, updated_at=? WHERE id=?;`,
               [
                 updated.questionText, optA, optB, optC, optD, JSON.stringify(updated.options || []),
-                updated.correctAnswer || '', updated.answerStatus || '', updated.explanation || '',
+                updated.correctAnswer || '', updated.answerStatus || '', updated.explanation || '', updated.explanationImageUrl || '',
                 updated.sourcePageNumber || 1,
                 updated.sourcePageEnd ?? updated.sourcePageNumber ?? 1,
                 JSON.stringify(updated.sourcePages && updated.sourcePages.length ? updated.sourcePages : [updated.sourcePageNumber || 1]),
@@ -1245,6 +1343,7 @@ export async function updateParser2Question(
                 updated.figureUrl || '',
                 updated.figures ? JSON.stringify(updated.figures) : '[]',
                 updated.optionFigures ? JSON.stringify(updated.optionFigures) : '{}',
+                updated.imageAttachments ? JSON.stringify(updated.imageAttachments) : '[]',
                 updated.matchTable ? JSON.stringify(updated.matchTable) : '',
                 updated.structuredTable ? JSON.stringify(updated.structuredTable) : '',
                 updated.componentValidation ? JSON.stringify(updated.componentValidation) : '',
@@ -1436,7 +1535,7 @@ export async function saveParser2ValidationReport(report: Parser2ValidationRepor
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET quality_score=excluded.quality_score, passed_checks=excluded.passed_checks, critical_errors_count=excluded.critical_errors_count, warnings_count=excluded.warnings_count, can_publish=excluded.can_publish, report_json=excluded.report_json, summary=excluded.summary;`,
             [
-              report.id, report.jobId, report.qualityScore, report.totalChecks, report.passedChecks,
+              report.id, report.jobId, report.qualityScore ?? 0, report.totalChecks, report.passedChecks,
               report.criticalErrorsCount, report.warningsCount, report.canPublish ? 1 : 0,
               JSON.stringify(report.checks), report.summary, report.createdAt
             ]
@@ -1513,4 +1612,102 @@ export async function saveParser2Settings(settings: Partial<Parser2Settings>): P
 
   await putR2Json(R2_SETTINGS_KEY, updated);
   return updated;
+}
+
+/**
+ * Module 9 Diagnostics: Safe live Database Write/Read/Delete self-test across Local Store, R2 JSON, and Cloudflare D1.
+ * Never exposes secrets, API tokens, or credentials.
+ */
+export async function runDatabaseSelfTest(): Promise<{
+  ok: boolean;
+  latencyMs: number;
+  localStore: { ok: boolean; latencyMs: number; jobCount: number; error?: string };
+  r2Json: { configured: boolean; ok: boolean; latencyMs: number; error?: string };
+  d1: { configured: boolean; ok: boolean; latencyMs: number; jobCount?: number; error?: string };
+  checkedAt: string;
+}> {
+  const overallStart = Date.now();
+  const probeId = `diag-probe-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const checkedAt = new Date().toISOString();
+
+  // 1. Local atomic JSON write/read/delete probe
+  let localStore: { ok: boolean; latencyMs: number; jobCount: number; error?: string } = {
+    ok: false,
+    latencyMs: 0,
+    jobCount: 0
+  };
+  const tLocal = Date.now();
+  try {
+    await withStoreWrite((s) => {
+      s._diag_probe = { id: probeId, ts: checkedAt };
+    });
+    const readBack = loadStore();
+    const matched = readBack?._diag_probe?.id === probeId;
+    const jobCount = Array.isArray(readBack?.parser2_jobs) ? readBack.parser2_jobs.length : 0;
+    await withStoreWrite((s) => {
+      delete s._diag_probe;
+    });
+    localStore = { ok: matched, latencyMs: Date.now() - tLocal, jobCount };
+  } catch (e: any) {
+    localStore = { ok: false, latencyMs: Date.now() - tLocal, jobCount: 0, error: e?.message || 'Local store write failed' };
+  }
+
+  // 2. R2 JSON persistence write/read probe
+  const r2Configured = Boolean(getR2Client());
+  let r2Json: { configured: boolean; ok: boolean; latencyMs: number; error?: string } = {
+    configured: r2Configured,
+    ok: false,
+    latencyMs: 0
+  };
+  if (r2Configured) {
+    const tR2 = Date.now();
+    try {
+      const probeKey = `parser2/diagnostics/${probeId}.json`;
+      const wrote = await putR2Json(probeKey, { probeId, checkedAt });
+      const fetched = await getR2Json<{ probeId?: string }>(probeKey);
+      r2Json = {
+        configured: true,
+        ok: Boolean(wrote && fetched?.probeId === probeId),
+        latencyMs: Date.now() - tR2,
+        error: !wrote ? 'R2 put failed' : fetched?.probeId !== probeId ? 'R2 readback mismatch' : undefined
+      };
+    } catch (e: any) {
+      r2Json = { configured: true, ok: false, latencyMs: Date.now() - tR2, error: e?.message || 'R2 JSON probe error' };
+    }
+  }
+
+  // 3. Cloudflare D1 query probe (when configured)
+  const d1Configured = isD1Configured();
+  let d1: { configured: boolean; ok: boolean; latencyMs: number; jobCount?: number; error?: string } = {
+    configured: d1Configured,
+    ok: !d1Configured,
+    latencyMs: 0
+  };
+  if (d1Configured) {
+    const tD1 = Date.now();
+    try {
+      await ensureParser2D1Tables();
+      const res = await executeD1Query(`SELECT COUNT(*) AS cnt FROM parser2_jobs;`);
+      const cnt = Number(res?.result?.[0]?.results?.[0]?.cnt ?? 0);
+      d1 = {
+        configured: true,
+        ok: Boolean(res?.success),
+        latencyMs: Date.now() - tD1,
+        jobCount: cnt,
+        error: res?.success ? undefined : (res?.error || 'D1 query failed')
+      };
+    } catch (e: any) {
+      d1 = { configured: true, ok: false, latencyMs: Date.now() - tD1, error: e?.message || 'D1 probe error' };
+    }
+  }
+
+  const ok = localStore.ok && (!r2Configured || r2Json.ok) && (!d1Configured || d1.ok);
+  return {
+    ok,
+    latencyMs: Date.now() - overallStart,
+    localStore,
+    r2Json,
+    d1,
+    checkedAt
+  };
 }

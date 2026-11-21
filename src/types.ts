@@ -345,20 +345,63 @@ export interface MockQuestionContentBlock {
 export interface MockMatchTableRow {
   leftKey: string;
   leftText: string;
+  leftImageUrl?: string;
   rightKey: string;
   rightText: string;
+  rightImageUrl?: string;
 }
 
 export interface MockMatchTable {
   column1Header: string;
   column2Header: string;
+  leftTableImageUrl?: string;
+  rightTableImageUrl?: string;
+  showBorders?: boolean;
   rows: MockMatchTableRow[];
+}
+
+export interface MockStructuredTableCellMeta {
+  rowSpan?: number;
+  colSpan?: number;
+  hidden?: boolean;
+  imageUrl?: string;
+  align?: 'left' | 'center' | 'right';
 }
 
 export interface MockStructuredTable {
   headers: string[];
   rows: string[][];
   caption?: string;
+  showBorders?: boolean;
+  alignment?: 'left' | 'center' | 'right';
+  cellMeta?: Record<string, MockStructuredTableCellMeta>;
+}
+
+export interface MockQuestionImageAttachment {
+  id: string;
+  url: string;
+  placement:
+    | 'before_question'
+    | 'between_paragraphs'
+    | 'after_question'
+    | 'option_A'
+    | 'option_B'
+    | 'option_C'
+    | 'option_D'
+    | 'match_left_table'
+    | 'match_right_table'
+    | 'table_cell'
+    | 'assertion_reason'
+    | 'explanation'
+    | 'answer_key_explanation';
+  paragraphIndex?: number;
+  tableRow?: number;
+  tableCol?: number;
+  caption?: string;
+  altText?: string;
+  alignment?: 'left' | 'center' | 'right';
+  widthPercent?: number;
+  rotation?: number;
 }
 
 export interface MockQuestionLanguageContent {
@@ -390,6 +433,7 @@ export interface MockQuestion {
   figures?: string[];
   figureUrl?: string;
   questionImageUrl?: string; // Backwards-compatible alias for primary figure
+  imageAttachments?: MockQuestionImageAttachment[];
   hasFigure?: boolean;
   sourcePageNumber?: number;
   questionText: string;

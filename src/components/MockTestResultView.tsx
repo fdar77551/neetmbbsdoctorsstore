@@ -25,6 +25,13 @@ import {
 } from 'lucide-react';
 import { MockTest, MockQuestion, MockTestAttempt } from '../types';
 import { getStoredMockQuestions, getAttemptsForTest } from '../lib/mockTestData';
+import { MathRenderer } from './common/MathRenderer';
+import {
+  QuestionStemWithAttachments,
+  QuestionAttachmentStrip,
+  RichMatchTableView,
+  RichStructuredTableView
+} from './common/QuestionMediaBlocks';
 
 interface MockTestResultViewProps {
   test?: MockTest;
@@ -475,10 +482,31 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
                       )}
                     </div>
 
-                    {/* Question Text */}
-                    <p className="text-xs sm:text-sm font-semibold text-slate-900 leading-relaxed">
-                      {q.questionText}
-                    </p>
+                    {/* Question Text + before/between/assertion_reason images */}
+                    <QuestionStemWithAttachments
+                      text={q.questionText}
+                      attachments={q.imageAttachments}
+                      onZoom={url => setZoomedImage(url)}
+                      textClassName="text-xs sm:text-sm font-semibold text-slate-900 leading-relaxed"
+                    />
+
+                    {/* Match-the-Column Table */}
+                    {q.matchTable && q.matchTable.rows && q.matchTable.rows.length > 0 && (
+                      <RichMatchTableView
+                        matchTable={q.matchTable}
+                        attachments={q.imageAttachments}
+                        onZoom={url => setZoomedImage(url)}
+                      />
+                    )}
+
+                    {/* Structured Data Table */}
+                    {q.structuredTable && q.structuredTable.rows && q.structuredTable.rows.length > 0 && (
+                      <RichStructuredTableView
+                        table={q.structuredTable}
+                        attachments={q.imageAttachments}
+                        onZoom={url => setZoomedImage(url)}
+                      />
+                    )}
 
                     {/* Diagram preview if available */}
                     {(q.figureUrl || q.questionImageUrl || (q.figures && q.figures[0])) && (
@@ -492,11 +520,23 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
                       </div>
                     )}
 
+                    {/* Extra after_question attachments */}
+                    <QuestionAttachmentStrip
+                      attachments={(q.imageAttachments || []).filter(
+                        a =>
+                          a.placement === 'after_question' &&
+                          a.url !== (q.figureUrl || q.questionImageUrl || q.figures?.[0])
+                      )}
+                      placements={['after_question']}
+                      onZoom={url => setZoomedImage(url)}
+                    />
+
                     {/* Options list */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                       {q.options.map(opt => {
                         const isSelected = userAns === opt.label;
                         const isCorrectOpt = q.correctAnswer === opt.label;
+                        const optImg = q.optionFigures?.[opt.label] || opt.imageUrl;
 
                         let style = 'bg-white border-slate-200 text-slate-700';
                         if (isCorrectOpt) {
@@ -506,12 +546,30 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
                         }
 
                         return (
-                          <div key={opt.label} className={`p-2.5 rounded-xl border text-xs flex items-center justify-between gap-2 ${style}`}>
-                            <div className="flex items-center gap-2">
+                          <div key={opt.label} className={`p-2.5 rounded-xl border text-xs flex items-start justify-between gap-2 ${style}`}>
+                            <div className="flex items-start gap-2 flex-1 min-w-0">
                               <span className="w-5 h-5 rounded-md bg-slate-100 text-slate-800 flex items-center justify-center font-black text-[10px] shrink-0">
                                 {opt.label}
                               </span>
-                              <span>{opt.value}</span>
+                              <div className="flex-1 min-w-0 space-y-1">
+                                {opt.value && <MathRenderer text={opt.value} className="inline" />}
+                                {optImg && (
+                                  <img
+                                    src={optImg}
+                                    alt={`Option ${opt.label}`}
+                                    onClick={() => setZoomedImage(optImg)}
+                                    className="max-h-24 object-contain rounded border border-slate-200 bg-white p-1 cursor-zoom-in block"
+                                  />
+                                )}
+                                <QuestionAttachmentStrip
+                                  attachments={(q.imageAttachments || []).filter(
+                                    a => a.placement === `option_${opt.label}` && a.url !== optImg
+                                  )}
+                                  placements={[`option_${opt.label}`]}
+                                  onZoom={url => setZoomedImage(url)}
+                                  compact
+                                />
+                              </div>
                             </div>
                             {isCorrectOpt && <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
                             {isSelected && !isCorrectOpt && <XCircle className="w-4 h-4 text-rose-600 shrink-0" />}
@@ -521,15 +579,35 @@ export const MockTestResultView: React.FC<MockTestResultViewProps> = ({
                     </div>
 
                     {/* Detailed Solution / Explanation Box */}
-                    {q.explanation && (
-                      <div className="mt-3 p-3 bg-indigo-50/70 border border-indigo-200/70 rounded-xl space-y-1 text-xs">
+                    {(q.explanation ||
+                      q.explanationImageUrl ||
+                      (q.imageAttachments || []).some(
+                        a => a.placement === 'explanation' || a.placement === 'answer_key_explanation'
+                      )) && (
+                      <div className="mt-3 p-3 bg-indigo-50/70 border border-indigo-200/70 rounded-xl space-y-2 text-xs">
                         <span className="font-bold text-indigo-950 flex items-center gap-1 text-[11px] uppercase tracking-wider">
                           <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
                           <span>Detailed Derivation &amp; Solution:</span>
                         </span>
-                        <p className="text-slate-800 leading-relaxed whitespace-pre-line">
-                          {q.explanation}
-                        </p>
+                        {q.explanation && (
+                          <div className="text-slate-800 leading-relaxed">
+                            <MathRenderer text={q.explanation} className="inline-block w-full" />
+                          </div>
+                        )}
+                        {q.explanationImageUrl &&
+                          !(q.imageAttachments || []).some(a => a.url === q.explanationImageUrl) && (
+                            <img
+                              src={q.explanationImageUrl}
+                              alt={`Explanation for Q${q.questionNumber}`}
+                              onClick={() => setZoomedImage(q.explanationImageUrl || null)}
+                              className="max-h-48 object-contain rounded-lg border border-indigo-200 bg-white p-1 cursor-zoom-in"
+                            />
+                          )}
+                        <QuestionAttachmentStrip
+                          attachments={q.imageAttachments}
+                          placements={['explanation', 'answer_key_explanation']}
+                          onZoom={url => setZoomedImage(url)}
+                        />
                       </div>
                     )}
                   </div>

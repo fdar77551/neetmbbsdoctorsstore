@@ -163,11 +163,25 @@ export function formatSourcePageRange(
 export function isPlaceholderOptionText(val: string | undefined | null): boolean {
   if (!val) return true;
   const t = val.trim().toLowerCase();
+  if (!t) return true;
+  if (
+    t === 'none' ||
+    t === 'none of these' ||
+    t === 'none of the above' ||
+    t === 'all of these' ||
+    t === 'all of the above' ||
+    t === 'data insufficient' ||
+    t === 'insufficient data' ||
+    t === 'cannot be determined' ||
+    t === 'can not be determined' ||
+    /^nothing\s+can\s+be\s+said/i.test(t)
+  ) {
+    return false;
+  }
   return (
-    !t ||
-    /insufficient\s+data/i.test(t) ||
+    /insufficient\s+data\s+in\s+(?:the\s+)?(?:snippet|image|crop|page|ocr)/i.test(t) ||
     /not\s+(?:visible|provided|available|readable|shown)\s+in\s+(?:the\s+)?(?:snippet|image|crop|page)/i.test(t) ||
-    /cannot\s+be\s+(?:determined|read|extracted)/i.test(t) ||
+    /cannot\s+be\s+(?:read|extracted)\s+(?:from|in)\s+(?:the\s+)?(?:snippet|image|crop|page)/i.test(t) ||
     /^\[?\s*(?:illegible|unclear|unreadable|missing\s+option(?:\s+text)?|data\s+missing|not\s+available)\s*\]?$/i.test(t) ||
     t === '[missing option text]' ||
     t === 'missing option' ||
@@ -194,6 +208,16 @@ export function isQuestionTextTruncated(text: string | undefined | null): boolea
   // Starts with dangling continuation punctuation or relative clause
   if (/^(?:and\s+|or\s+|with\s+the\s+|as\s+shown\s+in|then\s+the\s+|[,;\)\]])/i.test(trimmed)) {
     return true;
+  }
+
+  // Standard complete NEET/JEE MCQ lead-in endings right before options (A)-(D) are NOT truncated
+  const validNeetStemEnding =
+    trimmed.length >= 25 &&
+    /(?:\b(?:is|are|was|were|be|been)\s+(?:best\s+)?(?:given|represented|shown|expressed|defined|denoted|described|related|governed)\s+(?:best\s+)?(?:by|as|in|to)|\b(?:given|represented|shown)\s+(?:best\s+)?by|\bequal\s+to|\bproportional\s+to|\bdirectly\s+proportional\s+to|\binversely\s+proportional\s+to|\bdepends\s+(?:up)?on|\bis\s+due\s+to|\bcorresponds\s+to|\brefers\s+to|\bresults\s+in|\bconsists\s+of|\bacts\s+on|\bknown\s+as|\bdefined\s+as|\bcalled|\bbecause)\s*[:\-–]?\s*$/i.test(
+      trimmed
+    );
+  if (validNeetStemEnding) {
+    return false;
   }
 
   // Ends dangling mid-phrase (allow complete NEET stems >= 25 chars ending in "is"/"are" before options)

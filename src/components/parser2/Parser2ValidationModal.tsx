@@ -47,6 +47,8 @@ export const Parser2ValidationModal: React.FC<Parser2ValidationModalProps> = ({
         <div className={`p-5 border-b flex flex-wrap items-center justify-between gap-4 ${
           report.canPublish 
             ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200' 
+            : (report.reconciliation?.extractedQuestions ?? 1) === 0
+            ? 'bg-gradient-to-r from-rose-50 to-red-50 border-rose-200'
             : 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-200'
         }`}>
           <div>
@@ -55,9 +57,15 @@ export const Parser2ValidationModal: React.FC<Parser2ValidationModalProps> = ({
             </span>
             <div className="flex items-baseline gap-2">
               <span className={`text-3xl font-black font-['Outfit',sans-serif] ${
-                report.canPublish ? 'text-emerald-700' : 'text-amber-700'
+                report.qualityScore === null || report.qualityScore === undefined || (report.reconciliation?.extractedQuestions ?? 0) === 0
+                  ? 'text-slate-500'
+                  : report.canPublish
+                  ? 'text-emerald-700'
+                  : 'text-amber-700'
               }`}>
-                {report.qualityScore}%
+                {report.qualityScore === null || report.qualityScore === undefined || (report.reconciliation?.extractedQuestions ?? 0) === 0
+                  ? 'N/A'
+                  : `${report.qualityScore}%`}
               </span>
               <span className="text-xs font-bold text-slate-600">
                 ({report.passedChecks}/{report.totalChecks} Checks Passed)
@@ -66,6 +74,27 @@ export const Parser2ValidationModal: React.FC<Parser2ValidationModalProps> = ({
             <p className="text-xs text-slate-700 font-medium mt-1">
               {report.summary}
             </p>
+            {report.reconciliation && (
+              <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] font-bold text-slate-600 tabular-nums">
+                <span>
+                  Expected:{' '}
+                  {report.reconciliation.expectedQuestions != null
+                    ? `${report.reconciliation.expectedQuestions}${report.reconciliation.expectedQuestionsSource === 'manual' ? ' (Manual)' : ' (Auto)'}`
+                    : 'Auto'}
+                </span>
+                <span>·</span>
+                <span>Extracted: {report.reconciliation.extractedQuestions}</span>
+                <span>·</span>
+                <span>Saved: {report.reconciliation.savedQuestions ?? report.reconciliation.extractedQuestions}</span>
+                <span>·</span>
+                <span>
+                  Missing:{' '}
+                  {report.reconciliation.missingQuestions != null
+                    ? report.reconciliation.missingQuestions
+                    : 'N/A'}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col gap-1 text-xs font-bold">

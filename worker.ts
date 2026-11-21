@@ -204,6 +204,24 @@ async function ensureD1Tables(db: D1Database) {
     if (p2Cols.size > 0 && !p2Cols.has('saved_verified')) {
       await db.prepare(`ALTER TABLE parser2_jobs ADD COLUMN saved_verified INTEGER DEFAULT 0`).run().catch(() => {});
     }
+    if (p2Cols.size > 0 && !p2Cols.has('failed_stage')) {
+      await db.prepare(`ALTER TABLE parser2_jobs ADD COLUMN failed_stage TEXT`).run().catch(() => {});
+    }
+    if (p2Cols.size > 0 && !p2Cols.has('lock_owner_id')) {
+      await db.prepare(`ALTER TABLE parser2_jobs ADD COLUMN lock_owner_id TEXT`).run().catch(() => {});
+    }
+    if (p2Cols.size > 0 && !p2Cols.has('lock_expires_at')) {
+      await db.prepare(`ALTER TABLE parser2_jobs ADD COLUMN lock_expires_at TEXT`).run().catch(() => {});
+    }
+    if (p2Cols.size > 0 && !p2Cols.has('stalled_at')) {
+      await db.prepare(`ALTER TABLE parser2_jobs ADD COLUMN stalled_at TEXT`).run().catch(() => {});
+    }
+    if (p2Cols.size > 0 && !p2Cols.has('stall_reason')) {
+      await db.prepare(`ALTER TABLE parser2_jobs ADD COLUMN stall_reason TEXT`).run().catch(() => {});
+    }
+    if (p2Cols.size > 0 && !p2Cols.has('import_source')) {
+      await db.prepare(`ALTER TABLE parser2_jobs ADD COLUMN import_source TEXT`).run().catch(() => {});
+    }
 
     d1Initialized = true;
   } catch (e) {
@@ -223,6 +241,17 @@ function mapJobRow(r: any): any {
   const finished = ['completed', 'review_required', 'published', 'approved'].includes(status);
   const resolvedSaved = rawSaved > 0 ? rawSaved : finished && totalQ > 0 ? totalQ : rawSaved;
 
+  const resolvedQualityScore =
+    totalQ === 0 && resolvedSaved === 0
+      ? null
+      : parsedData.qualityScore === null
+      ? null
+      : typeof parsedData.qualityScore === 'number'
+      ? parsedData.qualityScore
+      : typeof r.quality_score === 'number' && r.quality_score > 0
+      ? r.quality_score
+      : null;
+
   return {
     ...parsedData,
     id: r.id || parsedData.id,
@@ -230,18 +259,19 @@ function mapJobRow(r: any): any {
     subject: r.subject || parsedData.subject || 'Combined',
     chapter: r.chapter ?? parsedData.chapter ?? '',
     questionRange: r.question_range ?? parsedData.questionRange ?? '',
-    ocrEngine: r.ocr_engine || parsedData.ocrEngine || 'mistral',
-    geminiModel: r.gemini_model || parsedData.geminiModel || 'gemini-4-hydrogen',
+    ocrEngine: parsedData.ocrEngine || r.ocr_engine || 'gemini',
+    geminiModel: parsedData.geminiModel || r.gemini_model || 'gemini-4-hydrogen',
     enableGeminiVerification: Boolean(r.enable_gemini_verification ?? parsedData.enableGeminiVerification ?? true),
     status,
     currentStage: r.current_stage || parsedData.currentStage,
+    failedStage: r.failed_stage || parsedData.failedStage || undefined,
     totalPages: Number(r.total_pages ?? parsedData.totalPages ?? 0),
     completedPages: Number(r.completed_pages ?? parsedData.completedPages ?? 0),
     failedPages: Number(r.failed_pages ?? parsedData.failedPages ?? 0),
     totalQuestions: totalQ,
     questionsDetected: Number(r.questions_detected ?? parsedData.questionsDetected ?? totalQ) || totalQ,
     questionsSaved: resolvedSaved,
-    savedVerified: Boolean(r.saved_verified ?? parsedData.savedVerified ?? resolvedSaved > 0),
+    savedVerified: resolvedSaved > 0 && Boolean(r.saved_verified ?? parsedData.savedVerified ?? true),
     verifiedQuestions: Number(r.verified_questions ?? parsedData.verifiedQuestions ?? 0),
     reviewRequiredCount: Number(r.review_required_count ?? parsedData.reviewRequiredCount ?? 0),
     figureCount: Number(r.figure_count ?? parsedData.figureCount ?? 0),
@@ -249,7 +279,7 @@ function mapJobRow(r: any): any {
     retryCount: Number(r.retry_count ?? parsedData.retryCount ?? 0),
     manuallyEditedCount: Number(r.manually_edited_count ?? parsedData.manuallyEditedCount ?? 0),
     hasAnswerKey: Boolean(r.has_answer_key ?? parsedData.hasAnswerKey),
-    qualityScore: Number(r.quality_score ?? parsedData.qualityScore ?? 0) || undefined,
+    qualityScore: resolvedQualityScore,
     publishedTestId: r.published_test_id || parsedData.publishedTestId || undefined,
     errorMessage: r.error_message || parsedData.errorMessage || undefined,
     originalPdfFileName: r.original_pdf_file_name || parsedData.originalPdfFileName || parsedData.sourceQuestionPdfName,
@@ -270,7 +300,7 @@ async function upsertJobInD1(db: D1Database, j: any) {
     : ['completed', 'review_required', 'published', 'approved'].includes(String(j.status || '')) && totalQ > 0
     ? totalQ
     : Number(j.questionsSaved || 0);
-  const cleanJob = { ...j, questionsSaved: savedQ, savedVerified: savedQ > 0 || Boolean(j.savedVerified) };
+  const cleanJob = { ...j, questionsSaved: savedQ, savedVerified: savedQ > 0 && (j.savedVerified !== false) };
 
   await db
     .prepare(
@@ -753,7 +783,7 @@ export default {
           filterCounts: {
             all: jobs.length,
             queued: jobs.filter((j: any) => j.status === 'queued' || j.status === 'uploaded').length,
-            active: jobs.filter((j: any) => ['extracting', 'processing', 'ocr_in_progress', 'question_detection', 'question_extraction', 'structuring', 'figure_extraction', 'validation', 'saving', 'verifying', 'paused'].includes(j.status)).length,
+            active: jobs.filter((j: any) => ['extracting', 'processing', 'ocr_in_progress', 'question_detection', 'question_extraction', 'structuring', 'figure_extraction', 'validation', 'validating', 'saving', 'verifying', 'paused'].includes(j.status)).length,
             completed: jobs.filter((j: any) => ['completed', 'review_required', 'published'].includes(j.status)).length,
             published: jobs.filter((j: any) => j.status === 'published').length,
             failed: jobs.filter((j: any) => j.status === 'failed').length
